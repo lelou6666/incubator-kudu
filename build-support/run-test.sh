@@ -102,22 +102,10 @@ if [ -z "$ASAN_SYMBOLIZER_PATH" ]; then
 fi
 
 # Configure TSAN (ignored if this isn't a TSAN build).
-#
-# Deadlock detection (new in clang 3.5) is disabled because:
-# 1. The clang 3.5 deadlock detector crashes in some Kudu unit tests. It
-#    needs compiler-rt commits c4c3dfd, 9a8efe3, and possibly others.
-# 2. Many unit tests report lock-order-inversion warnings; they should be
-#    fixed before reenabling the detector.
-TSAN_OPTIONS="$TSAN_OPTIONS detect_deadlocks=0"
 TSAN_OPTIONS="$TSAN_OPTIONS suppressions=$SOURCE_ROOT/build-support/tsan-suppressions.txt"
 TSAN_OPTIONS="$TSAN_OPTIONS history_size=7"
 TSAN_OPTIONS="$TSAN_OPTIONS external_symbolizer_path=$ASAN_SYMBOLIZER_PATH"
 export TSAN_OPTIONS
-
-# Enable leak detection even under LLVM 3.4, where it was disabled by default.
-# This flag only takes effect when running an ASAN build.
-ASAN_OPTIONS="$ASAN_OPTIONS detect_leaks=1"
-export ASAN_OPTIONS
 
 # Set up suppressions for LeakSanitizer
 LSAN_OPTIONS="$LSAN_OPTIONS suppressions=$SOURCE_ROOT/build-support/lsan-suppressions.txt"

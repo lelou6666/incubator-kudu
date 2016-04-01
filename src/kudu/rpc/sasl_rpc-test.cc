@@ -24,6 +24,7 @@
 #include <sasl/sasl.h>
 
 #include "kudu/gutil/gscoped_ptr.h"
+#include "kudu/gutil/map-util.h"
 #include "kudu/rpc/constants.h"
 #include "kudu/rpc/auth_store.h"
 #include "kudu/rpc/sasl_client.h"
@@ -115,8 +116,9 @@ static void RunPlainNegotiationServer(Socket* conn) {
   gscoped_ptr<AuthStore> authstore(new AuthStore());
   CHECK_OK(authstore->Add("danger", "burrito"));
   CHECK_OK(sasl_server.Init(kSaslAppName));
-  CHECK_OK(sasl_server.EnablePlain(authstore.Pass()));
+  CHECK_OK(sasl_server.EnablePlain(std::move(authstore)));
   CHECK_OK(sasl_server.Negotiate());
+  CHECK(ContainsKey(sasl_server.client_features(), APPLICATION_FEATURE_FLAGS));
 }
 
 static void RunPlainNegotiationClient(Socket* conn) {
@@ -124,6 +126,7 @@ static void RunPlainNegotiationClient(Socket* conn) {
   CHECK_OK(sasl_client.Init(kSaslAppName));
   CHECK_OK(sasl_client.EnablePlain("danger", "burrito"));
   CHECK_OK(sasl_client.Negotiate());
+  CHECK(ContainsKey(sasl_client.server_features(), APPLICATION_FEATURE_FLAGS));
 }
 
 // Test SASL negotiation using the PLAIN mechanism over a socket.
@@ -138,7 +141,7 @@ static void RunPlainFailingNegotiationServer(Socket* conn) {
   gscoped_ptr<AuthStore> authstore(new AuthStore());
   CHECK_OK(authstore->Add("danger", "burrito"));
   CHECK_OK(sasl_server.Init(kSaslAppName));
-  CHECK_OK(sasl_server.EnablePlain(authstore.Pass()));
+  CHECK_OK(sasl_server.EnablePlain(std::move(authstore)));
   Status s = sasl_server.Negotiate();
   ASSERT_TRUE(s.IsNotAuthorized()) << "Expected auth failure! Got: " << s.ToString();
 }

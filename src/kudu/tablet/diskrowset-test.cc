@@ -23,7 +23,6 @@
 
 #include "kudu/common/row.h"
 #include "kudu/common/schema.h"
-#include "kudu/gutil/algorithm.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/tablet/delta_compaction.h"
 #include "kudu/tablet/diskrowset.h"
@@ -362,7 +361,7 @@ TEST_F(TestRowSet, TestFlushedUpdatesRespectMVCC) {
     SCOPED_TRACE(i);
     gscoped_ptr<RowwiseIterator> iter;
     ASSERT_OK(rs->NewRowIterator(&schema_, snaps[i], &iter));
-    string data = InitAndDumpIterator(iter.Pass());
+    string data = InitAndDumpIterator(std::move(iter));
     EXPECT_EQ(StringPrintf("(string key=row, uint32 val=%d)", i + 1), data);
   }
 
@@ -374,7 +373,7 @@ TEST_F(TestRowSet, TestFlushedUpdatesRespectMVCC) {
     SCOPED_TRACE(i);
     gscoped_ptr<RowwiseIterator> iter;
     ASSERT_OK(rs->NewRowIterator(&schema_, snaps[i], &iter));
-    string data = InitAndDumpIterator(iter.Pass());
+    string data = InitAndDumpIterator(std::move(iter));
     EXPECT_EQ(StringPrintf("(string key=row, uint32 val=%d)", i + 1), data);
   }
 

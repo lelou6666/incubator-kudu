@@ -54,7 +54,7 @@ BloomFileWriter::BloomFileWriter(gscoped_ptr<WritableBlock> block,
   // bloom filters are high-entropy data structures by their nature.
   opts.storage_attributes.encoding  = PLAIN_ENCODING;
   opts.storage_attributes.compression = NO_COMPRESSION;
-  writer_.reset(new cfile::CFileWriter(opts, GetTypeInfo(BINARY), false, block.Pass()));
+  writer_.reset(new cfile::CFileWriter(opts, GetTypeInfo(BINARY), false, std::move(block)));
 }
 
 Status BloomFileWriter::Start() {
@@ -141,10 +141,10 @@ Status BloomFileReader::Open(gscoped_ptr<ReadableBlock> block,
                              const ReaderOptions& options,
                              gscoped_ptr<BloomFileReader> *reader) {
   gscoped_ptr<BloomFileReader> bf_reader;
-  RETURN_NOT_OK(OpenNoInit(block.Pass(), options, &bf_reader));
+  RETURN_NOT_OK(OpenNoInit(std::move(block), options, &bf_reader));
   RETURN_NOT_OK(bf_reader->Init());
 
-  *reader = bf_reader.Pass();
+  *reader = std::move(bf_reader);
   return Status::OK();
 }
 
@@ -152,20 +152,20 @@ Status BloomFileReader::OpenNoInit(gscoped_ptr<ReadableBlock> block,
                                    const ReaderOptions& options,
                                    gscoped_ptr<BloomFileReader> *reader) {
   gscoped_ptr<CFileReader> cf_reader;
-  RETURN_NOT_OK(CFileReader::OpenNoInit(block.Pass(), options, &cf_reader));
+  RETURN_NOT_OK(CFileReader::OpenNoInit(std::move(block), options, &cf_reader));
   gscoped_ptr<BloomFileReader> bf_reader(new BloomFileReader(
-      cf_reader.Pass(), options));
+      std::move(cf_reader), options));
   if (!FLAGS_cfile_lazy_open) {
     RETURN_NOT_OK(bf_reader->Init());
   }
 
-  *reader = bf_reader.Pass();
+  *reader = std::move(bf_reader);
   return Status::OK();
 }
 
 BloomFileReader::BloomFileReader(gscoped_ptr<CFileReader> reader,
                                  const ReaderOptions& options)
-  : reader_(reader.Pass()),
+  : reader_(std::move(reader)),
     mem_consumption_(options.parent_mem_tracker,
                      memory_footprint_excluding_reader()) {
 }
@@ -196,7 +196,7 @@ Status BloomFileReader::InitOnce() {
   // stack-allocate these things more smartly!
   int n_cpus = base::MaxCPUIndex() + 1;
   for (int i = 0; i < n_cpus; i++) {
-    index_iters_.push_back(
+    index_iters_.emplace_back(
       IndexTreeIterator::Create(reader_.get(), validx_root));
   }
   iter_locks_.reset(new padded_spinlock[n_cpus]);
@@ -258,7 +258,7 @@ Status BloomFileReader::CheckKeyPresent(const BloomKeyProbe &probe,
       cpu = (cpu + 1) % index_iters_.size();
     }
 
-    cfile::IndexTreeIterator *index_iter = &index_iters_[cpu];
+    cfile::IndexTreeIterator *index_iter = index_iters_[cpu].get();
 
     Status s = index_iter->SeekAtOrBefore(probe.key());
     if (PREDICT_FALSE(s.IsNotFound())) {
@@ -291,14 +291,13 @@ size_t BloomFileReader::memory_footprint_excluding_reader() const {
 
   size += init_once_.memory_footprint_excluding_this();
 
-  // This seems to be the easiest way to get a heap pointer to the ptr_vector.
-  //
   // TODO: Track the iterators' memory footprint? May change with every seek;
   // not clear if it's worth doing.
-  size += kudu_malloc_usable_size(
-      const_cast<BloomFileReader*>(this)->index_iters_.c_array());
-  for (int i = 0; i < index_iters_.size(); i++) {
-    size += kudu_malloc_usable_size(&index_iters_[i]);
+  if (!index_iters_.empty()) {
+    size += kudu_malloc_usable_size(index_iters_.data());
+    for (int i = 0; i < index_iters_.size(); i++) {
+      size += kudu_malloc_usable_size(index_iters_[i].get());
+    }
   }
 
   if (iter_locks_) {

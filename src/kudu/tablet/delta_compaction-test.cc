@@ -27,7 +27,6 @@
 #include "kudu/tablet/delta_compaction.h"
 #include "kudu/tablet/delta_iterator_merger.h"
 #include "kudu/gutil/strings/util.h"
-#include "kudu/gutil/algorithm.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
@@ -69,7 +68,7 @@ class TestDeltaCompaction : public KuduTest {
     gscoped_ptr<WritableBlock> block;
     RETURN_NOT_OK(fs_manager_->CreateNewBlock(&block));
     *block_id = block->id();
-    dfw->reset(new DeltaFileWriter(block.Pass()));
+    dfw->reset(new DeltaFileWriter(std::move(block)));
     RETURN_NOT_OK((*dfw)->Start());
     return Status::OK();
   }
@@ -79,7 +78,7 @@ class TestDeltaCompaction : public KuduTest {
     gscoped_ptr<ReadableBlock> block;
     RETURN_NOT_OK(fs_manager_->OpenBlock(block_id, &block));
     shared_ptr<DeltaFileReader> delta_reader;
-    return DeltaFileReader::Open(block.Pass(), block_id, dfr, REDO);
+    return DeltaFileReader::Open(std::move(block), block_id, dfr, REDO);
   }
 
   virtual void SetUp() OVERRIDE {

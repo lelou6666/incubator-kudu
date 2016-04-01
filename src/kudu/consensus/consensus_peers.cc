@@ -72,6 +72,7 @@ using std::shared_ptr;
 using rpc::Messenger;
 using rpc::RpcController;
 using strings::Substitute;
+using tserver::TabletServerErrorPB;
 
 Status Peer::NewRemotePeer(const RaftPeerPB& peer_pb,
                            const string& tablet_id,
@@ -84,7 +85,7 @@ Status Peer::NewRemotePeer(const RaftPeerPB& peer_pb,
   gscoped_ptr<Peer> new_peer(new Peer(peer_pb,
                                       tablet_id,
                                       leader_uuid,
-                                      proxy.Pass(),
+                                      std::move(proxy),
                                       queue,
                                       thread_pool));
   RETURN_NOT_OK(new_peer->Init());
@@ -98,7 +99,7 @@ Peer::Peer(const RaftPeerPB& peer_pb, string tablet_id, string leader_uuid,
     : tablet_id_(std::move(tablet_id)),
       leader_uuid_(std::move(leader_uuid)),
       peer_pb_(peer_pb),
-      proxy_(proxy.Pass()),
+      proxy_(std::move(proxy)),
       queue_(queue),
       failed_attempts_(0),
       sem_(1),
@@ -245,7 +246,7 @@ void Peer::ProcessResponse() {
   // Pass through errors we can respond to, like not found, since in that case
   // we will need to remotely bootstrap. TODO: Handle DELETED response once implemented.
   if ((response_.has_error() &&
-      response_.error().code() != tserver::TabletServerErrorPB::TABLET_NOT_FOUND) ||
+      response_.error().code() != TabletServerErrorPB::TABLET_NOT_FOUND) ||
       (response_.status().has_error() &&
           response_.status().error().code() == consensus::ConsensusErrorPB::CANNOT_PREPARE)) {
     // Again, let the queue know that the remote is still responsive, since we
@@ -304,7 +305,11 @@ void Peer::ProcessRemoteBootstrapResponse() {
   if (controller_.status().ok() && rb_response_.has_error()) {
     // ALREADY_INPROGRESS is expected, so we do not log this error.
     if (rb_response_.error().code() ==
+<<<<<<< HEAD
         kudu::tserver::TabletServerErrorPB::TabletServerErrorPB::ALREADY_INPROGRESS) {
+=======
+        TabletServerErrorPB::TabletServerErrorPB::ALREADY_INPROGRESS) {
+>>>>>>> refs/remotes/apache/master
       queue_->NotifyPeerIsResponsiveDespiteError(peer_pb_.permanent_uuid());
     } else {
       LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Unable to begin remote bootstrap on peer: "
@@ -316,9 +321,17 @@ void Peer::ProcessRemoteBootstrapResponse() {
 
 void Peer::ProcessResponseError(const Status& status) {
   failed_attempts_++;
+  string resp_err_info;
+  if (response_.has_error()) {
+    resp_err_info = Substitute(" Error code: $0 ($1).",
+                               TabletServerErrorPB::Code_Name(response_.error().code()),
+                               response_.error().code());
+  }
   LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Couldn't send request to peer " << peer_pb_.permanent_uuid()
-      << " for tablet " << tablet_id_
-      << " Status: " << status.ToString() << ". Retrying in the next heartbeat period."
+      << " for tablet " << tablet_id_ << "."
+      << resp_err_info
+      << " Status: " << status.ToString() << "."
+      << " Retrying in the next heartbeat period."
       << " Already tried " << failed_attempts_ << " times.";
   sem_.Release();
 }
@@ -357,8 +370,8 @@ Peer::~Peer() {
 
 RpcPeerProxy::RpcPeerProxy(gscoped_ptr<HostPort> hostport,
                            gscoped_ptr<ConsensusServiceProxy> consensus_proxy)
-    : hostport_(hostport.Pass()),
-      consensus_proxy_(consensus_proxy.Pass()) {
+    : hostport_(std::move(hostport)),
+      consensus_proxy_(std::move(consensus_proxy)) {
 }
 
 void RpcPeerProxy::UpdateAsync(const ConsensusRequestPB* request,
@@ -412,7 +425,7 @@ Status RpcPeerProxyFactory::NewProxy(const RaftPeerPB& peer_pb,
   RETURN_NOT_OK(HostPortFromPB(peer_pb.last_known_addr(), hostport.get()));
   gscoped_ptr<ConsensusServiceProxy> new_proxy;
   RETURN_NOT_OK(CreateConsensusServiceProxyForHost(messenger_, *hostport, &new_proxy));
-  proxy->reset(new RpcPeerProxy(hostport.Pass(), new_proxy.Pass()));
+  proxy->reset(new RpcPeerProxy(std::move(hostport), std::move(new_proxy)));
   return Status::OK();
 }
 

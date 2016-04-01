@@ -421,6 +421,21 @@ void CheckIfNoLongerLeaderAndSetupError(Status s, RespClass* resp) {
   }
 }
 
+template<class RespClass>
+Status CheckIfTableDeletedOrNotRunning(TableMetadataLock* lock, RespClass* resp) {
+  if (lock->data().is_deleted()) {
+    Status s = Status::NotFound("The table was deleted", lock->data().pb.state_msg());
+    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
+    return s;
+  }
+  if (!lock->data().is_running()) {
+    Status s = Status::ServiceUnavailable("The table is not running");
+    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
+    return s;
+  }
+  return Status::OK();
+}
+
 } // anonymous namespace
 
 CatalogManager::CatalogManager(Master *master)
@@ -609,6 +624,12 @@ void CatalogManager::Shutdown() {
     e.second->WaitTasksCompletion();
   }
 
+  // Wait for any outstanding table visitors to finish.
+  //
+  // Must be done before shutting down the catalog, otherwise its tablet peer
+  // may be destroyed while still in use by a table visitor.
+  worker_pool_->Shutdown();
+
   // Shut down the underlying storage for tables and tablets.
   if (sys_catalog_) {
     sys_catalog_->Shutdown();
@@ -785,15 +806,17 @@ Status CatalogManager::CreateTable(const CreateTableRequestPB* orig_req,
     for (const Partition& partition : partitions) {
       PartitionPB partition_pb;
       partition.ToPB(&partition_pb);
-      tablets.push_back(CreateTabletInfo(table.get(), partition_pb));
+      scoped_refptr<TabletInfo> t = CreateTabletInfo(table.get(), partition_pb);
+      tablets.push_back(t.get());
+
+      // Add the new tablet to the catalog-manager-wide map by tablet ID.
+      InsertOrDie(&tablet_map_, t->tablet_id(), std::move(t));
     }
 
-    // Add the table/tablets to the in-memory map for the assignment.
     resp->set_table_id(table->id());
+
+    // Add the tablets to the table's map.
     table->AddTablets(tablets);
-    for (TabletInfo* tablet : tablets) {
-      InsertOrDie(&tablet_map_, tablet->tablet_id(), tablet);
-    }
   }
   TRACE("Inserted new table and tablet info into CatalogManager maps");
 
@@ -807,7 +830,9 @@ Status CatalogManager::CreateTable(const CreateTableRequestPB* orig_req,
   }
 
   // e. Write Tablets to sys-tablets (in "preparing" state)
-  s = sys_catalog_->AddTablets(tablets);
+  SysCatalogTable::Actions tablet_actions;
+  tablet_actions.tablets_to_add = tablets;
+  s = sys_catalog_->Write(tablet_actions);
   if (!s.ok()) {
     s = s.CloneAndPrepend(Substitute("An error occurred while inserting to sys-tablets: $0",
                                      s.ToString()));
@@ -820,7 +845,9 @@ Status CatalogManager::CreateTable(const CreateTableRequestPB* orig_req,
 
   // f. Update the on-disk table state to "running".
   table->mutable_metadata()->mutable_dirty()->pb.set_state(SysTablesEntryPB::RUNNING);
-  s = sys_catalog_->AddTable(table.get());
+  SysCatalogTable::Actions table_actions;
+  table_actions.table_to_add = table.get();
+  s = sys_catalog_->Write(table_actions);
   if (!s.ok()) {
     s = s.CloneAndPrepend(Substitute("An error occurred while inserting to sys-tablets: $0",
                                      s.ToString()));
@@ -860,11 +887,7 @@ Status CatalogManager::IsCreateTableDone(const IsCreateTableDoneRequestPB* req,
 
   TRACE("Locking table");
   TableMetadataLock l(table.get(), TableMetadataLock::READ);
-  if (l.data().is_deleted()) {
-    Status s = Status::NotFound("The table was deleted", l.data().pb.state_msg());
-    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
-    return s;
-  }
+  RETURN_NOT_OK(CheckIfTableDeletedOrNotRunning(&l, resp));
 
   // 2. Verify if the create is in-progress
   TRACE("Verify if the table creation is in progress for $0", table->ToString());
@@ -892,9 +915,9 @@ TableInfo *CatalogManager::CreateTableInfo(const CreateTableRequestPB& req,
   return table;
 }
 
-TabletInfo* CatalogManager::CreateTabletInfo(TableInfo* table,
-                                             const PartitionPB& partition) {
-  TabletInfo* tablet = new TabletInfo(table, GenerateId());
+scoped_refptr<TabletInfo> CatalogManager::CreateTabletInfo(TableInfo* table,
+                                                           const PartitionPB& partition) {
+  scoped_refptr<TabletInfo> tablet(new TabletInfo(table, GenerateId()));
   tablet->mutable_metadata()->StartMutation();
   SysTabletsEntryPB *metadata = &tablet->mutable_metadata()->mutable_dirty()->pb;
   metadata->set_state(SysTabletsEntryPB::PREPARING);
@@ -956,7 +979,9 @@ Status CatalogManager::DeleteTable(const DeleteTableRequestPB* req,
                               Substitute("Deleted at $0", LocalTimeAsString()));
 
   // 3. Update sys-catalog with the removed table state.
-  Status s = sys_catalog_->UpdateTable(table.get());
+  SysCatalogTable::Actions actions;
+  actions.table_to_update = table.get();
+  Status s = sys_catalog_->Write(actions);
   if (!s.ok()) {
     // The mutation will be aborted when 'l' exits the scope on early return.
     s = s.CloneAndPrepend(Substitute("An error occurred while updating sys tables: $0",
@@ -1163,7 +1188,9 @@ Status CatalogManager::AlterTable(const AlterTableRequestPB* req,
 
   // 5. Update sys-catalog with the new table schema.
   TRACE("Updating metadata on disk");
-  Status s = sys_catalog_->UpdateTable(table.get());
+  SysCatalogTable::Actions actions;
+  actions.table_to_update = table.get();
+  Status s = sys_catalog_->Write(actions);
   if (!s.ok()) {
     s = s.CloneAndPrepend(
         Substitute("An error occurred while updating sys-catalog tables entry: $0",
@@ -1214,11 +1241,7 @@ Status CatalogManager::IsAlterTableDone(const IsAlterTableDoneRequestPB* req,
 
   TRACE("Locking table");
   TableMetadataLock l(table.get(), TableMetadataLock::READ);
-  if (l.data().is_deleted()) {
-    Status s = Status::NotFound("The table was deleted", l.data().pb.state_msg());
-    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
-    return s;
-  }
+  RETURN_NOT_OK(CheckIfTableDeletedOrNotRunning(&l, resp));
 
   // 2. Verify if the alter is in-progress
   TRACE("Verify if there is an alter operation in progress for $0", table->ToString());
@@ -1245,11 +1268,7 @@ Status CatalogManager::GetTableSchema(const GetTableSchemaRequestPB* req,
 
   TRACE("Locking table");
   TableMetadataLock l(table.get(), TableMetadataLock::READ);
-  if (l.data().is_deleted()) {
-    Status s = Status::NotFound("The table was deleted", l.data().pb.state_msg());
-    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
-    return s;
-  }
+  RETURN_NOT_OK(CheckIfTableDeletedOrNotRunning(&l, resp));
 
   if (l.data().pb.has_fully_applied_schema()) {
     // An AlterTable is in progress; fully_applied_schema is the last
@@ -1276,7 +1295,7 @@ Status CatalogManager::ListTables(const ListTablesRequestPB* req,
 
   for (const TableInfoMap::value_type& entry : table_names_map_) {
     TableMetadataLock ltm(entry.second.get(), TableMetadataLock::READ);
-    if (!ltm.data().is_running()) continue;
+    if (!ltm.data().is_running()) continue; // implies !is_deleted() too
 
     if (req->has_name_filter()) {
       size_t found = ltm.data().name().find(req->name_filter());
@@ -1586,7 +1605,9 @@ Status CatalogManager::HandleReportedTablet(TSDescriptor* ts_desc,
   table_lock.Unlock();
   // We update the tablets each time that someone reports it.
   // This shouldn't be very frequent and should only happen when something in fact changed.
-  Status s = sys_catalog_->UpdateTablets({ tablet.get() });
+  SysCatalogTable::Actions actions;
+  actions.tablets_to_update.push_back(tablet.get());
+  Status s = sys_catalog_->Write(actions);
   if (!s.ok()) {
     LOG(WARNING) << "Error updating tablets: " << s.ToString() << ". Tablet report was: "
                  << report.ShortDebugString();
@@ -1783,7 +1804,7 @@ class RetryingTSRpcTask : public MonitoredTask {
                     const scoped_refptr<TableInfo>& table)
     : master_(master),
       callback_pool_(callback_pool),
-      replica_picker_(replica_picker.Pass()),
+      replica_picker_(std::move(replica_picker)),
       table_(table),
       start_ts_(MonoTime::Now(MonoTime::FINE)),
       attempt_(0),
@@ -2439,7 +2460,9 @@ void CatalogManager::DeleteTabletsAndSendRequests(const scoped_refptr<TableInfo>
 
     TabletMetadataLock tablet_lock(tablet.get(), TabletMetadataLock::WRITE);
     tablet_lock.mutable_data()->set_state(SysTabletsEntryPB::DELETED, deletion_msg);
-    CHECK_OK(sys_catalog_->UpdateTablets({ tablet.get() }));
+    SysCatalogTable::Actions actions;
+    actions.tablets_to_update.push_back(tablet.get());
+    CHECK_OK(sys_catalog_->Write(actions));
     tablet_lock.Commit();
   }
 }
@@ -2556,13 +2579,13 @@ void CatalogManager::HandleAssignCreatingTablet(TabletInfo* tablet,
 
   // The "tablet creation" was already sent, but we didn't receive an answer
   // within the timeout. So the tablet will be replaced by a new one.
-  TabletInfo *replacement = CreateTabletInfo(tablet->table().get(),
+  scoped_refptr<TabletInfo> replacement = CreateTabletInfo(tablet->table().get(),
                                              old_info.pb.partition());
   LOG(WARNING) << "Tablet " << tablet->ToString() << " was not created within "
                << "the allowed timeout. Replacing with a new tablet "
                << replacement->tablet_id();
 
-  tablet->table()->AddTablet(replacement);
+  tablet->table()->AddTablet(replacement.get());
   {
     boost::lock_guard<LockType> l_maps(lock_);
     tablet_map_[replacement->tablet_id()] = replacement;
@@ -2580,13 +2603,13 @@ void CatalogManager::HandleAssignCreatingTablet(TabletInfo* tablet,
     Substitute("Replacement for $0", tablet->tablet_id()));
 
   deferred->tablets_to_update.push_back(tablet);
-  deferred->tablets_to_add.push_back(replacement);
-  deferred->needs_create_rpc.push_back(replacement);
+  deferred->tablets_to_add.push_back(replacement.get());
+  deferred->needs_create_rpc.push_back(replacement.get());
   VLOG(1) << "Replaced tablet " << tablet->tablet_id()
           << " with " << replacement->tablet_id()
           << " (Table " << tablet->table()->ToString() << ")";
 
-  new_tablets->push_back(replacement);
+  new_tablets->emplace_back(std::move(replacement));
 }
 
 // TODO: we could batch the IO onto a background thread.
@@ -2613,7 +2636,9 @@ Status CatalogManager::HandleTabletSchemaVersionReport(TabletInfo *tablet, uint3
   l.mutable_data()->set_state(SysTablesEntryPB::RUNNING,
                               Substitute("Current schema version=$0", current_version));
 
-  Status s = sys_catalog_->UpdateTable(table);
+  SysCatalogTable::Actions actions;
+  actions.table_to_update = table;
+  Status s = sys_catalog_->Write(actions);
   if (!s.ok()) {
     LOG(WARNING) << "An error occurred while updating sys-tables: " << s.ToString();
     return s;
@@ -2726,8 +2751,10 @@ Status CatalogManager::ProcessPendingAssignments(
 
   // Update the sys catalog with the new set of tablets/metadata.
   if (s.ok()) {
-    s = sys_catalog_->AddAndUpdateTablets(deferred.tablets_to_add,
-                                          deferred.tablets_to_update);
+    SysCatalogTable::Actions actions;
+    actions.tablets_to_add = deferred.tablets_to_add;
+    actions.tablets_to_update = deferred.tablets_to_update;
+    s = sys_catalog_->Write(actions);
     if (!s.ok()) {
       s = s.CloneAndPrepend("An error occurred while persisting the updated tablet metadata");
     }
@@ -3022,7 +3049,6 @@ Status CatalogManager::GetTableLocations(const GetTableLocationsRequestPB* req,
 
   scoped_refptr<TableInfo> table;
   RETURN_NOT_OK(FindTable(req->table(), &table));
-
   if (table == nullptr) {
     Status s = Status::NotFound("The table does not exist");
     SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
@@ -3030,18 +3056,7 @@ Status CatalogManager::GetTableLocations(const GetTableLocationsRequestPB* req,
   }
 
   TableMetadataLock l(table.get(), TableMetadataLock::READ);
-  if (l.data().is_deleted()) {
-    Status s = Status::NotFound("The table was deleted",
-                                l.data().pb.state_msg());
-    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
-    return s;
-  }
-
-  if (!l.data().is_running()) {
-    Status s = Status::ServiceUnavailable("The table is not running");
-    SetupError(resp->mutable_error(), MasterErrorPB::TABLE_NOT_FOUND, s);
-    return s;
-  }
+  RETURN_NOT_OK(CheckIfTableDeletedOrNotRunning(&l, resp));
 
   vector<scoped_refptr<TabletInfo> > tablets_in_range;
   table->GetTabletsInRange(req, &tablets_in_range);
@@ -3241,7 +3256,9 @@ void TableInfo::GetTabletsInRange(const GetTableLocationsRequestPB* req,
   TableInfo::TabletInfoMap::const_iterator it, it_end;
   if (req->has_partition_key_start()) {
     it = tablet_map_.upper_bound(req->partition_key_start());
-    --it;
+    if (it != tablet_map_.begin()) {
+      --it;
+    }
   } else {
     it = tablet_map_.begin();
   }

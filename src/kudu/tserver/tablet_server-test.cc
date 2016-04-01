@@ -874,6 +874,41 @@ TEST_F(TabletServerTest, TestKUDU_176_RecoveryAfterMajorDeltaCompaction) {
   ANFF(VerifyRows(schema_, { KeyValue(1, 2) }));
 }
 
+// Regression test for KUDU-1341, a case in which, during bootstrap,
+// we have a DELETE for a row which is still live in multiple on-disk
+// rowsets.
+TEST_F(TabletServerTest, TestKUDU_1341) {
+  const int kTid = 0;
+
+  for (int i = 0; i < 3; i++) {
+    // Insert a row to DMS and flush it.
+    ANFF(InsertTestRowsRemote(kTid, 1, 1));
+    ASSERT_OK(tablet_peer_->tablet()->Flush());
+
+    // Update and delete row (in DMS)
+    ANFF(UpdateTestRowRemote(kTid, 1, i));
+    ANFF(DeleteTestRowsRemote(1, 1));
+  }
+
+  // Insert row again, update it in MRS before flush, and
+  // flush.
+  ANFF(InsertTestRowsRemote(kTid, 1, 1));
+  ANFF(UpdateTestRowRemote(kTid, 1, 12345));
+  ASSERT_OK(tablet_peer_->tablet()->Flush());
+
+  ANFF(VerifyRows(schema_, { KeyValue(1, 12345) }));
+
+  // Test restart.
+  ASSERT_OK(ShutdownAndRebuildTablet());
+  ANFF(VerifyRows(schema_, { KeyValue(1, 12345) }));
+  ASSERT_OK(tablet_peer_->tablet()->Flush());
+  ANFF(VerifyRows(schema_, { KeyValue(1, 12345) }));
+
+  // Test compaction after restart.
+  ASSERT_OK(tablet_peer_->tablet()->Compact(Tablet::FORCE_COMPACT_ALL));
+  ANFF(VerifyRows(schema_, { KeyValue(1, 12345) }));
+}
+
 // Regression test for KUDU-177. Ensures that after a major delta compaction,
 // rows that were in the old DRS's DMS are properly replayed.
 TEST_F(TabletServerTest, TestKUDU_177_RecoveryOfDMSEditsAfterMajorDeltaCompaction) {
@@ -1358,11 +1393,11 @@ TEST_F(TabletServerTest, TestScanWithStringPredicates) {
   ASSERT_OK(SchemaToColumnPBs(schema_, scan->mutable_projected_columns()));
 
   // Set up a range predicate: "hello 50" < string_val <= "hello 59"
-  ColumnRangePredicatePB* pred = scan->add_range_predicates();
+  ColumnRangePredicatePB* pred = scan->add_deprecated_range_predicates();
   pred->mutable_column()->CopyFrom(scan->projected_columns(2));
 
   pred->set_lower_bound("hello 50");
-  pred->set_upper_bound("hello 59");
+  pred->set_inclusive_upper_bound("hello 59");
 
   // Send the call
   {
@@ -1399,15 +1434,15 @@ TEST_F(TabletServerTest, TestScanWithPredicates) {
   ASSERT_OK(SchemaToColumnPBs(schema_, scan->mutable_projected_columns()));
 
   // Set up a range predicate: 51 <= key <= 100
-  ColumnRangePredicatePB* pred = scan->add_range_predicates();
+  ColumnRangePredicatePB* pred = scan->add_deprecated_range_predicates();
   pred->mutable_column()->CopyFrom(scan->projected_columns(0));
 
   int32_t lower_bound_int = 51;
   int32_t upper_bound_int = 100;
   pred->mutable_lower_bound()->append(reinterpret_cast<char*>(&lower_bound_int),
                                       sizeof(lower_bound_int));
-  pred->mutable_upper_bound()->append(reinterpret_cast<char*>(&upper_bound_int),
-                                      sizeof(upper_bound_int));
+  pred->mutable_inclusive_upper_bound()->append(reinterpret_cast<char*>(&upper_bound_int),
+                                                sizeof(upper_bound_int));
 
   // Send the call
   {

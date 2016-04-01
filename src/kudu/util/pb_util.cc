@@ -265,7 +265,7 @@ void TruncateFields(Message* message, int max_len) {
 
 WritablePBContainerFile::WritablePBContainerFile(gscoped_ptr<WritableFile> writer)
   : closed_(false),
-    writer_(writer.Pass()) {
+    writer_(std::move(writer)) {
 }
 
 WritablePBContainerFile::~WritablePBContainerFile() {
@@ -412,7 +412,7 @@ void WritablePBContainerFile::PopulateDescriptorSet(
 
 ReadablePBContainerFile::ReadablePBContainerFile(gscoped_ptr<RandomAccessFile> reader)
   : offset_(0),
-    reader_(reader.Pass()) {
+    reader_(std::move(reader)) {
 }
 
 ReadablePBContainerFile::~ReadablePBContainerFile() {
@@ -586,8 +586,8 @@ Status ReadablePBContainerFile::ValidateAndRead(size_t length, EofOK eofOK,
       case EOF_NOT_OK:
         return Status::Corruption("File size not large enough to be valid",
                                   Substitute("Proto container file $0: "
-                                      "tried to read $0 bytes at offset "
-                                      "$1 but file size is only $2",
+                                      "tried to read $1 bytes at offset "
+                                      "$2 but file size is only $3",
                                       reader_->filename(), length,
                                       offset_, file_size));
       default:
@@ -618,7 +618,7 @@ Status ReadPBContainerFromPath(Env* env, const std::string& path, Message* msg) 
   gscoped_ptr<RandomAccessFile> file;
   RETURN_NOT_OK(env->NewRandomAccessFile(path, &file));
 
-  ReadablePBContainerFile pb_file(file.Pass());
+  ReadablePBContainerFile pb_file(std::move(file));
   RETURN_NOT_OK(pb_file.Init());
   RETURN_NOT_OK(pb_file.ReadNextPB(msg));
   return pb_file.Close();
@@ -643,7 +643,7 @@ Status WritePBContainerToPath(Env* env, const std::string& path,
   RETURN_NOT_OK(env->NewTempWritableFile(WritableFileOptions(), tmp_template, &tmp_path, &file));
   env_util::ScopedFileDeleter tmp_deleter(env, tmp_path);
 
-  WritablePBContainerFile pb_file(file.Pass());
+  WritablePBContainerFile pb_file(std::move(file));
   RETURN_NOT_OK(pb_file.Init(msg));
   RETURN_NOT_OK(pb_file.Append(msg));
   if (sync == pb_util::SYNC) {

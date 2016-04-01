@@ -17,12 +17,16 @@
 
 #include "kudu/rpc/constants.h"
 
+using std::set;
+
 namespace kudu {
 namespace rpc {
 
 const char* const kMagicNumber = "hrpc";
 const char* const kSaslAppName = "Kudu";
 const char* const kSaslProtoName = "kudu";
+set<RpcFeatureFlag> kSupportedServerRpcFeatureFlags = { APPLICATION_FEATURE_FLAGS };
+set<RpcFeatureFlag> kSupportedClientRpcFeatureFlags = { APPLICATION_FEATURE_FLAGS };
 
 } // namespace rpc
 } // namespace kudu

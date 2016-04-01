@@ -22,7 +22,7 @@
 #
 # Environment variables may be used to customize operation:
 #   BUILD_TYPE: Default: DEBUG
-#     Maybe be one of ASAN|TSAN|LEAKCHECK|DEBUG|RELEASE|COVERAGE|LINT
+#     Maybe be one of ASAN|TSAN|DEBUG|RELEASE|COVERAGE|LINT
 #
 #   KUDU_ALLOW_SLOW_TESTS   Default: 1
 #     Runs the "slow" version of the unit tests. Set to 0 to
@@ -55,10 +55,6 @@
 #
 #   BUILD_JAVA        Default: 1
 #     Build and test java code if this is set to 1.
-#
-#   VALIDATE_CSD      Default: 0
-#     If 1, runs the CM CSD validator against the Kudu CSD.
-#     This requires access to an internal Cloudera maven repository.
 #
 #   BUILD_PYTHON       Default: 1
 #     Build and test the Python wrapper of the client API.
@@ -102,7 +98,6 @@ export KUDU_ALLOW_SLOW_TESTS=${KUDU_ALLOW_SLOW_TESTS:-$DEFAULT_ALLOW_SLOW_TESTS}
 export KUDU_COMPRESS_TEST_OUTPUT=${KUDU_COMPRESS_TEST_OUTPUT:-1}
 export TEST_TMPDIR=${TEST_TMPDIR:-/tmp/kudutest-$UID}
 BUILD_JAVA=${BUILD_JAVA:-1}
-VALIDATE_CSD=${VALIDATE_CSD:-0}
 BUILD_PYTHON=${BUILD_PYTHON:-1}
 
 # Ensure that the test data directory is usable.
@@ -123,7 +118,9 @@ rm -rf $BUILD_ROOT
 mkdir -p $BUILD_ROOT
 
 list_flaky_tests() {
-  curl -s "http://$TEST_RESULT_SERVER/list_failed_tests?num_days=3&build_pattern=%25kudu-test%25"
+  local url="http://$TEST_RESULT_SERVER/list_failed_tests?num_days=3&build_pattern=%25kudu-test%25"
+  >&2 echo Fetching flaky test list from "$url" ...
+  curl -s --show-error "$url"
   return $?
 }
 
@@ -177,17 +174,16 @@ elif [ "$BUILD_TYPE" = "TSAN" ]; then
   BUILD_TYPE=fastdebug
   EXTRA_TEST_FLAGS="$EXTRA_TEST_FLAGS -LE no_tsan"
   BUILD_PYTHON=0
-elif [ "$BUILD_TYPE" = "LEAKCHECK" ]; then
-  BUILD_TYPE=release
-  export HEAPCHECK=normal
-  # Workaround for gperftools issue #497
-  export LD_BIND_NOW=1
 elif [ "$BUILD_TYPE" = "COVERAGE" ]; then
   DO_COVERAGE=1
   BUILD_TYPE=debug
-  $SOURCE_ROOT/build-support/enable_devtoolset.sh "$THIRDPARTY_BIN/cmake -DKUDU_GENERATE_COVERAGE=1 $SOURCE_ROOT"
-  # Reset coverage info from previous runs
-  find src -name \*.gcda -o -name \*.gcno -exec rm {} \;
+
+  # We currently dont capture coverage for Java or Python.
+  BUILD_JAVA=0
+  BUILD_PYTHON=0
+
+  $SOURCE_ROOT/build-support/enable_devtoolset.sh \
+    "env CC=$CLANG CXX=$CLANG++ $THIRDPARTY_BIN/cmake -DKUDU_GENERATE_COVERAGE=1 $SOURCE_ROOT"
 elif [ "$BUILD_TYPE" = "LINT" ]; then
   # Create empty test logs or else Jenkins fails to archive artifacts, which
   # results in the build failing.
@@ -257,15 +253,24 @@ if [ "$RUN_FLAKY_ONLY" == "1" ] ; then
   echo
   echo Running flaky tests only:
   echo ------------------------------------------------------------
-  list_flaky_tests | tee build/flaky-tests.txt
+  if ! ( set -o pipefail ;
+         list_flaky_tests | tee $BUILD_ROOT/flaky-tests.txt) ; then
+    echo Could not fetch flaky tests list.
+    exit 1
+  fi
   test_regex=$(perl -e '
     chomp(my @lines = <>);
     print join("|", map { "^" . quotemeta($_) . "\$" } @lines);
-   ' build/flaky-tests.txt)
+   ' $BUILD_ROOT/flaky-tests.txt)
+  if [ -z "$test_regex" ]; then
+    echo No tests are flaky.
+    exit 0
+  fi
   EXTRA_TEST_FLAGS="$EXTRA_TEST_FLAGS -R $test_regex"
 
-  # We don't support detecting java flaky tests at the moment.
-  echo Disabling Java build since RUN_FLAKY_ONLY=1
+  # We don't support detecting java and python flaky tests at the moment.
+  echo Disabling Java and python build since RUN_FLAKY_ONLY=1
+  BUILD_PYTHON=0
   BUILD_JAVA=0
 fi
 
@@ -297,7 +302,11 @@ if [ "$DO_COVERAGE" == "1" ]; then
   echo
   echo Generating coverage report...
   echo ------------------------------------------------------------
-  if ! ./thirdparty/gcovr-3.0/scripts/gcovr -r $SOURCE_ROOT --xml \
+  if ! $SOURCE_ROOT/thirdparty/gcovr-3.0/scripts/gcovr \
+      -r $SOURCE_ROOT \
+      --gcov-filter='.*src#kudu.*' \
+      --gcov-executable=$SOURCE_ROOT/build-support/llvm-gcov-wrapper \
+      --xml \
       > $BUILD_ROOT/coverage.xml ; then
     EXIT_STATUS=1
     FAILURES="$FAILURES"$'Coverage report failed\n'
@@ -314,12 +323,7 @@ if [ "$BUILD_JAVA" == "1" ]; then
   pushd $SOURCE_ROOT/java
   export TSAN_OPTIONS="$TSAN_OPTIONS suppressions=$SOURCE_ROOT/build-support/tsan-suppressions.txt history_size=7"
   set -x
-  VALIDATE_CSD_FLAG=""
-  if [ "$VALIDATE_CSD" == "1" ]; then
-    VALIDATE_CSD_FLAG="-PvalidateCSD"
-  fi
   if ! mvn $MVN_FLAGS -PbuildCSD \
-      $VALIDATE_CSD_FLAG \
       -Dsurefire.rerunFailingTestsCount=3 \
       -Dfailsafe.rerunFailingTestsCount=3 \
       clean verify ; then
@@ -395,23 +399,6 @@ if [ "$ENABLE_DIST_TEST" == "1" ]; then
     done
     rm -Rf $arch_dir
   done
-fi
-
-if [ "$HEAPCHECK" = normal ]; then
-  echo
-  echo Checking that heap checker ran correctly
-  echo ------------------------------------------------------------
-  FAILED_TESTS=$(zgrep -L -- "WARNING: Perftools heap leak checker is active -- Performance may suffer" $BUILD_ROOT/test-logs/*-test.txt*)
-  if [ -n "$FAILED_TESTS" ]; then
-    echo "Some tests didn't heap check properly:"
-    for FTEST in $FAILED_TESTS; do
-      echo $FTEST
-    done
-    EXIT_STATUS=1
-    FAILURES="$FAILURES"$'Heap checker did not run properly\n'
-  else
-    echo "All tests heap checked properly"
-  fi
 fi
 
 if [ $EXIT_STATUS != 0 ]; then

@@ -220,9 +220,12 @@ target_link_libraries(kudu_client_test_util
 
 # Tests
 
-if (NOT APPLE)
-  # The OS X system compiler does not support source symbol maps, so the client
-  # leaks internal symbols globally.
+# The OS X system compiler does not support source symbol maps, so the client
+# leaks internal symbols globally.
+#
+# Coverage builds insert gcov-related symbols into the client library. We
+# don't ship such builds, so there's no point in checking symbol visibility.
+if (NOT APPLE AND NOT "${KUDU_GENERATE_COVERAGE}")
   ADD_KUDU_TEST(client_symbol-test.sh LABELS no_dist_test)
 endif()
 
@@ -233,3 +236,4 @@ endif()
 set(KUDU_TEST_LINK_LIBS kudu_client integration-tests ${KUDU_MIN_TEST_LIBS})
 ADD_KUDU_TEST(client-test)
 ADD_KUDU_TEST(client-unittest)
+ADD_KUDU_TEST(predicate-test)

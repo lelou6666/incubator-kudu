@@ -213,7 +213,11 @@ on a version older than 7.0, the Red Hat Developer Toolset must be installed
 ----
 $ sudo yum install gcc gcc-c++ autoconf automake libtool \
   boost-static boost-devel cyrus-sasl-devel \
+<<<<<<< HEAD
   cyrus-sasl-plain patch pkgconfig make rsync vim-common gdb
+=======
+  cyrus-sasl-plain patch pkgconfig make rsync vim-common gdb git
+>>>>>>> refs/remotes/apache/master
 ----
 
 . If building on RHEL or CentOS older than 7.0, install the Red Hat Developer
@@ -227,9 +231,10 @@ $ sudo yum install -y scl-utils ${DTLS_RPM}
 $ sudo yum install -y devtoolset-3-toolchain
 ----
 
-. Optional: Install the `asciidoctor` gem if you plan to build documentation.
+. Optional: Install the gem and ruby-devel packages, and the `asciidoctor` gem if you plan to build documentation.
 +
 ----
+$ sudo yum install gem ruby-devel
 $ sudo gem install asciidoctor
 ----
 
@@ -237,7 +242,7 @@ $ sudo gem install asciidoctor
 +
 [source,bash]
 ----
-$ git clone https://github.com/cloudera/kudu
+$ git clone https://github.com/apache/incubator-kudu kudu
 $ cd kudu
 ----
 
@@ -293,7 +298,11 @@ automated deployment scenario. It skips the steps marked *Optional* above.
 
 sudo yum -y install gcc gcc-c++ autoconf automake libtool \
   boost-static boost-devel cyrus-sasl-devel \
+<<<<<<< HEAD
   cyrus-sasl-plain patch pkgconfig make rsync vim-common gdb
+=======
+  cyrus-sasl-plain patch pkgconfig make rsync vim-common gdb git
+>>>>>>> refs/remotes/apache/master
 DTLS_RPM=rhscl-devtoolset-3-epel-6-x86_64.noarch.rpm
 DTLS_RPM_URL=https://www.softwarecollections.org/en/scls/rhscl/devtoolset-3/epel-6-x86_64/download/${DTLS_RPM}
 wget ${DTLS_RPM_URL} -O ${DTLS_RPM}
@@ -332,7 +341,7 @@ $ sudo apt-get install asciidoctor xsltproc
 +
 [source,bash]
 ----
-$ git clone https://github.com/cloudera/kudu
+$ git clone https://github.com/apache/incubator-kudu kudu
 $ cd kudu
 ----
 
@@ -384,7 +393,7 @@ the steps marked *Optional* above.
 sudo apt-get -y install git autoconf automake libboost-thread-dev \
   libboost-system-dev curl gcc g++ libsasl2-dev libsasl2-modules \
   libtool ntp patch pkg-config make rsync unzip vim-common gdb python
-git clone https://github.com/cloudera/kudu
+git clone https://github.com/apache/incubator-kudu kudu
 cd kudu
 thirdparty/build-if-necessary.sh
 mkdir -p build/release
@@ -418,8 +427,7 @@ wget https://downloads.sourceforge.net/project/boost/boost/1.59.0/boost_1_59_0.t
 tar xzf boost_1_59_0.tar.gz
 pushd boost_1_59_0
 ./bootstrap.sh
-./b2 --with-system --with-threads
-export BOOST_ROOT=$(pwd)
+./b2 --with-system --with-thread
 popd
 ----
 
@@ -427,7 +435,7 @@ popd
 +
 [source,bash]
 ----
-$ git clone https://github.com/cloudera/kudu
+$ git clone https://github.com/apache/incubator-kudu kudu
 $ cd kudu
 ----
 
@@ -446,7 +454,11 @@ except for the `kudu` directory itself.
 ----
 mkdir -p build/release
 cd build/release
+<<<<<<< HEAD
 BOOST_ROOT=../../boost_1_59_0 \
+=======
+BOOST_ROOT=../../../boost_1_59_0 \
+>>>>>>> refs/remotes/apache/master
   ../../thirdparty/installed/bin/cmake \
   -DCMAKE_BUILD_TYPE=release \
   ../..
@@ -478,14 +490,18 @@ wget https://downloads.sourceforge.net/project/boost/boost/1.59.0/boost_1_59_0.t
 tar xzf boost_1_59_0.tar.gz
 pushd boost_1_59_0
 ./bootstrap.sh
-./b2 --with-system --with-threads
+./b2 --with-system --with-thread
 popd
-git clone https://github.com/cloudera/kudu
+git clone https://github.com/apache/incubator-kudu kudu
 cd kudu
 thirdparty/build-if-necessary.sh
 mkdir -p build/release
 cd build/release
+<<<<<<< HEAD
 BOOST_ROOT=../../boost_1_59_0 \
+=======
+BOOST_ROOT=../../../boost_1_59_0 \
+>>>>>>> refs/remotes/apache/master
   ../../thirdparty/installed/bin/cmake \
   -DCMAKE_BUILD_TYPE=release \
   ../..
@@ -518,7 +534,7 @@ $ brew install autoconf automake cmake libtool pkg-config boost pstree
 +
 [source,bash]
 ----
-$ git clone https://github.com/cloudera/kudu
+$ git clone https://github.com/apache/incubator-kudu kudu
 $ cd kudu
 ----
 
@@ -550,7 +566,11 @@ are installed.
 #!/bin/bash
 
 brew install autoconf automake cmake libtool pkg-config boost pstree
+<<<<<<< HEAD
 git clone https://github.com/cloudera/kudu
+=======
+git clone https://github.com/apache/incubator-kudu kudu
+>>>>>>> refs/remotes/apache/master
 cd kudu
 thirdparty/build-if-necessary.sh
 mkdir -p build/release
@@ -621,37 +641,37 @@ in `java/kudu-client/target/apidocs/index.html`.
 // end::view_api[]
 
 [[upgrade]]
-== Upgrade from 0.5.0 to 0.6.0
+== Upgrade from 0.7.1 to 0.8.0
 
-Before upgrading, see <<client_compatibility_0.6.0>> and <<api_compatibility_0.6.0>>.
-To upgrade from Kudu 0.5.0 to 0.6.0, perform the following high-level steps, which
-are detailed in <<upgrade_procedure_0.6.0>>:
+Before upgrading, see <<client_compatibility>> and <<api_compatibility>>.
+To upgrade from Kudu 0.7.1 to 0.8.0, perform the following high-level steps, which
+are detailed in <<upgrade_procedure>>:
 
 . Shut down all Kudu services.
-. Install the new Kudu packages or parcels, or install Kudu 0.6.0 from source.
+. Install the new Kudu packages or parcels, or install Kudu 0.8.0 from source.
 . Restart all Kudu services.
 
 It is technically possible to upgrade Kudu using rolling restarts, but it has not
 been tested and is not recommended.
 
-[[client_compatibility_0.6.0]]
+NOTE: For the duration of the Kudu Beta, upgrade instructions are only given for going
+from the previous latest version to the newest.
+
+[[client_compatibility]]
 === Client compatibility
 
-Kudu 0.6.0 maintains wire compatibility with Kudu 0.5.0. This means that a Kudu 0.6.0
-client can communicate with a Kudu 0.5.0 cluster, and vice versa. For that reason,
-you do not need to upgrade client JARs at the same time the cluster is upgraded.
+Masters and tablet servers should be upgraded before clients are upgraded. For specific
+information about client compatibility, see the
+link:release_notes.html#rn_0.8.0_incompatible_changes[Incompatible Changes] section
+of the release notes.
 
-The same wire compatibility guarantees apply to the Impala_Kudu fork that was released
-with Kudu 0.5.0.
-
-[[api_compatibility_0.6.0]]
+[[api_compatibility]]
 
 === API Compatibility
 
-The Kudu 0.6.0 client API is not compatible with the Kudu 0.5.0 client API. See the
-link:release_notes.html#0.6.0[Kudu 0.6.0 release notes] for details.
+The Kudu 0.8.0 client API is compatible with Kudu 0.7.1.
 
-[[upgrade_procedure_0.6.0]]
+[[upgrade_procedure]]
 === Upgrade procedure
 
 . Stop the Kudu master and tablet server services:

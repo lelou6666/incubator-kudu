@@ -44,14 +44,15 @@
 
 namespace kudu { namespace rpc {
 
-using kudu::rpc_test::AddRequestPartialPB;
 using kudu::rpc_test::AddRequestPB;
+using kudu::rpc_test::AddRequestPartialPB;
 using kudu::rpc_test::AddResponsePB;
 using kudu::rpc_test::CalculatorError;
 using kudu::rpc_test::CalculatorServiceIf;
 using kudu::rpc_test::CalculatorServiceProxy;
 using kudu::rpc_test::EchoRequestPB;
 using kudu::rpc_test::EchoResponsePB;
+using kudu::rpc_test::FeatureFlags;
 using kudu::rpc_test::PanicRequestPB;
 using kudu::rpc_test::PanicResponsePB;
 using kudu::rpc_test::SendTwoStringsRequestPB;
@@ -83,7 +84,7 @@ class GenericCalculatorService : public ServiceIf {
     // this test doesn't generate metrics, so we ignore the argument.
   }
 
-  virtual void Handle(InboundCall *incoming) OVERRIDE {
+  void Handle(InboundCall *incoming) override {
     if (incoming->remote_method().method_name() == kAddMethodName) {
       DoAdd(incoming);
     } else if (incoming->remote_method().method_name() == kSleepMethodName) {
@@ -96,7 +97,7 @@ class GenericCalculatorService : public ServiceIf {
     }
   }
 
-  std::string service_name() const OVERRIDE { return kFullServiceName; }
+  std::string service_name() const override { return kFullServiceName; }
   static std::string static_service_name() { return kFullServiceName; }
 
  private:
@@ -132,9 +133,9 @@ class GenericCalculatorService : public ServiceIf {
     SendTwoStringsResponsePB resp;
     int idx1, idx2;
     CHECK_OK(incoming->AddRpcSidecar(
-        make_gscoped_ptr(new RpcSidecar(first.Pass())), &idx1));
+        make_gscoped_ptr(new RpcSidecar(std::move(first))), &idx1));
     CHECK_OK(incoming->AddRpcSidecar(
-        make_gscoped_ptr(new RpcSidecar(second.Pass())), &idx2));
+        make_gscoped_ptr(new RpcSidecar(std::move(second))), &idx2));
     resp.set_sidecar1(idx1);
     resp.set_sidecar2(idx2);
 
@@ -164,16 +165,12 @@ class CalculatorService : public CalculatorServiceIf {
     : CalculatorServiceIf(entity) {
   }
 
-  virtual void Add(const AddRequestPB *req,
-                   AddResponsePB *resp,
-                   RpcContext *context) OVERRIDE {
+  void Add(const AddRequestPB *req, AddResponsePB *resp, RpcContext *context) override {
     resp->set_result(req->x() + req->y());
     context->RespondSuccess();
   }
 
-  virtual void Sleep(const SleepRequestPB *req,
-                     SleepResponsePB *resp,
-                     RpcContext *context) OVERRIDE {
+  void Sleep(const SleepRequestPB *req, SleepResponsePB *resp, RpcContext *context) override {
     if (req->return_app_error()) {
       CalculatorError my_error;
       my_error.set_extra_error_data("some application-specific error data");
@@ -206,16 +203,12 @@ class CalculatorService : public CalculatorServiceIf {
     DoSleep(req, context);
   }
 
-  virtual void Echo(const EchoRequestPB *req,
-                    EchoResponsePB *resp,
-                    RpcContext *context) OVERRIDE {
+  void Echo(const EchoRequestPB *req, EchoResponsePB *resp, RpcContext *context) override {
     resp->set_data(req->data());
     context->RespondSuccess();
   }
 
-  virtual void WhoAmI(const WhoAmIRequestPB* req,
-                      WhoAmIResponsePB* resp,
-                      RpcContext* context) OVERRIDE {
+  void WhoAmI(const WhoAmIRequestPB* req, WhoAmIResponsePB* resp, RpcContext* context) override {
     const UserCredentials& creds = context->user_credentials();
     if (creds.has_effective_user()) {
       resp->mutable_credentials()->set_effective_user(creds.effective_user());
@@ -225,17 +218,19 @@ class CalculatorService : public CalculatorServiceIf {
     context->RespondSuccess();
   }
 
-  virtual void TestArgumentsInDiffPackage(const ReqDiffPackagePB *req,
-                                          RespDiffPackagePB *resp,
-                                          ::kudu::rpc::RpcContext *context) OVERRIDE {
+  void TestArgumentsInDiffPackage(const ReqDiffPackagePB *req,
+                                  RespDiffPackagePB *resp,
+                                  ::kudu::rpc::RpcContext *context) override {
     context->RespondSuccess();
   }
 
-  virtual void Panic(const PanicRequestPB* req,
-                     PanicResponsePB* resp,
-                     RpcContext* context) OVERRIDE {
+  void Panic(const PanicRequestPB* req, PanicResponsePB* resp, RpcContext* context) override {
     TRACE("Got panic request");
     PANIC_RPC(context, "Test method panicking!");
+  }
+
+  bool SupportsFeature(uint32_t feature) const override {
+    return feature == FeatureFlags::FOO;
   }
 
  private:
@@ -261,16 +256,17 @@ class RpcTestBase : public KuduTest {
  public:
   RpcTestBase()
     : n_worker_threads_(3),
+      service_queue_length_(100),
       n_server_reactor_threads_(3),
       keepalive_time_ms_(1000),
       metric_entity_(METRIC_ENTITY_server.Instantiate(&metric_registry_, "test.rpc_test")) {
   }
 
-  virtual void SetUp() OVERRIDE {
+  void SetUp() override {
     KuduTest::SetUp();
   }
 
-  virtual void TearDown() OVERRIDE {
+  void TearDown() override {
     if (service_pool_) {
       server_messenger_->UnregisterService(service_name_);
       service_pool_->Shutdown();
@@ -404,7 +400,7 @@ class RpcTestBase : public KuduTest {
     gscoped_ptr<ServiceIf> service(new ServiceClass(metric_entity_));
     service_name_ = service->service_name();
     scoped_refptr<MetricEntity> metric_entity = server_messenger_->metric_entity();
-    service_pool_ = new ServicePool(service.Pass(), metric_entity, 50);
+    service_pool_ = new ServicePool(std::move(service), metric_entity, service_queue_length_);
     server_messenger_->RegisterService(service_name_, service_pool_);
     ASSERT_OK(service_pool_->Init(n_worker_threads_));
   }
@@ -414,13 +410,13 @@ class RpcTestBase : public KuduTest {
   std::shared_ptr<Messenger> server_messenger_;
   scoped_refptr<ServicePool> service_pool_;
   int n_worker_threads_;
+  int service_queue_length_;
   int n_server_reactor_threads_;
   int keepalive_time_ms_;
 
   MetricRegistry metric_registry_;
   scoped_refptr<MetricEntity> metric_entity_;
 };
-
 
 } // namespace rpc
 } // namespace kudu

@@ -138,10 +138,8 @@ class RaftConsensusQuorumTest : public KuduTest {
   }
 
   void BuildPeers() {
-    vector<LocalTestPeerProxyFactory*> proxy_factories;
     for (int i = 0; i < config_.peers_size(); i++) {
       auto proxy_factory = new LocalTestPeerProxyFactory(peers_.get());
-      proxy_factories.push_back(proxy_factory);
 
       auto txn_factory = new TestTransactionFactory(logs_[i].get());
 
@@ -172,11 +170,11 @@ class RaftConsensusQuorumTest : public KuduTest {
 
       scoped_refptr<RaftConsensus> peer(
           new RaftConsensus(options_,
-                            cmeta.Pass(),
-                            gscoped_ptr<PeerProxyFactory>(proxy_factory).Pass(),
-                            queue.Pass(),
-                            peer_manager.Pass(),
-                            thread_pool.Pass(),
+                            std::move(cmeta),
+                            gscoped_ptr<PeerProxyFactory>(proxy_factory),
+                            std::move(queue),
+                            std::move(peer_manager),
+                            std::move(thread_pool),
                             metric_entity_,
                             config_.peers(i).permanent_uuid(),
                             clock_,
@@ -247,7 +245,7 @@ class RaftConsensusQuorumTest : public KuduTest {
 
     // Use a latch in place of a Transaction callback.
     gscoped_ptr<Synchronizer> sync(new Synchronizer());
-    *round = peer->NewRound(msg.Pass(), sync->AsStatusCallback());
+    *round = peer->NewRound(std::move(msg), sync->AsStatusCallback());
     InsertOrDie(&syncs_, round->get(), sync.release());
     RETURN_NOT_OK_PREPEND(peer->Replicate(round->get()),
                           Substitute("Unable to replicate to peer $0", peer_idx));
@@ -272,7 +270,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     gscoped_ptr<CommitMsg> msg(new CommitMsg());
     msg->set_op_type(NO_OP);
     msg->mutable_commited_op_id()->CopyFrom(round->id());
-    CHECK_OK(logs_[peer_idx]->AsyncAppendCommit(msg.Pass(), commit_callback));
+    CHECK_OK(logs_[peer_idx]->AsyncAppendCommit(std::move(msg), commit_callback));
     return Status::OK();
   }
 
@@ -409,7 +407,7 @@ class RaftConsensusQuorumTest : public KuduTest {
   void GatherLogEntries(int idx, const scoped_refptr<Log>& log, vector<LogEntryPB* >* entries) {
     ASSERT_OK(log->WaitUntilAllFlushed());
     log->Close();
-    gscoped_ptr<LogReader> log_reader;
+    shared_ptr<LogReader> log_reader;
     ASSERT_OK(log::LogReader::Open(fs_managers_[idx],
                                    scoped_refptr<log::LogIndex>(),
                                    kTestTablet,
@@ -533,7 +531,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     string peer_uuid = Substitute("peer-$0", peer_index);
     gscoped_ptr<ConsensusMetadata> cmeta;
     CHECK_OK(ConsensusMetadata::Load(fs_managers_[peer_index], kTestTablet, peer_uuid, &cmeta));
-    return cmeta.Pass();
+    return std::move(cmeta);
   }
 
   // Assert that the durable term == term and that the peer that got the vote == voted_for.

@@ -205,7 +205,12 @@ Status GetFQDN(string* hostname) {
 
   struct addrinfo* result;
   LOG_SLOW_EXECUTION(WARNING, 200,
+<<<<<<< HEAD
                      Substitute("looking up canonical hostname for localhost $0", hostname)) {
+=======
+                     Substitute("looking up canonical hostname for localhost "
+                                "(eventual result was $0)", *hostname)) {
+>>>>>>> refs/remotes/apache/master
     TRACE_EVENT0("net", "getaddrinfo");
     int rc = getaddrinfo(hostname->c_str(), nullptr, &hints, &result);
     if (rc != 0) {

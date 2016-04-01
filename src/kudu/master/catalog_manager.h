@@ -416,6 +416,9 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   consensus::RaftPeerPB::Role Role() const;
 
  private:
+  // So that the test can call ElectedAsLeaderCb() directly.
+  FRIEND_TEST(MasterTest, TestShutdownDuringTableVisit);
+
   friend class TableLoader;
   friend class TabletLoader;
 
@@ -473,8 +476,8 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   // Helper for creating the initial TabletInfo state.
   // Leaves the tablet "write locked" with the new info in the
   // "dirty" state field.
-  TabletInfo *CreateTabletInfo(TableInfo* table,
-                               const PartitionPB& partition);
+  scoped_refptr<TabletInfo> CreateTabletInfo(TableInfo* table,
+                                             const PartitionPB& partition);
 
   // Builds the TabletLocationsPB for a tablet based on the provided TabletInfo.
   // Populates locs_pb and returns true on success.

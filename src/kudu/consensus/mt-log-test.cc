@@ -22,10 +22,10 @@
 #include <boost/thread/thread.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
 #include "kudu/consensus/log_index.h"
-#include "kudu/gutil/algorithm.h"
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/locks.h"
@@ -39,6 +39,7 @@ DEFINE_int32(num_ops_per_batch_avg, 5, "Target average number of ops per batch")
 namespace kudu {
 namespace log {
 
+using std::shared_ptr;
 using std::vector;
 using consensus::ReplicateRefPtr;
 using consensus::make_scoped_refptr_replicate;
@@ -116,7 +117,7 @@ class MultiThreadedLogTest : public LogTestBase {
         CreateBatchFromAllocatedOperations(batch_replicates,
                                            &entry_batch_pb);
 
-        ASSERT_OK(log_->Reserve(REPLICATE, entry_batch_pb.Pass(), &entry_batch));
+        ASSERT_OK(log_->Reserve(REPLICATE, std::move(entry_batch_pb), &entry_batch));
       } // lock_guard scope
       auto cb = new CustomLatchCallback(&latch, &errors);
       entry_batch->SetReplicates(batch_replicates);
@@ -159,7 +160,7 @@ TEST_F(MultiThreadedLogTest, TestAppends) {
   }
   ASSERT_OK(log_->Close());
 
-  gscoped_ptr<LogReader> reader;
+  shared_ptr<LogReader> reader;
   ASSERT_OK(LogReader::Open(fs_manager_.get(), NULL, kTestTablet, NULL, &reader));
   SegmentSequence segments;
   ASSERT_OK(reader->GetSegmentsSnapshot(&segments));

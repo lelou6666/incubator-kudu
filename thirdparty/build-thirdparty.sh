@@ -39,6 +39,11 @@ set -ex
 
 TP_DIR=$(cd "$(dirname "$BASH_SOURCE")"; pwd)
 
+# Before doing anything, run the pre-flight check for missing dependencies.
+# This avoids the most common issues people have with building (if they don't
+# read the docs)
+$TP_DIR/preflight.py
+
 source $TP_DIR/vars.sh
 source $TP_DIR/build-definitions.sh
 
@@ -101,7 +106,7 @@ if [ "$#" = "0" ]; then
   F_ALL=1
 else
   # Allow passing specific libs to build on the command line
-  for arg in "$*"; do
+  for arg in $*; do
     case $arg in
       "cmake")      F_CMAKE=1 ;;
       "gflags")     F_GFLAGS=1 ;;

@@ -209,6 +209,21 @@ TEST_F(MasterTest, TestRegisterAndHeartbeat) {
     ASSERT_EQ("my-ts-uuid", resp.servers(0).instance_id().permanent_uuid());
     ASSERT_EQ(1, resp.servers(0).instance_id().instance_seqno());
   }
+
+  // Ensure that trying to re-register with a different port fails.
+  {
+    TSHeartbeatRequestPB req;
+    TSHeartbeatResponsePB resp;
+    RpcController rpc;
+    req.mutable_common()->CopyFrom(common);
+    req.mutable_registration()->CopyFrom(fake_reg);
+    req.mutable_registration()->mutable_rpc_addresses(0)->set_port(1001);
+    Status s = proxy_->TSHeartbeat(req, &resp, &rpc);
+    ASSERT_TRUE(s.IsRemoteError());
+    ASSERT_STR_CONTAINS(s.ToString(),
+                        "Tablet server my-ts-uuid is attempting to re-register "
+                        "with a different host/port.");
+  }
 }
 
 Status MasterTest::CreateTable(const string& table_name,
@@ -450,6 +465,78 @@ TEST_F(MasterTest, TestInvalidGetTableLocations) {
               "\"start partition key is greater than the end partition key\"",
               resp.error().status().ShortDebugString());
   }
+}
+
+// Tests that if the master is shutdown while a table visitor is active, the
+// shutdown waits for the visitor to finish, avoiding racing and crashing.
+TEST_F(MasterTest, TestShutdownDuringTableVisit) {
+  ASSERT_OK(master_->catalog_manager()->ElectedAsLeaderCb());
+
+  // Master will now shut down, potentially racing with
+  // CatalogManager::VisitTablesAndTabletsTask.
+}
+
+static void GetTableSchema(const char* kTableName,
+                           const Schema* kSchema,
+                           MasterServiceProxy* proxy,
+                           CountDownLatch* started,
+                           AtomicBool* done) {
+  GetTableSchemaRequestPB req;
+  GetTableSchemaResponsePB resp;
+  req.mutable_table()->set_table_name(kTableName);
+
+  started->CountDown();
+  while (!done->Load()) {
+    RpcController controller;
+
+    CHECK_OK(proxy->GetTableSchema(req, &resp, &controller));
+    SCOPED_TRACE(resp.DebugString());
+
+    // There are two possible outcomes:
+    //
+    // 1. GetTableSchema() happened before CreateTable(): we expect to see a
+    //    TABLE_NOT_FOUND error.
+    // 2. GetTableSchema() happened after CreateTable(): we expect to see the
+    //    full table schema.
+    //
+    // Any other outcome is an error.
+    if (resp.has_error()) {
+      CHECK_EQ(MasterErrorPB::TABLE_NOT_FOUND, resp.error().code());
+    } else {
+      Schema receivedSchema;
+      CHECK_OK(SchemaFromPB(resp.schema(), &receivedSchema));
+      CHECK(kSchema->Equals(receivedSchema)) <<
+          strings::Substitute("$0 not equal to $1",
+                              kSchema->ToString(), receivedSchema.ToString());
+    }
+  }
+}
+
+// The catalog manager had a bug wherein GetTableSchema() interleaved with
+// CreateTable() could expose intermediate uncommitted state to clients. This
+// test ensures that bug does not regress.
+TEST_F(MasterTest, TestGetTableSchemaIsAtomicWithCreateTable) {
+  const char* kTableName = "testtb";
+  const Schema kTableSchema({ ColumnSchema("key", INT32),
+                              ColumnSchema("v1", UINT64),
+                              ColumnSchema("v2", STRING) },
+                            1);
+
+  CountDownLatch started(1);
+  AtomicBool done(false);
+
+  // Kick off a thread that calls GetTableSchema() in a loop.
+  scoped_refptr<Thread> t;
+  ASSERT_OK(Thread::Create("test", "test",
+                           &GetTableSchema, kTableName, &kTableSchema,
+                           proxy_.get(), &started, &done, &t));
+
+  // Only create the table after the thread has started.
+  started.Wait();
+  EXPECT_OK(CreateTable(kTableName, kTableSchema));
+
+  done.Store(true);
+  t->Join();
 }
 
 } // namespace master

@@ -227,7 +227,7 @@ class ClientTest : public KuduTest {
     CHECK_OK(row->SetInt32(1, index * 2));
     CHECK_OK(row->SetStringCopy(2, Slice(StringPrintf("hello %d", index))));
     CHECK_OK(row->SetInt32(3, index * 3));
-    return insert.Pass();
+    return std::move(insert);
   }
 
   gscoped_ptr<KuduUpdate> UpdateTestRow(KuduTable* table, int index) {
@@ -236,14 +236,14 @@ class ClientTest : public KuduTest {
     CHECK_OK(row->SetInt32(0, index));
     CHECK_OK(row->SetInt32(1, index * 2 + 1));
     CHECK_OK(row->SetStringCopy(2, Slice(StringPrintf("hello again %d", index))));
-    return update.Pass();
+    return std::move(update);
   }
 
   gscoped_ptr<KuduDelete> DeleteTestRow(KuduTable* table, int index) {
     gscoped_ptr<KuduDelete> del(table->NewDelete());
     KuduPartialRow* row = del->mutable_row();
     CHECK_OK(row->SetInt32(0, index));
-    return del.Pass();
+    return std::move(del);
   }
 
   void DoTestScanWithoutPredicates() {
@@ -948,7 +948,13 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
   // Create test table and insert test rows.
   const string kScanTable = "TestScanFaultTolerance";
   shared_ptr<KuduTable> table;
-  ASSERT_NO_FATAL_FAILURE(CreateTable(kScanTable, 3, vector<const KuduPartialRow*>(), &table));
+
+  // We use only two replicas in this test so that every write is fully replicated to both
+  // servers (the Raft majority is 2/2). This reduces potential flakiness if the scanner tries
+  // to read from a replica that is lagging for some reason. This won't be necessary once
+  // we implement full support for snapshot consistency (KUDU-430).
+  const int kNumReplicas = 2;
+  ASSERT_NO_FATAL_FAILURE(CreateTable(kScanTable, kNumReplicas, {}, &table));
   ASSERT_NO_FATAL_FAILURE(InsertTestRows(table.get(), FLAGS_test_scan_num_rows));
 
   // Do an initial scan to determine the expected rows for later verification.
@@ -961,7 +967,7 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
     // disk.
     if (with_flush) {
       string tablet_id = GetFirstTabletId(table.get());
-      for (int i = 0; i < 3; i++) {
+      for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
         scoped_refptr<TabletPeer> tablet_peer;
         ASSERT_TRUE(cluster_->mini_tablet_server(i)->server()->tablet_manager()->LookupTablet(
                 tablet_id, &tablet_peer));
@@ -1413,6 +1419,33 @@ TEST_F(ClientTest, TestInsertSingleRowManualBatch) {
   ASSERT_TRUE(session->HasPendingOperations()) << "Should be pending until we Flush";
 
   FlushSessionOrDie(session);
+}
+
+TEST_F(ClientTest, TestInsertAutoFlushSync) {
+  shared_ptr<KuduSession> session = client_->NewSession();
+  ASSERT_FALSE(session->HasPendingOperations());
+
+  session->SetTimeoutMillis(10000);
+  ASSERT_OK(session->SetFlushMode(KuduSession::AUTO_FLUSH_SYNC));
+
+  // Test in Flush() is called implicitly,
+  // so there is no pending operations.
+  gscoped_ptr<KuduInsert> insert(client_table_->NewInsert());
+  ASSERT_OK(insert->mutable_row()->SetInt32("key", 12345));
+  ASSERT_OK(insert->mutable_row()->SetInt32("int_val", 54321));
+  ASSERT_OK(insert->mutable_row()->SetStringCopy("string_val", "hello world"));
+  ASSERT_OK(session->Apply(insert.release()));
+  ASSERT_TRUE(insert == nullptr) << "Successful insert should take ownership";
+  ASSERT_FALSE(session->HasPendingOperations()) << "Should not have pending operation";
+
+  // Test multiple inserts.
+  for (int i = 0; i < 100; i++) {
+    gscoped_ptr<KuduInsert> insert(client_table_->NewInsert());
+    ASSERT_OK(insert->mutable_row()->SetInt32("key", i));
+    ASSERT_OK(insert->mutable_row()->SetInt32("int_val", 54321));
+    ASSERT_OK(insert->mutable_row()->SetStringCopy("string_val", "hello world"));
+    ASSERT_OK(session->Apply(insert.release()));
+  }
 }
 
 static Status ApplyInsertToSession(KuduSession* session,
@@ -2696,7 +2729,7 @@ TEST_F(ClientTest, TestLastErrorEmbeddedInScanTimeoutStatus) {
 
     // Restart, but inject latency so that startup is very slow.
     FLAGS_log_inject_latency = true;
-    FLAGS_log_inject_latency_ms_mean = 1000;
+    FLAGS_log_inject_latency_ms_mean = 5000;
     FLAGS_log_inject_latency_ms_stddev = 0;
     for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
       MiniTabletServer* ts = cluster_->mini_tablet_server(i);

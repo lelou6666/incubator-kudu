@@ -75,6 +75,13 @@ build_llvm() {
   # Rebuild the CMake cache every time.
   rm -Rf CMakeCache.txt CMakeFiles/
 
+  # The LLVM build can fail if a different version is already installed
+  # in the install prefix. It will try to link against that version instead
+  # of the one being built.
+  rm -Rf $PREFIX/include/{llvm*,clang*} \
+         $PREFIX/lib/lib{LLVM,LTO,clang}* \
+         $PREFIX/lib/clang/
+
   cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$PREFIX \
@@ -248,21 +255,22 @@ build_curl() {
   # use this for testing our own HTTP endpoints at this point in time.
   cd $CURL_DIR
   ./configure --prefix=$PREFIX \
-    --disable-ftp \
+    --disable-dict \
     --disable-file \
+    --disable-ftp \
+    --disable-gopher \
+    --disable-imap \
+    --disable-ipv6 \
     --disable-ldap \
     --disable-ldaps \
+    --disable-manual \
+    --disable-pop3 \
     --disable-rtsp \
-    --disable-dict \
+    --disable-smtp \
     --disable-telnet \
     --disable-tftp \
-    --disable-pop3 \
-    --disable-imap \
-    --disable-smtp \
-    --disable-gopher \
-    --disable-manual \
-    --without-rtmp \
-    --disable-ipv6
+    --without-librtmp \
+    --without-ssl
   make -j$PARALLEL
   make install
 }

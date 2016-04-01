@@ -23,7 +23,9 @@ namespace kudu {
 namespace tablet {
 
 RowOp::RowOp(DecodedRowOperation decoded_op)
-    : decoded_op(std::move(decoded_op)) {}
+    : decoded_op(std::move(decoded_op)),
+      orig_result_from_log_(nullptr) {
+}
 
 RowOp::~RowOp() {
 }
@@ -42,7 +44,7 @@ void RowOp::SetInsertSucceeded(int mrs_id) {
 
 void RowOp::SetMutateSucceeded(gscoped_ptr<OperationResultPB> result) {
   DCHECK(!this->result) << result->DebugString();
-  this->result = result.Pass();
+  this->result = std::move(result);
 }
 
 string RowOp::ToString(const Schema& schema) const {

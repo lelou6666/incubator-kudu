@@ -120,7 +120,9 @@ set(UTIL_SRCS
   logging.cc
   malloc.cc
   memcmpable_varint.cc
-  memory/arena.cc memory/memory.cc
+  memory/arena.cc
+  memory/memory.cc
+  memory/overwrite.cc
   memenv/memenv.cc
   mem_tracker.cc
   metrics.cc
@@ -154,11 +156,17 @@ set(UTIL_SRCS
   threadlocal.cc
   threadpool.cc
   thread_restrictions.cc
+  throttler.cc
   trace.cc
   user.cc
   url-coding.cc
   version_info.cc
 )
+
+# overwrite.cc contains a single function which would be a hot spot in
+# debug builds. It's separated into a separate file so it can be
+# optimized regardless of the default optimization options.
+set_source_files_properties(memory/overwrite.cc PROPERTIES COMPILE_FLAGS "-O3")
 
 if(NOT APPLE)
   set(UTIL_SRCS
@@ -186,8 +194,7 @@ if(NOT APPLE)
     vmem)
 endif()
 
-# We use MallocExtension and HeapChecker, but not in the exported version of
-# the library.
+# We use MallocExtension, but not in the exported version of the library.
 set(EXPORTED_UTIL_LIBS ${UTIL_LIBS})
 if(${KUDU_TCMALLOC_AVAILABLE})
   list(APPEND UTIL_LIBS tcmalloc)
@@ -273,10 +280,10 @@ ADD_KUDU_TEST(jsonreader-test)
 ADD_KUDU_TEST(knapsack_solver-test)
 ADD_KUDU_TEST(logging-test)
 ADD_KUDU_TEST(map-util-test)
+ADD_KUDU_TEST(mem_tracker-test)
 ADD_KUDU_TEST(memcmpable_varint-test LABELS no_tsan)
 ADD_KUDU_TEST(memenv/memenv-test)
 ADD_KUDU_TEST(memory/arena-test)
-ADD_KUDU_TEST(mem_tracker-test)
 ADD_KUDU_TEST(metrics-test)
 ADD_KUDU_TEST(monotime-test)
 ADD_KUDU_TEST(mt-hdr_histogram-test RUN_SERIAL true)
@@ -297,6 +304,7 @@ ADD_KUDU_TEST(rolling_log-test)
 ADD_KUDU_TEST(rw_semaphore-test)
 ADD_KUDU_TEST(rwc_lock-test)
 ADD_KUDU_TEST(safe_math-test)
+ADD_KUDU_TEST(scoped_cleanup-test)
 ADD_KUDU_TEST(slice-test)
 ADD_KUDU_TEST(spinlock_profiling-test)
 ADD_KUDU_TEST(stack_watchdog-test)
@@ -307,6 +315,7 @@ ADD_KUDU_TEST(subprocess-test)
 ADD_KUDU_TEST(sync_point-test)
 ADD_KUDU_TEST(thread-test)
 ADD_KUDU_TEST(threadpool-test)
+ADD_KUDU_TEST(throttler-test)
 ADD_KUDU_TEST(trace-test)
 ADD_KUDU_TEST(url-coding-test)
 ADD_KUDU_TEST(user-test)

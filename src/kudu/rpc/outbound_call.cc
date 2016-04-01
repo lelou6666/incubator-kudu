@@ -16,10 +16,12 @@
 // under the License.
 
 #include <algorithm>
-#include <string>
-#include <vector>
 #include <boost/functional/hash.hpp>
 #include <gflags/gflags.h>
+#include <set>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/walltime.h"
@@ -35,9 +37,10 @@
 namespace kudu {
 namespace rpc {
 
-using strings::Substitute;
-using google::protobuf::Message;
 using google::protobuf::io::CodedOutputStream;
+using google::protobuf::Message;
+using std::set;
+using strings::Substitute;
 
 static const double kMicrosPerSecond = 1000000.0;
 
@@ -89,12 +92,24 @@ Status OutboundCall::SerializeTo(vector<Slice>* slices) {
     header_.set_timeout_millis(timeout.ToMilliseconds());
   }
 
+  for (uint32_t feature : controller_->required_server_features()) {
+    header_.add_required_feature_flags(feature);
+  }
+
   CHECK_OK(serialization::SerializeHeader(header_, param_len, &header_buf_));
 
   // Return the concatenated packet.
   slices->push_back(Slice(header_buf_));
   slices->push_back(Slice(request_buf_));
   return Status::OK();
+}
+
+set<RpcFeatureFlag> OutboundCall::RequiredRpcFeatures() const {
+  set<RpcFeatureFlag> s;
+  if (!controller_->required_server_features().empty()) {
+    s.insert(RpcFeatureFlag::APPLICATION_FEATURE_FLAGS);
+  }
+  return s;
 }
 
 Status OutboundCall::SetRequestParam(const Message& message) {
@@ -110,7 +125,6 @@ const ErrorStatusPB* OutboundCall::error_pb() const {
   lock_guard<simple_spinlock> l(&lock_);
   return error_pb_.get();
 }
-
 
 string OutboundCall::StateName(State state) {
   switch (state) {
@@ -190,7 +204,7 @@ void OutboundCall::CallCallback() {
 }
 
 void OutboundCall::SetResponse(gscoped_ptr<CallResponse> resp) {
-  call_response_ = resp.Pass();
+  call_response_ = std::move(resp);
   Slice r(call_response_->serialized_response());
 
   if (call_response_->is_success()) {
@@ -253,13 +267,16 @@ void OutboundCall::SetFailed(const Status &status,
 }
 
 void OutboundCall::SetTimedOut() {
+  // We have to fetch timeout outside the lock to avoid a lock
+  // order inversion between this class and RpcController.
+  MonoDelta timeout = controller_->timeout();
   {
     lock_guard<simple_spinlock> l(&lock_);
     status_ = Status::TimedOut(Substitute(
         "$0 RPC to $1 timed out after $2",
         remote_method_.method_name(),
         conn_id_.remote().ToString(),
-        controller_->timeout().ToString()));
+        timeout.ToString()));
     set_state_unlocked(TIMED_OUT);
   }
   CallCallback();

@@ -37,6 +37,7 @@
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/malloc.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/object_pool.h"
 #include "kudu/util/rle-encoding.h"
 #include "kudu/util/slice.h"
@@ -79,7 +80,7 @@ static Status ParseMagicAndLength(const Slice &data,
 CFileReader::CFileReader(const ReaderOptions &options,
                          const uint64_t file_size,
                          gscoped_ptr<ReadableBlock> block) :
-  block_(block.Pass()),
+  block_(std::move(block)),
   file_size_(file_size),
   mem_consumption_(options.parent_mem_tracker, memory_footprint()) {
 }
@@ -88,7 +89,7 @@ Status CFileReader::Open(gscoped_ptr<ReadableBlock> block,
                          const ReaderOptions& options,
                          gscoped_ptr<CFileReader> *reader) {
   gscoped_ptr<CFileReader> reader_local;
-  RETURN_NOT_OK(OpenNoInit(block.Pass(), options, &reader_local));
+  RETURN_NOT_OK(OpenNoInit(std::move(block), options, &reader_local));
   RETURN_NOT_OK(reader_local->Init());
 
   reader->reset(reader_local.release());
@@ -101,7 +102,7 @@ Status CFileReader::OpenNoInit(gscoped_ptr<ReadableBlock> block,
   uint64_t block_size;
   RETURN_NOT_OK(block->Size(&block_size));
   gscoped_ptr<CFileReader> reader_local(
-      new CFileReader(options, block_size, block.Pass()));
+      new CFileReader(options, block_size, std::move(block)));
   if (!FLAGS_cfile_lazy_open) {
     RETURN_NOT_OK(reader_local->Init());
   }

@@ -33,6 +33,7 @@
 #include "kudu/tablet/compaction.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/mem_tracker.h"
+#include "kudu/util/memory/overwrite.h"
 
 DEFINE_bool(mrs_use_codegen, true, "whether the memrowset should use code "
             "generation for iteration");
@@ -326,7 +327,7 @@ template<class ActualProjector>
 class MRSRowProjectorImpl : public MRSRowProjector {
  public:
   explicit MRSRowProjectorImpl(gscoped_ptr<ActualProjector> actual)
-    : actual_(actual.Pass()) {}
+    : actual_(std::move(actual)) {}
 
   Status Init() override { return actual_->Init(); }
 
@@ -361,14 +362,14 @@ gscoped_ptr<MRSRowProjector> GenerateAppropriateProjector(
     if (codegen::CompilationManager::GetSingleton()->RequestRowProjector(
           base, projection, &actual)) {
       return gscoped_ptr<MRSRowProjector>(
-        new MRSRowProjectorImpl<codegen::RowProjector>(actual.Pass()));
+        new MRSRowProjectorImpl<codegen::RowProjector>(std::move(actual)));
     }
   }
 
   // Proceed with default implementation
   gscoped_ptr<RowProjector> actual(new RowProjector(base, projection));
   return gscoped_ptr<MRSRowProjector>(
-    new MRSRowProjectorImpl<RowProjector>(actual.Pass()));
+    new MRSRowProjectorImpl<RowProjector>(std::move(actual)));
 }
 
 } // anonymous namespace

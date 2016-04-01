@@ -26,7 +26,6 @@
 #include <boost/thread/shared_mutex.hpp>
 
 #include "kudu/common/iterator.h"
-#include "kudu/common/predicate_encoder.h"
 #include "kudu/common/schema.h"
 #include "kudu/gutil/atomicops.h"
 #include "kudu/gutil/gscoped_ptr.h"
@@ -41,6 +40,7 @@
 #include "kudu/util/semaphore.h"
 #include "kudu/util/slice.h"
 #include "kudu/util/status.h"
+#include "kudu/util/throttler.h"
 
 namespace kudu {
 
@@ -182,7 +182,8 @@ class Tablet {
   // Apply a single row operation, which must already be prepared.
   // The result is set back into row_op->result
   void ApplyRowOperation(WriteTransactionState* tx_state,
-                         RowOp* row_op);
+                         RowOp* row_op,
+                         ProbeStats* stats);
 
   // Create a new row iterator which yields the rows as of the current MVCC
   // state of this tablet.
@@ -370,6 +371,10 @@ class Tablet {
   // Returns a reference to this tablet's memory tracker.
   const std::shared_ptr<MemTracker>& mem_tracker() const { return mem_tracker_; }
 
+  // Throttle a RPC with 'bytes' request size.
+  // Return true if this RPC is allowed.
+  bool ShouldThrottleAllow(int64_t bytes);
+
   static const char* kDMSMemTrackerId;
  private:
   friend class Iterator;
@@ -382,13 +387,21 @@ class Tablet {
   // they were already acquired. Requires that handles for the relevant locks
   // and MVCC transaction are present in the transaction state.
   Status InsertUnlocked(WriteTransactionState *tx_state,
-                        RowOp* insert);
+                        RowOp* insert,
+                        ProbeStats* stats);
 
   // A version of MutateRow that does not acquire locks and instead assumes
   // they were already acquired. Requires that handles for the relevant locks
   // and MVCC transaction are present in the transaction state.
   Status MutateRowUnlocked(WriteTransactionState *tx_state,
-                           RowOp* mutate);
+                           RowOp* mutate,
+                           ProbeStats* stats);
+
+  // Return the list of RowSets that need to be consulted when processing the
+  // given mutation.
+  static std::vector<RowSet*> FindRowSetsToCheck(RowOp* mutate,
+                                                 const TabletComponents* comps);
+
 
   // Capture a set of iterators which, together, reflect all of the data in the tablet.
   //
@@ -408,6 +421,12 @@ class Tablet {
 
   Status DoCompactionOrFlush(const RowSetsInCompaction &input,
                              int64_t mrs_being_flushed);
+
+  // Handle the case in which a compaction or flush yielded no output rows.
+  // In this case, we just need to remove the rowsets in 'rowsets' from the
+  // metadata and flush it.
+  Status HandleEmptyCompactionOrFlush(const RowSetVector& rowsets,
+                                      int mrs_being_flushed);
 
   Status FlushMetadata(const RowSetVector& to_remove,
                        const RowSetMetadataVector& to_add,
@@ -462,6 +481,8 @@ class Tablet {
   static int64_t GetLogRetentionSizeForIndex(int64_t min_log_index,
                                              const MaxIdxToSegmentMap& max_idx_to_segment_size);
 
+  std::string LogPrefix() const;
+
   // Lock protecting schema_ and key_schema_.
   //
   // Writers take this lock in shared mode before decoding and projecting
@@ -509,6 +530,8 @@ class Tablet {
   scoped_refptr<MetricEntity> metric_entity_;
   gscoped_ptr<TabletMetrics> metrics_;
   FunctionGaugeDetacher metric_detacher_;
+
+  std::unique_ptr<Throttler> throttler_;
 
   int64_t next_mrs_id_;
 
@@ -607,11 +630,6 @@ class Tablet::Iterator : public RowwiseIterator {
   const MvccSnapshot snap_;
   const OrderMode order_;
   gscoped_ptr<RowwiseIterator> iter_;
-
-  // TODO: we could probably share an arena with the Scanner object inside the
-  // tserver, but piping it in would require changing a lot of call-sites.
-  Arena arena_;
-  RangePredicateEncoder encoder_;
 };
 
 // Structure which represents the components of the tablet's storage.

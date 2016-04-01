@@ -27,6 +27,7 @@
 #include "kudu/client/meta_cache.h"
 #include "kudu/client/row_result.h"
 #include "kudu/client/table-internal.h"
+#include "kudu/common/common.pb.h"
 #include "kudu/common/wire_protocol.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/rpc_controller.h"
@@ -37,12 +38,12 @@ using std::string;
 
 namespace kudu {
 
+using kudu::ColumnPredicatePB;
 using rpc::RpcController;
 using strings::Substitute;
 using strings::SubstituteAndAppend;
-using tserver::ColumnRangePredicatePB;
 using tserver::NewScanRequestPB;
-using tserver::ScanResponsePB;
+using tserver::TabletServerFeatures;
 
 namespace client {
 
@@ -59,9 +60,9 @@ KuduScanner::Data::Data(KuduTable* table)
     read_mode_(READ_LATEST),
     is_fault_tolerant_(false),
     snapshot_timestamp_(kNoTimestamp),
+    short_circuit_(false),
     table_(DCHECK_NOTNULL(table)),
     arena_(1024, 1024*1024),
-    spec_encoder_(table->schema().schema_, &arena_),
     timeout_(MonoDelta::FromMilliseconds(kScanTimeoutMillis)),
     scan_attempts_(0) {
   SetProjectionSchema(table->schema().schema_);
@@ -78,9 +79,10 @@ Status KuduScanner::Data::CheckForErrors() {
   return StatusFromPB(last_response_.error().status());
 }
 
-void KuduScanner::Data::CopyPredicateBound(const ColumnSchema& col,
-                                           const void* bound_src,
-                                           string* bound_dst) {
+namespace {
+void CopyPredicateBound(const ColumnSchema& col,
+                        const void* bound_src,
+                        string* bound_dst) {
   const void* src;
   size_t size;
   if (col.type_info()->physical_type() == BINARY) {
@@ -96,12 +98,54 @@ void KuduScanner::Data::CopyPredicateBound(const ColumnSchema& col,
   bound_dst->assign(reinterpret_cast<const char*>(src), size);
 }
 
+void ColumnPredicateIntoPB(const ColumnPredicate& predicate,
+                           ColumnPredicatePB* pb) {
+  pb->set_column(predicate.column().name());
+  switch (predicate.predicate_type()) {
+    case PredicateType::Equality: {
+      CopyPredicateBound(predicate.column(),
+                         predicate.raw_lower(),
+                         pb->mutable_equality()->mutable_value());
+      return;
+    };
+    case PredicateType::Range: {
+      auto range_pred = pb->mutable_range();
+      if (predicate.raw_lower() != nullptr) {
+        CopyPredicateBound(predicate.column(),
+                           predicate.raw_lower(),
+                           range_pred->mutable_lower());
+      }
+      if (predicate.raw_upper() != nullptr) {
+        CopyPredicateBound(predicate.column(),
+                           predicate.raw_upper(),
+                           range_pred->mutable_upper());
+      }
+      return;
+    };
+    case PredicateType::IsNotNull: {
+      pb->mutable_is_not_null();
+      return;
+    };
+    case PredicateType::None: LOG(FATAL) << "None predicate may not be converted to protobuf";
+  }
+  LOG(FATAL) << "unknown predicate type";
+}
+} // anonymous namespace
+
 Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
                                        const Status& rpc_status, const Status& server_status,
                                        const MonoTime& actual_deadline, const MonoTime& deadline,
                                        const vector<RemoteTabletServer*>& candidates,
                                        set<string>* blacklist) {
   CHECK(!rpc_status.ok() || !server_status.ok());
+
+  // Check for ERROR_INVALID_REQUEST, which should not retry.
+  if (server_status.ok() &&
+      !rpc_status.ok() &&
+      controller_.error_response() != nullptr &&
+      controller_.error_response()->code() == rpc::ErrorStatusPB::ERROR_INVALID_REQUEST) {
+    return rpc_status;
+  }
 
   // Check for ERROR_SERVER_TOO_BUSY, which should result in a retry after a delay.
   if (server_status.ok() &&
@@ -211,6 +255,20 @@ Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
   return Status::OK();
 }
 
+Status KuduScanner::Data::OpenNextTablet(const MonoTime& deadline,
+                                         std::set<std::string>* blacklist) {
+  return OpenTablet(partition_pruner_.NextPartitionKey(),
+                    deadline,
+                    blacklist);
+}
+
+Status KuduScanner::Data::ReopenCurrentTablet(const MonoTime& deadline,
+                                              std::set<std::string>* blacklist) {
+  return OpenTablet(remote_->partition().partition_key_start(),
+                    deadline,
+                    blacklist);
+}
+
 Status KuduScanner::Data::OpenTablet(const string& partition_key,
                                      const MonoTime& deadline,
                                      set<string>* blacklist) {
@@ -248,20 +306,9 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
   }
 
   // Set up the predicates.
-  scan->clear_range_predicates();
-  for (const ColumnRangePredicate& pred : spec_.predicates()) {
-    const ColumnSchema& col = pred.column();
-    const ValueRange& range = pred.range();
-    ColumnRangePredicatePB* pb = scan->add_range_predicates();
-    if (range.has_lower_bound()) {
-      CopyPredicateBound(col, range.lower_bound(),
-                         pb->mutable_lower_bound());
-    }
-    if (range.has_upper_bound()) {
-      CopyPredicateBound(col, range.upper_bound(),
-                         pb->mutable_upper_bound());
-    }
-    ColumnSchemaToPB(col, pb->mutable_column());
+  scan->clear_column_predicates();
+  for (const auto& col_pred : spec_.predicates()) {
+    ColumnPredicateIntoPB(col_pred.second, scan->add_column_predicates());
   }
 
   if (spec_.lower_bound_key()) {
@@ -340,6 +387,10 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
     controller_.Reset();
     controller_.set_deadline(rpc_deadline);
 
+    if (!spec_.predicates().empty()) {
+      controller_.RequireServerFeature(TabletServerFeatures::COLUMN_PREDICATES);
+    }
+
     CHECK(ts->proxy());
     ts_ = CHECK_NOTNULL(ts);
     proxy_ = ts->proxy();
@@ -353,6 +404,8 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
     RETURN_NOT_OK(CanBeRetried(true, rpc_status, server_status, rpc_deadline, deadline,
                                candidates, blacklist));
   }
+
+  partition_pruner_.RemovePartitionKeyRange(remote_->partition().partition_key_end());
 
   next_req_.clear_new_scan_request();
   data_in_open_ = last_response_.has_data();
@@ -407,31 +460,7 @@ Status KuduScanner::Data::KeepAlive() {
 bool KuduScanner::Data::MoreTablets() const {
   CHECK(open_);
   // TODO(KUDU-565): add a test which has a scan end on a tablet boundary
-
-  if (remote_->partition().partition_key_end().empty()) {
-    // Last tablet -- nothing more to scan.
-    return false;
-  }
-
-  if (!spec_.exclusive_upper_bound_partition_key().empty() &&
-      spec_.exclusive_upper_bound_partition_key() <= remote_->partition().partition_key_end()) {
-    // We are not past the scan's upper bound partition key.
-    return false;
-  }
-
-  if (!table_->partition_schema().IsSimplePKRangePartitioning(*table_->schema().schema_)) {
-    // We can't do culling yet if the partitioning isn't simple.
-    return true;
-  }
-
-  if (spec_.exclusive_upper_bound_key() == nullptr) {
-    // No upper bound - keep going!
-    return true;
-  }
-
-  // Otherwise, we have to compare the upper bound.
-  return spec_.exclusive_upper_bound_key()->encoded_key()
-          .compare(remote_->partition().partition_key_end()) > 0;
+  return partition_pruner_.HasMorePartitionKeyRanges();
 }
 
 void KuduScanner::Data::PrepareRequest(RequestType state) {
@@ -460,8 +489,11 @@ void KuduScanner::Data::SetProjectionSchema(const Schema* schema) {
   projection_ = schema;
   client_projection_ = KuduSchema(*schema);
 }
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> refs/remotes/apache/master
 
 ////////////////////////////////////////////////////////////
 // KuduScanBatch

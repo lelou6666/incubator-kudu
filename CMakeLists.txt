@@ -53,6 +53,12 @@ if ("${CMAKE_CURRENT_BINARY_DIR}" MATCHES "^${CMAKE_CURRENT_SOURCE_DIR}/build/[^
   if (NOT APPLE)
     set(MORE_ARGS "-T")
   endif()
+
+  # Create the symlink both during cmake invocation and when the default target
+  # ('all') is built. The former is useful for scripts that, after running
+  # cmake, only build a single target (i.e. "make lint").
+  execute_process(COMMAND ln ${MORE_ARGS} -sf ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/latest)
   add_custom_target(latest_symlink ALL
     ln ${MORE_ARGS} -sf ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/build/latest
@@ -228,13 +234,21 @@ if ("${COMPILER_FAMILY}" STREQUAL "clang")
     message("Running without a controlling terminal or in a dumb terminal")
   endif()
 elseif("${COMPILER_FAMILY}" STREQUAL "gcc")
-  # Blacklist gcc versions known to generate broken optimized code.
-  #
-  # See KUDU-1030 for more details.
-  if ("${COMPILER_VERSION}" MATCHES "^4.[67]")
-    message(FATAL_ERROR "Building with gcc version ${COMPILER_VERSION} is "
-      "forbidden as it is known to produce broken code in release mode. "
-      "Upgrade gcc, or build with clang from the thirdparty directory.")
+  # Disallow GCC < 4.8, since it doesn't support the C++11 standard
+  # well enough for us.
+  if ("${COMPILER_VERSION}" VERSION_LESS "4.8")
+    message(FATAL_ERROR "GCC <4.8 not supported. Consider using "
+        "thirdparty/clang-toolchain/ to build on older hosts.")
+  endif()
+
+  # GCC 4.8's tree vectorizer has a bug which causes hard-to-debug incorrect
+  # code. Disable this option on release builds, where it would otherwise
+  # be enabled by -O3.
+  if ("${COMPILER_VERSION}" MATCHES "^4.8" AND
+      "${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
+    message("Running release build on gcc 4.8. The tree-vectorize optimization "
+      "in this version of gcc is known to be buggy. Disabling it.")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-tree-vectorize")
   endif()
 endif()
 
@@ -358,22 +372,13 @@ endif()
 
 # Code coverage
 if ("${KUDU_GENERATE_COVERAGE}")
-  if("${CMAKE_CXX_COMPILER}" MATCHES ".*clang.*")
-    # There appears to be some bugs in clang 3.3 which cause code coverage
-    # to have link errors, not locating the llvm_gcda_* symbols.
-    # This should be fixed in llvm 3.4 with http://llvm.org/viewvc/llvm-project?view=revision&revision=184666
-    message(SEND_ERROR "Cannot currently generate coverage with clang")
-  endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -DCOVERAGE_BUILD")
 
-  # For coverage to work properly, we need to use static linkage. Otherwise,
-  # __gcov_flush() doesn't properly flush coverage from every module.
-  # See http://stackoverflow.com/questions/28164543/using-gcov-flush-within-a-library-doesnt-force-the-other-modules-to-yield-gc
-  if("${KUDU_LINK}" STREQUAL "a")
-    message("Using static linking for coverage build")
-    set(KUDU_LINK "s")
-  elseif("${KUDU_LINK}" STREQUAL "d")
-    message(SEND_ERROR "Cannot use coverage with static linking")
+  if(NOT "${COMPILER_FAMILY}" STREQUAL "clang")
+    # Use clang for coverage builds so that we can standardize on a single
+    # compiler. clang also handles flushing coverage from shared libraries
+    # better than gcc.
+    message(SEND_ERROR "Must use clang for coverage build")
   endif()
 endif()
 

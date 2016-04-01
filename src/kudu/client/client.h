@@ -38,6 +38,14 @@
 #include "kudu/util/monotime.h"
 #include "kudu/util/status.h"
 
+#if _GLIBCXX_USE_CXX11_ABI
+#error \
+  "Kudu will not function properly if built with gcc 5's new ABI. " \
+  "Please modify your application to set -D_GLIBCXX_USE_CXX11_ABI=0. " \
+  "For more information about the new ABI, see " \
+  "https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html."
+#endif
+
 namespace kudu {
 
 class LinkedListTester;
@@ -99,6 +107,13 @@ void KUDU_EXPORT SetVerboseLogLevel(int level);
 // SIGUSR2. If your application makes use of SIGUSR2, this advanced API can help
 // workaround conflicts.
 Status KUDU_EXPORT SetInternalSignalNumber(int signum);
+
+// Return a single-version string identifying the Kudu client.
+std::string KUDU_EXPORT GetShortVersionString();
+
+// Return a longer multi-line version string identifying the client, including
+// build time, etc.
+std::string KUDU_EXPORT GetAllVersionInfo();
 
 // Creates a new KuduClient with the desired options.
 //
@@ -277,7 +292,7 @@ class KUDU_EXPORT KuduClient : public sp::enable_shared_from_this<KuduClient> {
   FRIEND_TEST(ClientTest, TestScanFaultTolerance);
   FRIEND_TEST(ClientTest, TestScanTimeout);
   FRIEND_TEST(ClientTest, TestWriteWithDeadMaster);
-  FRIEND_TEST(MasterFailoverTest, DISABLED_TestPauseAfterCreateTableIssued);
+  FRIEND_TEST(MasterFailoverTest, TestPauseAfterCreateTableIssued);
 
   KuduClient();
 

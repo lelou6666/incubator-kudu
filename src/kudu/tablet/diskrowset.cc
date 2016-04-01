@@ -104,7 +104,7 @@ Status DiskRowSetWriter::InitBloomFileWriter() {
                         "Couldn't allocate a block for bloom filter");
   rowset_metadata_->set_bloom_block(block->id());
 
-  bloom_writer_.reset(new cfile::BloomFileWriter(block.Pass(), bloom_sizing_));
+  bloom_writer_.reset(new cfile::BloomFileWriter(std::move(block), bloom_sizing_));
   RETURN_NOT_OK(bloom_writer_->Start());
   return Status::OK();
 }
@@ -140,7 +140,7 @@ Status DiskRowSetWriter::InitAdHocIndexWriter() {
       opts,
       GetTypeInfo(BINARY),
       false,
-      block.Pass()));
+      std::move(block)));
   return ad_hoc_index_writer_->Start();
 
 }
@@ -213,7 +213,10 @@ Status DiskRowSetWriter::FinishAndReleaseBlocks(ScopedWritableBlockCloser* close
   // Save the last encoded (max) key
   CHECK_GT(last_encoded_key_.size(), 0);
   Slice last_enc_slice(last_encoded_key_);
-  Slice first_enc_slice(key_index_writer()->GetMetaValueOrDie(DiskRowSet::kMinKeyMetaEntryName));
+  std::string first_encoded_key =
+      key_index_writer()->GetMetaValueOrDie(DiskRowSet::kMinKeyMetaEntryName);
+  Slice first_enc_slice(first_encoded_key);
+
   CHECK_LE(first_enc_slice.compare(last_enc_slice), 0)
       << "First Key not <= Last key: first_key=" << first_enc_slice.ToDebugString()
       << "   last_key=" << last_enc_slice.ToDebugString();
@@ -312,8 +315,8 @@ Status RollingDiskRowSetWriter::RollWriter() {
   RETURN_NOT_OK(fs->CreateNewBlock(&redo_data_block));
   cur_undo_ds_block_id_ = undo_data_block->id();
   cur_redo_ds_block_id_ = redo_data_block->id();
-  cur_undo_writer_.reset(new DeltaFileWriter(undo_data_block.Pass()));
-  cur_redo_writer_.reset(new DeltaFileWriter(redo_data_block.Pass()));
+  cur_undo_writer_.reset(new DeltaFileWriter(std::move(undo_data_block)));
+  cur_redo_writer_.reset(new DeltaFileWriter(std::move(redo_data_block)));
   cur_undo_delta_stats.reset(new DeltaStats());
   cur_redo_delta_stats.reset(new DeltaStats());
 
@@ -663,7 +666,7 @@ uint64_t DiskRowSet::EstimateDeltaDiskSize() const {
 uint64_t DiskRowSet::EstimateOnDiskSize() const {
   DCHECK(open_);
   boost::shared_lock<rw_spinlock> lock(component_lock_.get_lock());
-  return EstimateBaseDataDiskSize() + EstimateDeltaDiskSize();
+  return base_data_->EstimateOnDiskSize() + delta_tracker_->EstimateOnDiskSize();
 }
 
 size_t DiskRowSet::DeltaMemStoreSize() const {
