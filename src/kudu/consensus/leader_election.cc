@@ -1,21 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/leader_election.h"
 
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
 
 #include "kudu/consensus/consensus_peers.h"
 #include "kudu/consensus/metadata.pb.h"
@@ -27,7 +29,7 @@
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/common/wire_protocol.h"
-#include "kudu/rpc/rpc_controller.cc"
+#include "kudu/rpc/rpc_controller.h"
 #include "kudu/util/logging.h"
 #include "kudu/util/net/net_util.h"
 #include "kudu/util/status.h"
@@ -36,7 +38,6 @@ namespace kudu {
 namespace consensus {
 
 using std::string;
-using std::tr1::unordered_map;
 using strings::Substitute;
 
 ///////////////////////////////////////////////////
@@ -153,15 +154,14 @@ LeaderElection::LeaderElection(const RaftConfigPB& config,
                                PeerProxyFactory* proxy_factory,
                                const VoteRequestPB& request,
                                gscoped_ptr<VoteCounter> vote_counter,
-                               const MonoDelta& timeout,
-                               const ElectionDecisionCallback& decision_callback)
-  : has_responded_(false),
-    request_(request),
-    vote_counter_(vote_counter.Pass()),
-    timeout_(timeout),
-    decision_callback_(decision_callback) {
-
-  BOOST_FOREACH(const RaftPeerPB& peer, config.peers()) {
+                               MonoDelta timeout,
+                               ElectionDecisionCallback decision_callback)
+    : has_responded_(false),
+      request_(request),
+      vote_counter_(std::move(vote_counter)),
+      timeout_(std::move(timeout)),
+      decision_callback_(std::move(decision_callback)) {
+  for (const RaftPeerPB& peer : config.peers()) {
     if (request.candidate_uuid() == peer.permanent_uuid()) continue;
     follower_uuids_.push_back(peer.permanent_uuid());
 
@@ -195,8 +195,8 @@ void LeaderElection::Run() {
   CheckForDecision();
 
   // The rest of the code below is for a typical multi-node configuration.
-  BOOST_FOREACH(const std::string& voter_uuid, follower_uuids_) {
-    VoterState* state = NULL;
+  for (const std::string& voter_uuid : follower_uuids_) {
+    VoterState* state = nullptr;
     {
       lock_guard<Lock> guard(&lock_);
       state = FindOrDie(voter_state_, voter_uuid);

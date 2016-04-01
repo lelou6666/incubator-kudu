@@ -1,23 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/ts_tablet_manager.h"
 
-#include <boost/assign/list_of.hpp>
 #include <gtest/gtest.h>
 #include <string>
-#include <tr1/memory>
 
 #include "kudu/common/partition.h"
 #include "kudu/common/schema.h"
@@ -43,7 +44,6 @@ using consensus::kInvalidOpIdIndex;
 using consensus::RaftConfigPB;
 using master::ReportedTabletPB;
 using master::TabletReportPB;
-using std::tr1::shared_ptr;
 using tablet::TabletPeer;
 
 static const char* const kTabletId = "my-tablet-id";
@@ -52,9 +52,7 @@ static const char* const kTabletId = "my-tablet-id";
 class TsTabletManagerTest : public KuduTest {
  public:
   TsTabletManagerTest()
-    : schema_(boost::assign::list_of
-             (ColumnSchema("key", UINT32)),
-              1) {
+    : schema_({ ColumnSchema("key", UINT32) }, 1) {
   }
 
   virtual void SetUp() OVERRIDE {
@@ -131,7 +129,7 @@ static void AssertReportHasUpdatedTablet(const TabletReportPB& report,
                                          const string& tablet_id) {
   ASSERT_GE(report.updated_tablets_size(), 0);
   bool found_tablet = false;
-  BOOST_FOREACH(ReportedTabletPB reported_tablet, report.updated_tablets()) {
+  for (ReportedTabletPB reported_tablet : report.updated_tablets()) {
     if (reported_tablet.tablet_id() == tablet_id) {
       found_tablet = true;
       ASSERT_TRUE(reported_tablet.has_committed_consensus_state());
@@ -172,7 +170,7 @@ TEST_F(TsTabletManagerTest, TestTabletReports) {
   tablet_manager_->MarkTabletReportAcknowledged(report);
 
   // Create a tablet and do another incremental report - should include the tablet.
-  ASSERT_OK(CreateNewTablet("tablet-1", schema_, NULL));
+  ASSERT_OK(CreateNewTablet("tablet-1", schema_, nullptr));
   int updated_tablets = 0;
   while (updated_tablets != 1) {
     tablet_manager_->GenerateIncrementalTabletReport(&report);
@@ -200,7 +198,7 @@ TEST_F(TsTabletManagerTest, TestTabletReports) {
   tablet_manager_->MarkTabletReportAcknowledged(report);
 
   // Create a second tablet, and ensure the incremental report shows it.
-  ASSERT_OK(CreateNewTablet("tablet-2", schema_, NULL));
+  ASSERT_OK(CreateNewTablet("tablet-2", schema_, nullptr));
 
   // Wait up to 10 seconds to get a tablet report from tablet-2.
   // TabletPeer does not mark tablets dirty until after it commits the
@@ -214,7 +212,7 @@ TEST_F(TsTabletManagerTest, TestTabletReports) {
     tablet_manager_->GenerateIncrementalTabletReport(&report);
     ASSERT_TRUE(report.is_incremental()) << report.ShortDebugString();
     ASSERT_MONOTONIC_REPORT_SEQNO(&seqno, report) << report.ShortDebugString();
-    BOOST_FOREACH(const ReportedTabletPB& reported_tablet, report.updated_tablets()) {
+    for (const ReportedTabletPB& reported_tablet : report.updated_tablets()) {
       if (reported_tablet.tablet_id() == "tablet-2") {
         found_tablet_2  = true;
         break;

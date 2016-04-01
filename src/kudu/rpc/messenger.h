@@ -1,22 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_RPC_MESSENGER_H
 #define KUDU_RPC_MESSENGER_H
 
+#include <memory>
 #include <stdint.h>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 
 #include <list>
 #include <string>
@@ -52,9 +55,8 @@ class RpcService;
 
 struct AcceptorPoolInfo {
  public:
-  explicit AcceptorPoolInfo(const Sockaddr &bind_address)
-    : bind_address_(bind_address) {
-  }
+  explicit AcceptorPoolInfo(Sockaddr bind_address)
+      : bind_address_(std::move(bind_address)) {}
 
   Sockaddr bind_address() const {
     return bind_address_;
@@ -70,7 +72,7 @@ class MessengerBuilder {
   friend class Messenger;
   friend class ReactorThread;
 
-  explicit MessengerBuilder(const std::string &name);
+  explicit MessengerBuilder(std::string name);
 
   // Set the length of time we will keep a TCP connection will alive with no traffic.
   MessengerBuilder &set_connection_keepalive_time(const MonoDelta &keepalive);
@@ -89,7 +91,7 @@ class MessengerBuilder {
   // Set metric entity for use by RPC systems.
   MessengerBuilder &set_metric_entity(const scoped_refptr<MetricEntity>& metric_entity);
 
-  Status Build(std::tr1::shared_ptr<Messenger> *msgr);
+  Status Build(std::shared_ptr<Messenger> *msgr);
 
  private:
   Status Build(Messenger **msgr);
@@ -116,8 +118,8 @@ class Messenger {
   friend class MessengerBuilder;
   friend class Proxy;
   friend class Reactor;
-  typedef std::vector<std::tr1::shared_ptr<AcceptorPool> > acceptor_vec_t;
-  typedef std::tr1::unordered_map<std::string, scoped_refptr<RpcService> > RpcServicesMap;
+  typedef std::vector<std::shared_ptr<AcceptorPool> > acceptor_vec_t;
+  typedef std::unordered_map<std::string, scoped_refptr<RpcService> > RpcServicesMap;
 
   static const uint64_t UNKNOWN_CALL_ID = 0;
 
@@ -138,7 +140,7 @@ class Messenger {
   // NOTE: the returned pool is not initially started. You must call
   // pool->Start(...) to begin accepting connections.
   Status AddAcceptorPool(const Sockaddr &accept_addr,
-                         std::tr1::shared_ptr<AcceptorPool>* pool);
+                         std::shared_ptr<AcceptorPool>* pool);
 
   // Register a new RpcService to handle inbound requests.
   Status RegisterService(const std::string& service_name,
@@ -151,7 +153,7 @@ class Messenger {
 
   // Queue a call for transmission. This will pick the appropriate reactor,
   // and enqueue a task on that reactor to assign and send the call.
-  void QueueOutboundCall(const std::tr1::shared_ptr<OutboundCall> &call);
+  void QueueOutboundCall(const std::shared_ptr<OutboundCall> &call);
 
   // Enqueue a call for processing on the server.
   void QueueInboundCall(gscoped_ptr<InboundCall> call);
@@ -262,7 +264,7 @@ class Messenger {
   // do so. So, handing out a normal shared_ptr to users would force the Messenger
   // destructor to Join() the reactor threads, which causes a problem if the user
   // tries to destruct the Messenger from within a Reactor thread itself.
-  std::tr1::shared_ptr<Messenger> retain_self_;
+  std::shared_ptr<Messenger> retain_self_;
 
   DISALLOW_COPY_AND_ASSIGN(Messenger);
 };

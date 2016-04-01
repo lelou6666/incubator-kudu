@@ -1,22 +1,24 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
+#include <memory>
 #include <stdlib.h>
-#include <tr1/unordered_set>
+#include <unordered_set>
 
 #include "kudu/common/schema.h"
 #include "kudu/consensus/consensus.pb.h"
@@ -33,8 +35,8 @@
 
 DEFINE_int32(benchmark_num_passes, 100, "Number of passes to apply deltas in the benchmark");
 
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
+using std::shared_ptr;
+using std::unordered_set;
 
 namespace kudu {
 namespace tablet {
@@ -72,7 +74,7 @@ class TestDeltaMemStore : public KuduTest {
     faststring buf;
     RowChangeListEncoder update(&buf);
 
-    BOOST_FOREACH(uint32_t idx_to_update, indexes_to_update) {
+    for (uint32_t idx_to_update : indexes_to_update) {
       ScopedTransaction tx(&mvcc_);
       tx.StartApplying();
       update.Reset();
@@ -90,8 +92,8 @@ class TestDeltaMemStore : public KuduTest {
                     size_t col_idx,
                     ColumnBlock *cb) {
     ColumnSchema col_schema(schema_.column(col_idx));
-    Schema single_col_projection(boost::assign::list_of(col_schema),
-                                 boost::assign::list_of(schema_.column_id(col_idx)),
+    Schema single_col_projection({ col_schema },
+                                 { schema_.column_id(col_idx) },
                                  0);
 
     DeltaIterator* raw_iter;
@@ -101,7 +103,7 @@ class TestDeltaMemStore : public KuduTest {
     }
     ASSERT_OK(s);
     gscoped_ptr<DeltaIterator> iter(raw_iter);
-    ASSERT_OK(iter->Init(NULL));
+    ASSERT_OK(iter->Init(nullptr));
     ASSERT_OK(iter->SeekToOrdinal(row_idx));
     ASSERT_OK(iter->PrepareBatch(cb->nrows(), DeltaIterator::PREPARE_FOR_APPLY));
     ASSERT_OK(iter->ApplyUpdates(0, cb));
@@ -162,7 +164,7 @@ TEST_F(TestDeltaMemStore, TestUpdateCount) {
   // Flush the delta file so that the stats get updated.
   gscoped_ptr<WritableBlock> block;
   ASSERT_OK(fs_manager_->CreateNewBlock(&block));
-  DeltaFileWriter dfw(block.Pass());
+  DeltaFileWriter dfw(std::move(block));
   ASSERT_OK(dfw.Start());
   gscoped_ptr<DeltaStats> stats;
   dms_->FlushToFile(&dfw, &stats);
@@ -416,7 +418,7 @@ TEST_F(TestDeltaMemStore, TestIteratorDoesUpdates) {
   ASSERT_OK(s);
 
   gscoped_ptr<DMSIterator> iter(down_cast<DMSIterator *>(raw_iter));
-  ASSERT_OK(iter->Init(NULL));
+  ASSERT_OK(iter->Init(nullptr));
 
   int block_start_row = 50;
   ASSERT_OK(iter->SeekToOrdinal(block_start_row));
@@ -464,7 +466,7 @@ TEST_F(TestDeltaMemStore, TestCollectMutations) {
 
   gscoped_ptr<DMSIterator> iter(down_cast<DMSIterator *>(raw_iter));
 
-  ASSERT_OK(iter->Init(NULL));
+  ASSERT_OK(iter->Init(nullptr));
   ASSERT_OK(iter->SeekToOrdinal(0));
   ASSERT_OK(iter->PrepareBatch(kBatchSize, DeltaIterator::PREPARE_FOR_COLLECT));
   ASSERT_OK(iter->CollectMutations(&mutations, &arena));

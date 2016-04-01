@@ -1,23 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <gtest/gtest.h>
 #include <glog/logging.h>
-
+#include <gtest/gtest.h>
+#include <memory>
 #include <stdio.h>
-#include <tr1/memory>
-#include <tr1/unordered_set>
+#include <unordered_set>
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/tablet/mock-rowsets.h"
@@ -26,9 +28,9 @@
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
+using std::unordered_set;
 
 namespace kudu { namespace tablet {
 
@@ -138,19 +140,19 @@ TEST_F(TestRowSetTree, TestEndpointsConsistency) {
                                                       StringPrintf("%04d", 12000))));
   // Make tree
   RowSetTree tree;
-  tree.Reset(vec);
+  ASSERT_OK(tree.Reset(vec));
   // Keep track of "currently open" intervals defined by the endpoints
   unordered_set<RowSet*> open;
   // Keep track of all rowsets that have been visited
   unordered_set<RowSet*> visited;
 
   Slice prev;
-  BOOST_FOREACH(const RowSetTree::RSEndpoint& rse, tree.key_endpoints()) {
+  for (const RowSetTree::RSEndpoint& rse : tree.key_endpoints()) {
     RowSet* rs = rse.rowset_;
     enum RowSetTree::EndpointType ept = rse.endpoint_;
     const Slice& slice = rse.slice_;
 
-    ASSERT_TRUE(rs != NULL) << "RowSetTree has an endpoint with no rowset";
+    ASSERT_TRUE(rs != nullptr) << "RowSetTree has an endpoint with no rowset";
     ASSERT_TRUE(!slice.empty()) << "RowSetTree has an endpoint with no key";
 
     if (!prev.empty()) {

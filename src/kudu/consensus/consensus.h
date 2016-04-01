@@ -1,23 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDO_QUORUM_CONSENSUS_H_
 #define KUDO_QUORUM_CONSENSUS_H_
 
 #include <boost/optional/optional_fwd.hpp>
 #include <iosfwd>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/consensus/consensus.pb.h"
@@ -238,16 +241,19 @@ class Consensus : public RefCountedThreadSafe<Consensus> {
 
   virtual void DumpStatusHtml(std::ostream& out) const = 0;
 
-  void SetFaultHooks(const std::tr1::shared_ptr<ConsensusFaultHooks>& hooks);
+  void SetFaultHooks(const std::shared_ptr<ConsensusFaultHooks>& hooks);
 
-  const std::tr1::shared_ptr<ConsensusFaultHooks>& GetFaultHooks() const;
+  const std::shared_ptr<ConsensusFaultHooks>& GetFaultHooks() const;
 
   // Stops running the consensus algorithm.
   virtual void Shutdown() = 0;
 
-  // TEMPORARY: Allows to get the last received OpId by this replica
-  // TODO Remove once we have solid election.
-  virtual Status GetLastReceivedOpId(OpId* id) { return Status::NotFound("Not implemented."); }
+  // Returns the last OpId (either received or committed, depending on the
+  // 'type' argument) that the Consensus implementation knows about.
+  // Primarily used for testing purposes.
+  virtual Status GetLastOpId(OpIdType type, OpId* id) {
+    return Status::NotFound("Not implemented.");
+  }
 
  protected:
   friend class RefCountedThreadSafe<Consensus>;
@@ -258,7 +264,7 @@ class Consensus : public RefCountedThreadSafe<Consensus> {
   virtual ~Consensus() {}
 
   // Fault hooks for tests. In production code this will always be null.
-  std::tr1::shared_ptr<ConsensusFaultHooks> fault_hooks_;
+  std::shared_ptr<ConsensusFaultHooks> fault_hooks_;
 
   enum HookPoint {
     PRE_START,
@@ -326,9 +332,8 @@ class ConsensusRound : public RefCountedThreadSafe<ConsensusRound> {
  public:
   // Ctor used for leader transactions. Leader transactions can and must specify the
   // callbacks prior to initiating the consensus round.
-  ConsensusRound(Consensus* consensus,
-                 gscoped_ptr<ReplicateMsg> replicate_msg,
-                 const ConsensusReplicatedCallback& replicated_cb);
+  ConsensusRound(Consensus* consensus, gscoped_ptr<ReplicateMsg> replicate_msg,
+                 ConsensusReplicatedCallback replicated_cb);
 
   // Ctor used for follower/learner transactions. These transactions do not use the
   // replicate callback and the commit callback is set later, after the transaction

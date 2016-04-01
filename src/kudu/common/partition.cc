@@ -1,26 +1,26 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/common/partition.h"
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <set>
 
 #include "kudu/common/partial_row.h"
-#include "kudu/common/row_key-util.h"
-#include "kudu/common/scan_predicate.h"
 #include "kudu/common/wire_protocol.pb.h"
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/join.h"
@@ -61,7 +61,7 @@ Slice Partition::range_key(const string& partition_key) const {
 void Partition::ToPB(PartitionPB* pb) const {
   pb->Clear();
   pb->mutable_hash_buckets()->Reserve(hash_buckets_.size());
-  BOOST_FOREACH(int32_t bucket, hash_buckets()) {
+  for (int32_t bucket : hash_buckets()) {
     pb->add_hash_buckets(bucket);
   }
   pb->set_partition_key_start(partition_key_start());
@@ -71,7 +71,7 @@ void Partition::ToPB(PartitionPB* pb) const {
 void Partition::FromPB(const PartitionPB& pb, Partition* partition) {
   partition->hash_buckets_.clear();
   partition->hash_buckets_.reserve(pb.hash_buckets_size());
-  BOOST_FOREACH(int32_t hash_bucket, pb.hash_buckets()) {
+  for (int32_t hash_bucket : pb.hash_buckets()) {
     partition->hash_buckets_.push_back(hash_bucket);
   }
 
@@ -85,7 +85,7 @@ Status ExtractColumnIds(const RepeatedPtrField<PartitionSchemaPB_ColumnIdentifie
                         const Schema& schema,
                         vector<ColumnId>* column_ids) {
     column_ids->reserve(identifiers.size());
-    BOOST_FOREACH(PartitionSchemaPB_ColumnIdentifierPB identifier, identifiers) {
+    for (PartitionSchemaPB_ColumnIdentifierPB identifier : identifiers) {
       switch (identifier.identifier_case()) {
         case PartitionSchemaPB_ColumnIdentifierPB::kId: {
           ColumnId column_id(identifier.id());
@@ -112,7 +112,7 @@ Status ExtractColumnIds(const RepeatedPtrField<PartitionSchemaPB_ColumnIdentifie
 void SetColumnIdentifiers(const vector<ColumnId>& column_ids,
                           RepeatedPtrField<PartitionSchemaPB_ColumnIdentifierPB>* identifiers) {
     identifiers->Reserve(column_ids.size());
-    BOOST_FOREACH(ColumnId column_id, column_ids) {
+    for (ColumnId column_id : column_ids) {
       identifiers->Add()->set_id(column_id);
     }
 }
@@ -123,8 +123,7 @@ Status PartitionSchema::FromPB(const PartitionSchemaPB& pb,
                                PartitionSchema* partition_schema) {
   partition_schema->Clear();
 
-  BOOST_FOREACH(const PartitionSchemaPB_HashBucketSchemaPB& hash_bucket_pb,
-                pb.hash_bucket_schemas()) {
+  for (const PartitionSchemaPB_HashBucketSchemaPB& hash_bucket_pb : pb.hash_bucket_schemas()) {
     HashBucketSchema hash_bucket;
     RETURN_NOT_OK(ExtractColumnIds(hash_bucket_pb.columns(), schema, &hash_bucket.column_ids));
 
@@ -158,7 +157,7 @@ Status PartitionSchema::FromPB(const PartitionSchemaPB& pb,
 void PartitionSchema::ToPB(PartitionSchemaPB* pb) const {
   pb->Clear();
   pb->mutable_hash_bucket_schemas()->Reserve(hash_bucket_schemas_.size());
-  BOOST_FOREACH(const HashBucketSchema& hash_bucket, hash_bucket_schemas_) {
+  for (const HashBucketSchema& hash_bucket : hash_bucket_schemas_) {
     PartitionSchemaPB_HashBucketSchemaPB* hash_bucket_pb = pb->add_hash_bucket_schemas();
     SetColumnIdentifiers(hash_bucket.column_ids, hash_bucket_pb->mutable_columns());
     hash_bucket_pb->set_num_buckets(hash_bucket.num_buckets);
@@ -171,7 +170,7 @@ void PartitionSchema::ToPB(PartitionSchemaPB* pb) const {
 Status PartitionSchema::EncodeKey(const KuduPartialRow& row, string* buf) const {
   const KeyEncoder<string>& hash_encoder = GetKeyEncoder<string>(GetTypeInfo(UINT32));
 
-  BOOST_FOREACH(const HashBucketSchema& hash_bucket_schema, hash_bucket_schemas_) {
+  for (const HashBucketSchema& hash_bucket_schema : hash_bucket_schemas_) {
     int32_t bucket;
     RETURN_NOT_OK(BucketForRow(row, hash_bucket_schema, &bucket));
     hash_encoder.Encode(&bucket, buf);
@@ -183,7 +182,7 @@ Status PartitionSchema::EncodeKey(const KuduPartialRow& row, string* buf) const 
 Status PartitionSchema::EncodeKey(const ConstContiguousRow& row, string* buf) const {
   const KeyEncoder<string>& hash_encoder = GetKeyEncoder<string>(GetTypeInfo(UINT32));
 
-  BOOST_FOREACH(const HashBucketSchema& hash_bucket_schema, hash_bucket_schemas_) {
+  for (const HashBucketSchema& hash_bucket_schema : hash_bucket_schemas_) {
     int32_t bucket;
     RETURN_NOT_OK(BucketForRow(row, hash_bucket_schema, &bucket));
     hash_encoder.Encode(&bucket, buf);
@@ -199,11 +198,11 @@ Status PartitionSchema::CreatePartitions(const vector<KuduPartialRow>& split_row
 
   // Create a partition per hash bucket combination.
   *partitions = vector<Partition>(1);
-  BOOST_FOREACH(const HashBucketSchema& bucket_schema, hash_bucket_schemas_) {
+  for (const HashBucketSchema& bucket_schema : hash_bucket_schemas_) {
     vector<Partition> new_partitions;
     // For each of the partitions created so far, replicate it
     // by the number of buckets in the next hash bucketing component
-    BOOST_FOREACH(const Partition& base_partition, *partitions) {
+    for (const Partition& base_partition : *partitions) {
       for (int32_t bucket = 0; bucket < bucket_schema.num_buckets; bucket++) {
         Partition partition = base_partition;
         partition.hash_buckets_.push_back(bucket);
@@ -216,7 +215,7 @@ Status PartitionSchema::CreatePartitions(const vector<KuduPartialRow>& split_row
   }
 
   unordered_set<int> range_column_idxs;
-  BOOST_FOREACH(ColumnId column_id, range_schema_.column_ids) {
+  for (ColumnId column_id : range_schema_.column_ids) {
     int column_idx = schema.find_column_by_id(column_id);
     if (column_idx == Schema::kColumnNotFound) {
       return Status::InvalidArgument(Substitute("Range partition column ID $0 "
@@ -231,7 +230,7 @@ Status PartitionSchema::CreatePartitions(const vector<KuduPartialRow>& split_row
   // Create the start range keys.
   set<string> start_keys;
   string start_key;
-  BOOST_FOREACH(const KuduPartialRow& row, split_rows) {
+  for (const KuduPartialRow& row : split_rows) {
     int column_count = 0;
     for (int column_idx = 0; column_idx < schema.num_columns(); column_idx++) {
       const ColumnSchema& column = schema.column(column_idx);
@@ -247,8 +246,8 @@ Status PartitionSchema::CreatePartitions(const vector<KuduPartialRow>& split_row
 
     // Check for an empty split row.
     if (column_count == 0) {
-    return Status::InvalidArgument("Split rows must contain a value for at "
-                                   "least one range partition column");
+      return Status::InvalidArgument("Split rows must contain a value for at "
+                                     "least one range partition column");
     }
 
     start_key.clear();
@@ -262,10 +261,10 @@ Status PartitionSchema::CreatePartitions(const vector<KuduPartialRow>& split_row
 
   // Create a partition per range and hash bucket combination.
   vector<Partition> new_partitions;
-  BOOST_FOREACH(const Partition& base_partition, *partitions) {
+  for (const Partition& base_partition : *partitions) {
     start_key.clear();
 
-    BOOST_FOREACH(const string& end_key, start_keys) {
+    for (const string& end_key : start_keys) {
       Partition partition = base_partition;
       partition.partition_key_start_.append(start_key);
       partition.partition_key_end_.append(end_key);
@@ -297,7 +296,7 @@ Status PartitionSchema::CreatePartitions(const vector<KuduPartialRow>& split_row
   // the absolute start and end case, these holes are filled by clearing the
   // partition key beginning at the hash component. For a concrete example,
   // see PartitionTest::TestCreatePartitions.
-  BOOST_FOREACH(Partition& partition, *partitions) {
+  for (Partition& partition : *partitions) {
     if (partition.range_key_start().empty()) {
       for (int i = partition.hash_buckets().size() - 1; i >= 0; i--) {
         if (partition.hash_buckets()[i] != 0) {
@@ -406,7 +405,8 @@ Status PartitionSchema::DecodeHashBuckets(Slice* encoded_key,
         Substitute("expected encoded hash key to be at least $0 bytes (only found $1)",
                    hash_components_size, encoded_key->size()));
   }
-  for (int i = 0; i < hash_bucket_schemas_.size(); i++) {
+  for (const auto& schema : hash_bucket_schemas_) {
+    (void) schema; // quiet unused variable warning
     uint32_t big_endian;
     memcpy(&big_endian, encoded_key->data(), sizeof(uint32_t));
     buckets->push_back(BigEndian::ToHost32(big_endian));
@@ -422,7 +422,7 @@ string PartitionSchema::PartitionDebugString(const Partition& partition,
 
   if (!partition.hash_buckets().empty()) {
     vector<string> components;
-    BOOST_FOREACH(int32_t bucket, partition.hash_buckets()) {
+    for (int32_t bucket : partition.hash_buckets()) {
       components.push_back(Substitute("$0", bucket));
     }
     s.append("hash buckets: (");
@@ -473,7 +473,7 @@ void PartitionSchema::AppendRangeDebugStringComponentsOrString(const KuduPartial
                                                                vector<string>* components) const {
   ConstContiguousRow const_row(row.schema(), row.row_data_);
 
-  BOOST_FOREACH(ColumnId column_id, range_schema_.column_ids) {
+  for (ColumnId column_id : range_schema_.column_ids) {
     string column;
     int32_t column_idx = row.schema()->find_column_by_id(column_id);
     if (column_idx == Schema::kColumnNotFound) {
@@ -497,7 +497,7 @@ void PartitionSchema::AppendRangeDebugStringComponentsOrMin(const KuduPartialRow
                                                             vector<string>* components) const {
   ConstContiguousRow const_row(row.schema(), row.row_data_);
 
-  BOOST_FOREACH(ColumnId column_id, range_schema_.column_ids) {
+  for (ColumnId column_id : range_schema_.column_ids) {
     string column;
     int32_t column_idx = row.schema()->find_column_by_id(column_id);
     if (column_idx == Schema::kColumnNotFound) {
@@ -522,7 +522,7 @@ void PartitionSchema::AppendRangeDebugStringComponentsOrMin(const KuduPartialRow
 string PartitionSchema::RowDebugString(const ConstContiguousRow& row) const {
   vector<string> components;
 
-  BOOST_FOREACH(const HashBucketSchema& hash_bucket_schema, hash_bucket_schemas_) {
+  for (const HashBucketSchema& hash_bucket_schema : hash_bucket_schemas_) {
     int32_t bucket;
     Status s = BucketForRow(row, hash_bucket_schema, &bucket);
     if (s.ok()) {
@@ -532,7 +532,7 @@ string PartitionSchema::RowDebugString(const ConstContiguousRow& row) const {
     }
   }
 
-  BOOST_FOREACH(ColumnId column_id, range_schema_.column_ids) {
+  for (ColumnId column_id : range_schema_.column_ids) {
     string column;
     int32_t column_idx = row.schema()->find_column_by_id(column_id);
     if (column_idx == Schema::kColumnNotFound) {
@@ -549,7 +549,7 @@ string PartitionSchema::RowDebugString(const ConstContiguousRow& row) const {
 string PartitionSchema::RowDebugString(const KuduPartialRow& row) const {
   vector<string> components;
 
-  BOOST_FOREACH(const HashBucketSchema& hash_bucket_schema, hash_bucket_schemas_) {
+  for (const HashBucketSchema& hash_bucket_schema : hash_bucket_schemas_) {
     int32_t bucket;
     Status s = BucketForRow(row, hash_bucket_schema, &bucket);
     if (s.ok()) {
@@ -575,7 +575,7 @@ string PartitionSchema::PartitionKeyDebugString(const string& key, const Schema&
     if (!s.ok()) {
       return Substitute("<hash-decode-error: $0>", s.ToString());
     }
-    BOOST_FOREACH(int32_t bucket, buckets) {
+    for (int32_t bucket : buckets) {
       components.push_back(Substitute("bucket=$0", bucket));
     }
   }
@@ -601,7 +601,7 @@ namespace {
 string ColumnIdsToColumnNames(const Schema& schema,
                               const vector<ColumnId> column_ids) {
   vector<string> names;
-  BOOST_FOREACH(ColumnId column_id, column_ids) {
+  for (ColumnId column_id : column_ids) {
     names.push_back(schema.column(schema.find_column_by_id(column_id)).name());
   }
 
@@ -614,7 +614,7 @@ string PartitionSchema::DebugString(const Schema& schema) const {
 
   if (!hash_bucket_schemas_.empty()) {
     vector<string> hash_components;
-    BOOST_FOREACH(const HashBucketSchema& hash_bucket_schema, hash_bucket_schemas_) {
+    for (const HashBucketSchema& hash_bucket_schema : hash_bucket_schemas_) {
       string component;
       component.append(Substitute("(bucket count: $0", hash_bucket_schema.num_buckets));
       if (hash_bucket_schema.seed != 0) {
@@ -651,16 +651,6 @@ bool PartitionSchema::Equals(const PartitionSchema& other) const {
         != other.hash_bucket_schemas_[i].column_ids) return false;
   }
 
-  return true;
-}
-
-bool PartitionSchema::IsSimplePKRangePartitioning(const Schema& schema) const {
-  if (!hash_bucket_schemas_.empty()) return false;
-  if (range_schema_.column_ids.size() != schema.num_key_columns()) return false;
-
-  for (int i = 0; i < schema.num_key_columns(); i++) {
-    if (range_schema_.column_ids[i] != schema.column_id(i)) return false;
-  }
   return true;
 }
 
@@ -740,7 +730,7 @@ void PartitionSchema::Clear() {
 
 Status PartitionSchema::Validate(const Schema& schema) const {
   set<ColumnId> hash_columns;
-  BOOST_FOREACH(const PartitionSchema::HashBucketSchema& hash_schema, hash_bucket_schemas_) {
+  for (const PartitionSchema::HashBucketSchema& hash_schema : hash_bucket_schemas_) {
     if (hash_schema.num_buckets < 2) {
       return Status::InvalidArgument("must have at least two hash buckets");
     }
@@ -749,7 +739,7 @@ Status PartitionSchema::Validate(const Schema& schema) const {
       return Status::InvalidArgument("must have at least one hash column");
     }
 
-    BOOST_FOREACH(ColumnId hash_column, hash_schema.column_ids) {
+    for (ColumnId hash_column : hash_schema.column_ids) {
       if (!hash_columns.insert(hash_column).second) {
         return Status::InvalidArgument("hash bucket schema components must not "
                                        "contain columns in common");
@@ -765,7 +755,7 @@ Status PartitionSchema::Validate(const Schema& schema) const {
     }
   }
 
-  BOOST_FOREACH(ColumnId column_id, range_schema_.column_ids) {
+  for (ColumnId column_id : range_schema_.column_ids) {
     int32_t column_idx = schema.find_column_by_id(column_id);
     if (column_idx == Schema::kColumnNotFound) {
       return Status::InvalidArgument("must specify existing columns for range "

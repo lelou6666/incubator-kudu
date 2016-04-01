@@ -1,24 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <stdint.h>
 #include <boost/thread/thread.hpp>
-#include <gflags/gflags.h>
-#include <glog/logging.h>
 #include <curl/curl.h>
 #include <fstream>
+#include <gflags/gflags.h>
+#include <glog/logging.h>
 #include <iostream>
+#include <stdint.h>
 
 #include "kudu/client/client.h"
 #include "kudu/gutil/macros.h"
@@ -49,11 +52,11 @@ DEFINE_string(twitter_firehose_file, "/dev/fd/0",
 
 
 using std::string;
-using std::tr1::shared_ptr;
 
 namespace kudu {
 namespace twitter_demo {
 
+using client::sp::shared_ptr;
 using tserver::TabletServerServiceProxy;
 
 // Consumer which simply logs messages to the console.
@@ -72,7 +75,7 @@ gscoped_ptr<TwitterConsumer> CreateInsertConsumer() {
 
   gscoped_ptr<InsertConsumer> ret(new InsertConsumer(client));
   CHECK_OK(ret->Init());
-  return gscoped_ptr<TwitterConsumer>(ret.Pass()); // up-cast
+  return gscoped_ptr<TwitterConsumer>(std::move(ret)); // up-cast
 }
 
 static void IngestFromFile(const string& file, gscoped_ptr<TwitterConsumer> consumer) {
@@ -107,7 +110,7 @@ static int main(int argc, char** argv) {
     CHECK_OK(streamer.Start());
     CHECK_OK(streamer.Join());
   } else if (FLAGS_twitter_firehose_source == "file") {
-    IngestFromFile(FLAGS_twitter_firehose_file, consumer.Pass());
+    IngestFromFile(FLAGS_twitter_firehose_file, std::move(consumer));
   } else {
     LOG(FATAL) << "Unknown source: " << FLAGS_twitter_firehose_source;
   }

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This module is internal to the client and not a public API.
 #ifndef KUDU_MASTER_MASTER_RPC_H
@@ -43,10 +46,9 @@ class GetMasterRegistrationRpc : public rpc::Rpc {
   // pointer for the lifetime of this object.
   //
   // Invokes 'user_cb' upon failure or success of the RPC call.
-  GetMasterRegistrationRpc(const StatusCallback& user_cb,
-                           const Sockaddr& addr,
+  GetMasterRegistrationRpc(StatusCallback user_cb, Sockaddr addr,
                            const MonoTime& deadline,
-                           const std::tr1::shared_ptr<rpc::Messenger>& messenger,
+                           const std::shared_ptr<rpc::Messenger>& messenger,
                            ServerEntryPB* out);
 
   ~GetMasterRegistrationRpc();
@@ -94,10 +96,9 @@ class GetLeaderMasterRpc : public rpc::Rpc,
   //
   // Calls 'user_cb' when the leader is found, or if no leader can be
   // found until 'deadline' passes.
-  GetLeaderMasterRpc(const LeaderCallback& user_cb,
-                     const std::vector<Sockaddr>& addrs,
+  GetLeaderMasterRpc(LeaderCallback user_cb, std::vector<Sockaddr> addrs,
                      const MonoTime& deadline,
-                     const std::tr1::shared_ptr<rpc::Messenger>& messenger);
+                     const std::shared_ptr<rpc::Messenger>& messenger);
 
   virtual void SendRpc() OVERRIDE;
 

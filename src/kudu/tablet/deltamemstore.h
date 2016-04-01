@@ -1,24 +1,27 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_DELTAMEMSTORE_H
 #define KUDU_TABLET_DELTAMEMSTORE_H
 
 #include <boost/thread/mutex.hpp>
 #include <deque>
 #include <gtest/gtest_prod.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/common/columnblock.h"
@@ -57,12 +60,11 @@ struct DMSTreeTraits : public btree::BTreeTraits {
 // modified columns.
 
 class DeltaMemStore : public DeltaStore,
-                      public std::tr1::enable_shared_from_this<DeltaMemStore> {
+                      public std::enable_shared_from_this<DeltaMemStore> {
  public:
-  DeltaMemStore(
-      int64_t id, int64_t rs_id,
-      log::LogAnchorRegistry* log_anchor_registry,
-      const std::tr1::shared_ptr<MemTracker>& parent_tracker = std::tr1::shared_ptr<MemTracker>());
+  DeltaMemStore(int64_t id, int64_t rs_id,
+                log::LogAnchorRegistry* log_anchor_registry,
+                const std::shared_ptr<MemTracker>& parent_tracker = std::shared_ptr<MemTracker>());
 
   virtual Status Init() OVERRIDE;
 
@@ -148,10 +150,10 @@ class DeltaMemStore : public DeltaStore,
   const int64_t id_;    // DeltaMemStore ID.
   const int64_t rs_id_; // Rowset ID.
 
-  std::tr1::shared_ptr<MemTracker> mem_tracker_;
-  std::tr1::shared_ptr<MemoryTrackingBufferAllocator> allocator_;
+  std::shared_ptr<MemTracker> mem_tracker_;
+  std::shared_ptr<MemoryTrackingBufferAllocator> allocator_;
 
-  std::tr1::shared_ptr<ThreadSafeMemoryTrackingArena> arena_;
+  std::shared_ptr<ThreadSafeMemoryTrackingArena> arena_;
 
   // Concurrent B-Tree storing <key index> -> RowChangeList
   gscoped_ptr<DMSTree> tree_;
@@ -212,11 +214,10 @@ class DMSIterator : public DeltaIterator {
   // The projection passed here must be the same as the schema of any
   // RowBlocks which are passed in, or else bad things will happen.
   // The pointer must also remain valid for the lifetime of the iterator.
-  DMSIterator(const std::tr1::shared_ptr<const DeltaMemStore> &dms,
-              const Schema *projection,
-              const MvccSnapshot &snapshot);
+  DMSIterator(const std::shared_ptr<const DeltaMemStore> &dms,
+              const Schema *projection, MvccSnapshot snapshot);
 
-  const std::tr1::shared_ptr<const DeltaMemStore> dms_;
+  const std::shared_ptr<const DeltaMemStore> dms_;
 
   // MVCC state which allows us to ignore uncommitted transactions.
   const MvccSnapshot mvcc_snapshot_;

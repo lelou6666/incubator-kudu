@@ -1,20 +1,23 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gtest/gtest.h>
 #include <string>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include "kudu/client/client.h"
@@ -26,7 +29,6 @@
 #include "kudu/util/monotime.h"
 #include "kudu/util/test_util.h"
 
-using std::tr1::shared_ptr;
 using std::string;
 using std::vector;
 
@@ -78,10 +80,10 @@ void ClusterVerifier::CheckCluster() {
 Status ClusterVerifier::DoKsck() {
   Sockaddr addr = cluster_->leader_master()->bound_rpc_addr();
 
-  shared_ptr<KsckMaster> master;
+  std::shared_ptr<KsckMaster> master;
   RETURN_NOT_OK(RemoteKsckMaster::Build(addr, &master));
-  shared_ptr<KsckCluster> cluster(new KsckCluster(master));
-  shared_ptr<Ksck> ksck(new Ksck(cluster));
+  std::shared_ptr<KsckCluster> cluster(new KsckCluster(master));
+  std::shared_ptr<Ksck> ksck(new Ksck(cluster));
 
   // This is required for everything below.
   RETURN_NOT_OK(ksck->CheckMasterRunning());
@@ -104,12 +106,12 @@ void ClusterVerifier::CheckRowCount(const std::string& table_name,
 Status ClusterVerifier::DoCheckRowCount(const std::string& table_name,
                                         ComparisonMode mode,
                                         int expected_row_count) {
-  shared_ptr<client::KuduClient> client;
+  client::sp::shared_ptr<client::KuduClient> client;
   client::KuduClientBuilder builder;
   RETURN_NOT_OK_PREPEND(cluster_->CreateClient(builder,
                                                &client),
                         "Unable to connect to cluster");
-  shared_ptr<client::KuduTable> table;
+  client::sp::shared_ptr<client::KuduTable> table;
   RETURN_NOT_OK_PREPEND(client->OpenTable(table_name, &table),
                         "Unable to open table");
   client::KuduScanner scanner(table.get());

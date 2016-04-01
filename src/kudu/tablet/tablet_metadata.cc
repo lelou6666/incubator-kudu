@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/tablet_metadata.h"
 
@@ -45,7 +48,11 @@ TAG_FLAG(enable_tablet_orphaned_block_deletion, advanced);
 TAG_FLAG(enable_tablet_orphaned_block_deletion, hidden);
 TAG_FLAG(enable_tablet_orphaned_block_deletion, runtime);
 
+<<<<<<< HEAD
 using std::tr1::shared_ptr;
+=======
+using std::shared_ptr;
+>>>>>>> refs/remotes/apache/master
 
 using base::subtle::Barrier_AtomicIncrement;
 using strings::Substitute;
@@ -125,14 +132,14 @@ Status TabletMetadata::LoadOrCreate(FsManager* fs_manager,
 
 void TabletMetadata::CollectBlockIdPBs(const TabletSuperBlockPB& superblock,
                                        std::vector<BlockIdPB>* block_ids) {
-  BOOST_FOREACH(const RowSetDataPB& rowset, superblock.rowsets()) {
-    BOOST_FOREACH(const ColumnDataPB& column, rowset.columns()) {
+  for (const RowSetDataPB& rowset : superblock.rowsets()) {
+    for (const ColumnDataPB& column : rowset.columns()) {
       block_ids->push_back(column.block());
     }
-    BOOST_FOREACH(const DeltaDataPB& redo, rowset.redo_deltas()) {
+    for (const DeltaDataPB& redo : rowset.redo_deltas()) {
       block_ids->push_back(redo.block());
     }
-    BOOST_FOREACH(const DeltaDataPB& undo, rowset.undo_deltas()) {
+    for (const DeltaDataPB& undo : rowset.undo_deltas()) {
       block_ids->push_back(undo.block());
     }
     if (rowset.has_bloom_block()) {
@@ -159,7 +166,7 @@ Status TabletMetadata::DeleteTabletData(TabletDataState delete_type,
   // we have been deleted.
   {
     boost::lock_guard<LockType> l(data_lock_);
-    BOOST_FOREACH(const shared_ptr<RowSetMetadata>& rsmd, rowsets_) {
+    for (const shared_ptr<RowSetMetadata>& rsmd : rowsets_) {
       AddOrphanedBlocksUnlocked(rsmd->GetAllBlocks());
     }
     rowsets_.clear();
@@ -203,28 +210,26 @@ Status TabletMetadata::DeleteSuperBlock() {
   return Status::OK();
 }
 
-TabletMetadata::TabletMetadata(FsManager *fs_manager,
-                               const string& tablet_id,
-                               const string& table_name,
-                               const Schema& schema,
-                               const PartitionSchema& partition_schema,
-                               const Partition& partition,
+TabletMetadata::TabletMetadata(FsManager* fs_manager, string tablet_id,
+                               string table_name, const Schema& schema,
+                               PartitionSchema partition_schema,
+                               Partition partition,
                                const TabletDataState& tablet_data_state)
-  : state_(kNotWrittenYet),
-    tablet_id_(tablet_id),
-    partition_(partition),
-    fs_manager_(fs_manager),
-    next_rowset_idx_(0),
-    last_durable_mrs_id_(kNoDurableMemStore),
-    schema_(new Schema(schema)),
-    schema_version_(0),
-    table_name_(table_name),
-    partition_schema_(partition_schema),
-    tablet_data_state_(tablet_data_state),
-    tombstone_last_logged_opid_(MinimumOpId()),
-    num_flush_pins_(0),
-    needs_flush_(false),
-    pre_flush_callback_(Bind(DoNothingStatusClosure)) {
+    : state_(kNotWrittenYet),
+      tablet_id_(std::move(tablet_id)),
+      partition_(std::move(partition)),
+      fs_manager_(fs_manager),
+      next_rowset_idx_(0),
+      last_durable_mrs_id_(kNoDurableMemStore),
+      schema_(new Schema(schema)),
+      schema_version_(0),
+      table_name_(std::move(table_name)),
+      partition_schema_(std::move(partition_schema)),
+      tablet_data_state_(tablet_data_state),
+      tombstone_last_logged_opid_(MinimumOpId()),
+      num_flush_pins_(0),
+      needs_flush_(false),
+      pre_flush_callback_(Bind(DoNothingStatusClosure)) {
   CHECK(schema_->has_column_ids());
   CHECK_GT(schema_->num_key_columns(), 0);
 }
@@ -234,17 +239,16 @@ TabletMetadata::~TabletMetadata() {
   delete schema_;
 }
 
-TabletMetadata::TabletMetadata(FsManager *fs_manager, const string& tablet_id)
-  : state_(kNotLoadedYet),
-    tablet_id_(tablet_id),
-    fs_manager_(fs_manager),
-    next_rowset_idx_(0),
-    schema_(NULL),
-    tombstone_last_logged_opid_(MinimumOpId()),
-    num_flush_pins_(0),
-    needs_flush_(false),
-    pre_flush_callback_(Bind(DoNothingStatusClosure)) {
-}
+TabletMetadata::TabletMetadata(FsManager* fs_manager, string tablet_id)
+    : state_(kNotLoadedYet),
+      tablet_id_(std::move(tablet_id)),
+      fs_manager_(fs_manager),
+      next_rowset_idx_(0),
+      schema_(nullptr),
+      tombstone_last_logged_opid_(MinimumOpId()),
+      num_flush_pins_(0),
+      needs_flush_(false),
+      pre_flush_callback_(Bind(DoNothingStatusClosure)) {}
 
 Status TabletMetadata::LoadFromDisk() {
   TRACE_EVENT1("tablet", "TabletMetadata::LoadFromDisk",
@@ -286,7 +290,7 @@ Status TabletMetadata::LoadFromSuperBlock(const TabletSuperBlockPB& superblock) 
     RETURN_NOT_OK_PREPEND(SchemaFromPB(superblock.schema(), schema.get()),
                           "Failed to parse Schema from superblock " +
                           superblock.ShortDebugString());
-    SetSchemaUnlocked(schema.Pass(), schema_version);
+    SetSchemaUnlocked(std::move(schema), schema_version);
 
     // This check provides backwards compatibility with the
     // flexible-partitioning changes introduced in KUDU-818.
@@ -312,14 +316,14 @@ Status TabletMetadata::LoadFromSuperBlock(const TabletSuperBlockPB& superblock) 
     tablet_data_state_ = superblock.tablet_data_state();
 
     rowsets_.clear();
-    BOOST_FOREACH(const RowSetDataPB& rowset_pb, superblock.rowsets()) {
+    for (const RowSetDataPB& rowset_pb : superblock.rowsets()) {
       gscoped_ptr<RowSetMetadata> rowset_meta;
       RETURN_NOT_OK(RowSetMetadata::Load(this, rowset_pb, &rowset_meta));
       next_rowset_idx_ = std::max(next_rowset_idx_, rowset_meta->id() + 1);
       rowsets_.push_back(shared_ptr<RowSetMetadata>(rowset_meta.release()));
     }
 
-    BOOST_FOREACH(const BlockIdPB& block_pb, superblock.orphaned_blocks()) {
+    for (const BlockIdPB& block_pb : superblock.orphaned_blocks()) {
       orphaned_blocks.push_back(BlockId::FromPB(block_pb));
     }
     AddOrphanedBlocksUnlocked(orphaned_blocks);
@@ -369,7 +373,7 @@ void TabletMetadata::DeleteOrphanedBlocks(const vector<BlockId>& blocks) {
   }
 
   vector<BlockId> deleted;
-  BOOST_FOREACH(const BlockId& b, blocks) {
+  for (const BlockId& b : blocks) {
     Status s = fs_manager()->DeleteBlock(b);
     // If we get NotFound, then the block was actually successfully
     // deleted before. So, we can remove it from our orphaned block list
@@ -385,7 +389,7 @@ void TabletMetadata::DeleteOrphanedBlocks(const vector<BlockId>& blocks) {
   // Remove the successfully-deleted blocks from the set.
   {
     boost::lock_guard<LockType> l(data_lock_);
-    BOOST_FOREACH(const BlockId& b, deleted) {
+    for (const BlockId& b : deleted) {
       orphaned_blocks_.erase(b);
     }
   }
@@ -462,7 +466,7 @@ Status TabletMetadata::UpdateUnlocked(
   }
 
   RowSetMetadataVector new_rowsets = rowsets_;
-  RowSetMetadataVector::iterator it = new_rowsets.begin();
+  auto it = new_rowsets.begin();
   while (it != new_rowsets.end()) {
     if (ContainsKey(to_remove, (*it)->id())) {
       AddOrphanedBlocksUnlocked((*it)->GetAllBlocks());
@@ -472,7 +476,7 @@ Status TabletMetadata::UpdateUnlocked(
     }
   }
 
-  BOOST_FOREACH(const shared_ptr<RowSetMetadata>& meta, to_add) {
+  for (const shared_ptr<RowSetMetadata>& meta : to_add) {
     new_rowsets.push_back(meta);
   }
   rowsets_ = new_rowsets;
@@ -532,7 +536,7 @@ Status TabletMetadata::ToSuperBlockUnlocked(TabletSuperBlockPB* super_block,
   partition_schema_.ToPB(pb.mutable_partition_schema());
   pb.set_table_name(table_name_);
 
-  BOOST_FOREACH(const shared_ptr<RowSetMetadata>& meta, rowsets) {
+  for (const shared_ptr<RowSetMetadata>& meta : rowsets) {
     meta->ToProtobuf(pb.add_rowsets());
   }
 
@@ -545,7 +549,7 @@ Status TabletMetadata::ToSuperBlockUnlocked(TabletSuperBlockPB* super_block,
     *pb.mutable_tombstone_last_logged_opid() = tombstone_last_logged_opid_;
   }
 
-  BOOST_FOREACH(const BlockId& block_id, orphaned_blocks_) {
+  for (const BlockId& block_id : orphaned_blocks_) {
     block_id.CopyToPB(pb.mutable_orphaned_blocks()->Add());
   }
 
@@ -563,28 +567,28 @@ Status TabletMetadata::CreateRowSet(shared_ptr<RowSetMetadata> *rowset,
 }
 
 const RowSetMetadata *TabletMetadata::GetRowSetForTests(int64_t id) const {
-  BOOST_FOREACH(const shared_ptr<RowSetMetadata>& rowset_meta, rowsets_) {
+  for (const shared_ptr<RowSetMetadata>& rowset_meta : rowsets_) {
     if (rowset_meta->id() == id) {
       return rowset_meta.get();
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 RowSetMetadata *TabletMetadata::GetRowSetForTests(int64_t id) {
   boost::lock_guard<LockType> l(data_lock_);
-  BOOST_FOREACH(const shared_ptr<RowSetMetadata>& rowset_meta, rowsets_) {
+  for (const shared_ptr<RowSetMetadata>& rowset_meta : rowsets_) {
     if (rowset_meta->id() == id) {
       return rowset_meta.get();
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 void TabletMetadata::SetSchema(const Schema& schema, uint32_t version) {
   gscoped_ptr<Schema> new_schema(new Schema(schema));
   boost::lock_guard<LockType> l(data_lock_);
-  SetSchemaUnlocked(new_schema.Pass(), version);
+  SetSchemaUnlocked(std::move(new_schema), version);
 }
 
 void TabletMetadata::SetSchemaUnlocked(gscoped_ptr<Schema> new_schema, uint32_t version) {

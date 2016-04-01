@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_STOPWATCH_H
 #define KUDU_UTIL_STOPWATCH_H
 
@@ -261,17 +264,17 @@ namespace sw_internal {
 // Internal class used by the LOG_TIMING macro.
 class LogTiming {
  public:
-  LogTiming(const char* file, int line, google::LogSeverity severity,
-            const std::string& prefix, const std::string& description,
+  LogTiming(const char *file, int line, google::LogSeverity severity,
+            std::string prefix, std::string description,
             int64_t max_expected_millis, bool should_print)
-    : file_(file),
-      line_(line),
-      severity_(severity),
-      prefix_(prefix),
-      description_(description),
-      max_expected_millis_(max_expected_millis),
-      should_print_(should_print),
-      has_run_(false) {
+      : file_(file),
+        line_(line),
+        severity_(severity),
+        prefix_(std::move(prefix)),
+        description_(std::move(description)),
+        max_expected_millis_(max_expected_millis),
+        should_print_(should_print),
+        has_run_(false) {
     stopwatch_.start();
   }
 

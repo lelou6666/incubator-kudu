@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // The implementation of the Log Index.
 //
@@ -25,7 +28,6 @@
 
 #include "kudu/consensus/log_index.h"
 
-#include <boost/foreach.hpp>
 #include <fcntl.h>
 #include <string>
 #include <sys/mman.h>
@@ -71,7 +73,7 @@ static const int64_t kChunkFileSize = kEntriesPerIndexChunk * sizeof(PhysicalEnt
 // This class maintains the open file descriptor and mapped memory.
 class LogIndex::IndexChunk : public RefCountedThreadSafe<LogIndex::IndexChunk> {
  public:
-  explicit IndexChunk(const string& path);
+  explicit IndexChunk(string path);
   ~IndexChunk();
 
   // Open and map the memory.
@@ -95,14 +97,11 @@ Status CheckError(int rc, const char* operation) {
 }
 } // anonymous namespace
 
-LogIndex::IndexChunk::IndexChunk(const std::string& path)
-  : path_(path),
-    fd_(-1),
-    mapping_(NULL) {
-}
+LogIndex::IndexChunk::IndexChunk(std::string path)
+    : path_(std::move(path)), fd_(-1), mapping_(nullptr) {}
 
 LogIndex::IndexChunk::~IndexChunk() {
-  if (mapping_ != NULL) {
+  if (mapping_ != nullptr) {
     munmap(mapping_, kChunkFileSize);
   }
 
@@ -119,9 +118,9 @@ Status LogIndex::IndexChunk::Open() {
   RETRY_ON_EINTR(err, ftruncate(fd_, kChunkFileSize));
   RETURN_NOT_OK(CheckError(fd_, "truncate"));
 
-  mapping_ = static_cast<uint8_t*>(mmap(NULL, kChunkFileSize, PROT_READ | PROT_WRITE,
+  mapping_ = static_cast<uint8_t*>(mmap(nullptr, kChunkFileSize, PROT_READ | PROT_WRITE,
                                         MAP_SHARED, fd_, 0));
-  if (mapping_ == NULL) {
+  if (mapping_ == nullptr) {
     int err = errno;
     return Status::IOError("Unable to mmap()", ErrnoToString(err), err);
   }
@@ -147,9 +146,7 @@ void LogIndex::IndexChunk::SetEntry(int entry_index, const PhysicalEntry& phys) 
 // LogIndex
 ////////////////////////////////////////////////////////////
 
-LogIndex::LogIndex(const std::string& base_dir)
-  : base_dir_(base_dir) {
-}
+LogIndex::LogIndex(std::string base_dir) : base_dir_(std::move(base_dir)) {}
 
 LogIndex::~LogIndex() {
 }
@@ -245,15 +242,14 @@ void LogIndex::GC(int64_t min_index_to_retain) {
   vector<int64_t> chunks_to_delete;
   {
     lock_guard<simple_spinlock> l(&open_chunks_lock_);
-    for (ChunkMap::iterator it = open_chunks_.begin();
-         it != open_chunks_.lower_bound(min_chunk_to_retain);
-         ++it) {
+    for (auto it = open_chunks_.begin();
+         it != open_chunks_.lower_bound(min_chunk_to_retain); ++it) {
       chunks_to_delete.push_back(it->first);
     }
   }
 
   // Outside of the lock, try to delete them (avoid holding the lock during IO).
-  BOOST_FOREACH(int64_t chunk_idx, chunks_to_delete) {
+  for (int64_t chunk_idx : chunks_to_delete) {
     string path = GetChunkPath(chunk_idx);
     int rc = unlink(path.c_str());
     if (rc != 0) {

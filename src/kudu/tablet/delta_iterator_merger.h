@@ -1,21 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_DELTA_ITERATOR_MERGER_H
 #define KUDU_TABLET_DELTA_ITERATOR_MERGER_H
 
 #include <string>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include "kudu/tablet/delta_store.h"
@@ -36,10 +39,10 @@ class DeltaIteratorMerger : public DeltaIterator {
   // If only one store is input, this will automatically return an unwrapped
   // iterator for greater efficiency.
   static Status Create(
-      const std::vector<std::tr1::shared_ptr<DeltaStore> > &stores,
+      const std::vector<std::shared_ptr<DeltaStore> > &stores,
       const Schema* projection,
       const MvccSnapshot &snapshot,
-      std::tr1::shared_ptr<DeltaIterator>* out);
+      std::shared_ptr<DeltaIterator>* out);
 
   ////////////////////////////////////////////////////////////
   // Implementations of DeltaIterator
@@ -57,9 +60,9 @@ class DeltaIteratorMerger : public DeltaIterator {
   virtual std::string ToString() const OVERRIDE;
 
  private:
-  explicit DeltaIteratorMerger(const vector<std::tr1::shared_ptr<DeltaIterator> > &iters);
+  explicit DeltaIteratorMerger(vector<std::shared_ptr<DeltaIterator> > iters);
 
-  std::vector<std::tr1::shared_ptr<DeltaIterator> > iters_;
+  std::vector<std::shared_ptr<DeltaIterator> > iters_;
 };
 
 } // namespace tablet

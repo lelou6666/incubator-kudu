@@ -1,17 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.Test;
 
@@ -45,6 +51,38 @@ public class TestKuduSession extends BaseKuduTest {
     }
     session.flush();
     assertEquals(20, countRowsInScan(client.newScannerBuilder(table).build()));
+  }
+
+  @Test(timeout = 100000)
+  public void testIgnoreAllDuplicateRows() throws Exception {
+    String tableName = TABLE_NAME_PREFIX + "-testIgnoreAllDuplicateRows";
+    table = createTable(tableName, basicSchema, new CreateTableOptions());
+
+    KuduSession session = syncClient.newSession();
+    session.setIgnoreAllDuplicateRows(true);
+    for (int i = 0; i < 10; i++) {
+      session.apply(createInsert(i));
+    }
+    for (SessionConfiguration.FlushMode mode : SessionConfiguration.FlushMode.values()) {
+      session.setFlushMode(mode);
+      for (int i = 0; i < 10; i++) {
+        OperationResponse resp = session.apply(createInsert(i));
+        if (mode == SessionConfiguration.FlushMode.AUTO_FLUSH_SYNC) {
+          assertFalse(resp.hasRowError());
+        }
+      }
+      if (mode == SessionConfiguration.FlushMode.MANUAL_FLUSH) {
+        List<OperationResponse> responses = session.flush();
+        for (OperationResponse resp : responses) {
+          assertFalse(resp.hasRowError());
+        }
+      } else if (mode == SessionConfiguration.FlushMode.AUTO_FLUSH_BACKGROUND) {
+        while (session.hasPendingOperations()) {
+          Thread.sleep(100);
+        }
+        assertEquals(0, session.countPendingErrors());
+      }
+    }
   }
 
   @Test(timeout = 100000)

@@ -1,25 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_MAINTENANCE_MANAGER_H
 #define KUDU_TABLET_MAINTENANCE_MANAGER_H
 
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/gutil/macros.h"
@@ -140,7 +143,7 @@ class MaintenanceOp {
     HIGH_IO_USAGE // Everything else.
   };
 
-  explicit MaintenanceOp(const std::string& name, IOUsage io_usage);
+  explicit MaintenanceOp(std::string name, IOUsage io_usage);
   virtual ~MaintenanceOp();
 
   // Unregister this op, if it is currently registered.
@@ -192,7 +195,7 @@ class MaintenanceOp {
 
   // The MaintenanceManager with which this op is registered, or null
   // if it is not registered.
-  std::tr1::shared_ptr<MaintenanceManager> manager_;
+  std::shared_ptr<MaintenanceManager> manager_;
 
   IOUsage io_usage_;
 };
@@ -215,13 +218,13 @@ struct CompletedOp {
 // as flushes or compactions.  It runs these operations in the background, in a
 // thread pool.  It uses information provided in MaintenanceOpStats objects to
 // decide which operations, if any, to run.
-class MaintenanceManager : public std::tr1::enable_shared_from_this<MaintenanceManager> {
+class MaintenanceManager : public std::enable_shared_from_this<MaintenanceManager> {
  public:
   struct Options {
     int32_t num_threads;
     int32_t polling_interval_ms;
     uint32_t history_size;
-    std::tr1::shared_ptr<MemTracker> parent_mem_tracker;
+    std::shared_ptr<MemTracker> parent_mem_tracker;
   };
 
   explicit MaintenanceManager(const Options& options);
@@ -267,7 +270,7 @@ class MaintenanceManager : public std::tr1::enable_shared_from_this<MaintenanceM
   // the completed_ops_count_ % the vector's size and then the count needs to be incremented.
   std::vector<CompletedOp> completed_ops_;
   int64_t completed_ops_count_;
-  std::tr1::shared_ptr<MemTracker> parent_mem_tracker_;
+  std::shared_ptr<MemTracker> parent_mem_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(MaintenanceManager);
 };

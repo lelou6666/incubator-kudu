@@ -1,25 +1,27 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_FS_BLOCK_MANAGER_H
 #define KUDU_FS_BLOCK_MANAGER_H
 
-#include <boost/foreach.hpp>
 #include <cstddef>
+#include <memory>
 #include <stdint.h>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/fs/block_id.h"
@@ -171,7 +173,7 @@ struct BlockManagerOptions {
 
   // The memory tracker under which all new memory trackers will be parented.
   // If NULL, new memory trackers will be parented to the root tracker.
-  std::tr1::shared_ptr<MemTracker> parent_mem_tracker;
+  std::shared_ptr<MemTracker> parent_mem_tracker;
 
   // The paths where data blocks will be stored. Cannot be empty.
   std::vector<std::string> root_paths;
@@ -243,7 +245,7 @@ class ScopedWritableBlockCloser {
   ScopedWritableBlockCloser() {}
 
   ~ScopedWritableBlockCloser() {
-    BOOST_FOREACH(WritableBlock* block, blocks_) {
+    for (WritableBlock* block : blocks_) {
       WARN_NOT_OK(block->Abort(), strings::Substitute(
           "Failed to abort block with id $0", block->id().ToString()));
     }

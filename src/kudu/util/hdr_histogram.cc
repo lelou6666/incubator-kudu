@@ -1,16 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Portions of these classes were ported from Java to C++ from the sources
+// available at https://github.com/HdrHistogram/HdrHistogram .
+//
+//   The code in this repository code was Written by Gil Tene, Michael Barker,
+//   and Matt Warren, and released to the public domain, as explained at
+//   http://creativecommons.org/publicdomain/zero/1.0/
 #include "kudu/util/hdr_histogram.h"
 
 #include <algorithm>
@@ -44,7 +54,7 @@ HdrHistogram::HdrHistogram(uint64_t highest_trackable_value, int num_significant
     total_sum_(0),
     min_value_(std::numeric_limits<Atomic64>::max()),
     max_value_(0),
-    counts_(0) {
+    counts_(nullptr) {
   Init();
 }
 
@@ -61,7 +71,7 @@ HdrHistogram::HdrHistogram(const HdrHistogram& other)
     total_sum_(0),
     min_value_(std::numeric_limits<Atomic64>::max()),
     max_value_(0),
-    counts_(0) {
+    counts_(nullptr) {
   Init();
 
   // Not a consistent snapshot but we try to roughly keep it close.

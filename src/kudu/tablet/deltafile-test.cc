@@ -1,28 +1,29 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
-#include <tr1/memory>
+#include <memory>
 
 #include "kudu/common/schema.h"
 #include "kudu/fs/fs-test-util.h"
 #include "kudu/tablet/delta_store.h"
 #include "kudu/tablet/deltafile.h"
 #include "kudu/tablet/delta_tracker.h"
-#include "kudu/gutil/algorithm.h"
 #include "kudu/gutil/strings/strcat.h"
 #include "kudu/util/memenv/memenv.h"
 #include "kudu/util/test_macros.h"
@@ -34,14 +35,15 @@ DEFINE_int32(last_row_to_update, 100000, "the last row to update");
 DEFINE_int32(n_verify, 1, "number of times to verify the updates"
              "(useful for benchmarks");
 
+using std::is_sorted;
+using std::shared_ptr;
+
 namespace kudu {
 namespace tablet {
 
 using fs::CountingReadableBlock;
 using fs::ReadableBlock;
 using fs::WritableBlock;
-using std::tr1::shared_ptr;
-using util::gtl::is_sorted;
 
 // Test path to write delta file to (in in-memory environment)
 const char kTestPath[] = "/tmp/test";
@@ -73,7 +75,7 @@ class TestDeltaFile : public ::testing::Test {
     gscoped_ptr<WritableBlock> block;
     ASSERT_OK(fs_manager_->CreateNewBlock(&block));
     test_block_ = block->id();
-    DeltaFileWriter dfw(block.Pass());
+    DeltaFileWriter dfw(std::move(block));
     ASSERT_OK(dfw.Start());
 
     // Update even numbered rows.
@@ -110,7 +112,7 @@ class TestDeltaFile : public ::testing::Test {
   Status OpenDeltaFileReader(const BlockId& block_id, shared_ptr<DeltaFileReader>* out) {
     gscoped_ptr<ReadableBlock> block;
     RETURN_NOT_OK(fs_manager_->OpenBlock(block_id, &block));
-    return DeltaFileReader::Open(block.Pass(), block_id, out, REDO);
+    return DeltaFileReader::Open(std::move(block), block_id, out, REDO);
   }
 
   // TODO handle UNDO deltas
@@ -144,7 +146,7 @@ class TestDeltaFile : public ::testing::Test {
       FAIL() << "Iterator fell outside of the range of an include-all snapshot";
     }
     ASSERT_OK(s);
-    ASSERT_OK(it->Init(NULL));
+    ASSERT_OK(it->Init(nullptr));
 
     RowBlock block(schema_, 100, &arena_);
 
@@ -206,7 +208,7 @@ TEST_F(TestDeltaFile, TestDumpDeltaFileIterator) {
                                           schema_,
                                           ITERATE_OVER_ALL_ROWS,
                                           &it_contents));
-  BOOST_FOREACH(const string& str, it_contents) {
+  for (const string& str : it_contents) {
     VLOG(1) << str;
   }
   ASSERT_TRUE(is_sorted(it_contents.begin(), it_contents.end()));
@@ -225,7 +227,7 @@ TEST_F(TestDeltaFile, TestWriteDeltaFileIteratorToFile) {
   gscoped_ptr<WritableBlock> block;
   ASSERT_OK(fs_manager_->CreateNewBlock(&block));
   BlockId block_id(block->id());
-  DeltaFileWriter dfw(block.Pass());
+  DeltaFileWriter dfw(std::move(block));
   ASSERT_OK(dfw.Start());
   ASSERT_OK(WriteDeltaIteratorToFile<REDO>(it.get(),
                                            ITERATE_OVER_ALL_ROWS,
@@ -243,7 +245,7 @@ TEST_F(TestDeltaFile, TestWriteDeltaFileIteratorToFile) {
                                           schema_,
                                           ITERATE_OVER_ALL_ROWS,
                                           &it_contents));
-  BOOST_FOREACH(const string& str, it_contents) {
+  for (const string& str : it_contents) {
     VLOG(1) << str;
   }
   ASSERT_TRUE(is_sorted(it_contents.begin(), it_contents.end()));
@@ -274,7 +276,7 @@ TEST_F(TestDeltaFile, TestCollectMutations) {
     }
     ASSERT_OK(s);
 
-    ASSERT_OK(it->Init(NULL));
+    ASSERT_OK(it->Init(nullptr));
     ASSERT_OK(it->SeekToOrdinal(0));
 
     vector<Mutation *> mutations;
@@ -290,7 +292,7 @@ TEST_F(TestDeltaFile, TestCollectMutations) {
 
       for (int i = 0; i < mutations.size(); i++) {
         Mutation *mut_head = mutations[i];
-        if (mut_head != NULL) {
+        if (mut_head != nullptr) {
           rowid_t row = start_row + i;
           string str = Mutation::StringifyMutationList(schema_, mut_head);
           VLOG(1) << "Mutation on row " << row << ": " << str;
@@ -313,23 +315,23 @@ TEST_F(TestDeltaFile, TestSkipsDeltasOutOfRange) {
   // should skip
   MvccSnapshot snap1(Timestamp(9));
   ASSERT_FALSE(snap1.MayHaveCommittedTransactionsAtOrAfter(Timestamp(10)));
-  DeltaIterator* raw_iter = NULL;
+  DeltaIterator* raw_iter = nullptr;
   Status s = reader->NewDeltaIterator(&schema_, snap1, &raw_iter);
   ASSERT_TRUE(s.IsNotFound());
-  ASSERT_TRUE(raw_iter == NULL);
+  ASSERT_TRUE(raw_iter == nullptr);
 
   // should include
-  raw_iter = NULL;
+  raw_iter = nullptr;
   MvccSnapshot snap2(Timestamp(15));
   ASSERT_OK(reader->NewDeltaIterator(&schema_, snap2, &raw_iter));
-  ASSERT_TRUE(raw_iter != NULL);
+  ASSERT_TRUE(raw_iter != nullptr);
   iter.reset(raw_iter);
 
   // should include
-  raw_iter = NULL;
+  raw_iter = nullptr;
   MvccSnapshot snap3(Timestamp(21));
   ASSERT_OK(reader->NewDeltaIterator(&schema_, snap3, &raw_iter));
-  ASSERT_TRUE(raw_iter != NULL);
+  ASSERT_TRUE(raw_iter != nullptr);
   iter.reset(raw_iter);
 }
 
@@ -341,12 +343,12 @@ TEST_F(TestDeltaFile, TestLazyInit) {
   ASSERT_OK(fs_manager_->OpenBlock(test_block_, &block));
   size_t bytes_read = 0;
   gscoped_ptr<ReadableBlock> count_block(
-      new CountingReadableBlock(block.Pass(), &bytes_read));
+      new CountingReadableBlock(std::move(block), &bytes_read));
 
   // Lazily opening the delta file should not trigger any reads.
   shared_ptr<DeltaFileReader> reader;
   ASSERT_OK(DeltaFileReader::OpenNoInit(
-      count_block.Pass(), test_block_, &reader, REDO));
+      std::move(count_block), test_block_, &reader, REDO));
   ASSERT_EQ(0, bytes_read);
 
   // But initializing it should (only the first time).
@@ -360,8 +362,8 @@ TEST_F(TestDeltaFile, TestLazyInit) {
   // same number of bytes read.
   ASSERT_OK(fs_manager_->OpenBlock(test_block_, &block));
   bytes_read = 0;
-  count_block.reset(new CountingReadableBlock(block.Pass(), &bytes_read));
-  ASSERT_OK(DeltaFileReader::Open(count_block.Pass(), test_block_, &reader, REDO));
+  count_block.reset(new CountingReadableBlock(std::move(block), &bytes_read));
+  ASSERT_OK(DeltaFileReader::Open(std::move(count_block), test_block_, &reader, REDO));
   ASSERT_EQ(bytes_read_after_init, bytes_read);
 }
 

@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_LOCK_MANAGER_H
 #define KUDU_TABLET_LOCK_MANAGER_H
 
@@ -70,26 +73,25 @@ class LockManager {
 //   }
 //   // lock is released when the object exits its scope.
 //
-// This class emulates C++11 move constructors and thus can be
-// copied by using the special '.Pass()' function. For example:
+// This class implements C++11 move constructors and thus can be
+// transferred around using std::move(). For example:
 //
 // void DoSomething(ScopedRowLock l) {
 //   // l owns the lock and will release at the end of this function
 // }
 // ScopedRowLock my_lock(&manager, ...);
-// DoSomething(l.Pass());
-// CHECK(!l.acquired()); // doesn't own lock anymore, since it Pass()ed
+// DoSomething(std::move(l);
+// CHECK(!l.acquired()); // doesn't own lock anymore, since it moved
 class ScopedRowLock {
-  MOVE_ONLY_TYPE_FOR_CPP_03(ScopedRowLock, RValue);
  public:
 
   // Construct an initially-unlocked lock holder.
   // You can later assign this to actually hold a lock using
-  // the emulated move-constructor:
+  // the move-constructor:
   //   ScopedRowLock l;
-  //   l = ScopedRowLock(...); // use the ctor below
+  //   l = ScopedRowLock(...);
   // or
-  //   l = other_row_lock.Pass();
+  //   l = std::move(other_row_lock);
   ScopedRowLock()
     : manager_(NULL),
       acquired_(false),
@@ -101,9 +103,9 @@ class ScopedRowLock {
   ScopedRowLock(LockManager *manager, const TransactionState* ctx,
                 const Slice &key, LockManager::LockMode mode);
 
-  // Emulated Move constructor
-  ScopedRowLock(RValue other); // NOLINT(runtime/explicit)
-  ScopedRowLock& operator=(RValue other);
+  // Move constructor and assignment.
+  ScopedRowLock(ScopedRowLock&& other);
+  ScopedRowLock& operator=(ScopedRowLock&& other);
 
   void Release();
 

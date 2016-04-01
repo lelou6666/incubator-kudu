@@ -1,25 +1,29 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/tserver-path-handlers.h"
 
 #include <algorithm>
+#include <memory>
 #include <sstream>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
+#include "kudu/common/scan_spec.h"
 #include "kudu/consensus/log_anchor_registry.h"
 #include "kudu/consensus/quorum_util.h"
 #include "kudu/gutil/map-util.h"
@@ -49,8 +53,8 @@ using kudu::tablet::Tablet;
 using kudu::tablet::TabletPeer;
 using kudu::tablet::TabletStatusPB;
 using kudu::tablet::Transaction;
-using std::tr1::shared_ptr;
 using std::endl;
+using std::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -120,15 +124,15 @@ void TabletServerPathHandlers::HandleTransactionsPage(const Webserver::WebReques
       "Total time in-flight</th><th>Description</th></tr>\n";
   }
 
-  BOOST_FOREACH(const scoped_refptr<TabletPeer>& peer, peers) {
+  for (const scoped_refptr<TabletPeer>& peer : peers) {
     vector<TransactionStatusPB> inflight;
 
-    if (peer->tablet() == NULL) {
+    if (peer->tablet() == nullptr) {
       continue;
     }
 
     peer->GetInFlightTransactions(trace_type, &inflight);
-    BOOST_FOREACH(const TransactionStatusPB& inflight_tx, inflight) {
+    for (const TransactionStatusPB& inflight_tx : inflight) {
       string total_time_str = Substitute("$0 us.", inflight_tx.running_for_micros());
       string description;
       if (trace_type == Transaction::TRACE_TXNS) {
@@ -187,13 +191,13 @@ void TabletServerPathHandlers::HandleTabletsPage(const Webserver::WebRequest& re
   *output << "  <tr><th>Table name</th><th>Tablet ID</th>"
       "<th>Partition</th>"
       "<th>State</th><th>On-disk size</th><th>RaftConfig</th><th>Last status</th></tr>\n";
-  BOOST_FOREACH(const scoped_refptr<TabletPeer>& peer, peers) {
+  for (const scoped_refptr<TabletPeer>& peer : peers) {
     TabletStatusPB status;
     peer->GetTabletStatusPB(&status);
     string id = status.tablet_id();
     string table_name = status.table_name();
     string tablet_id_or_link;
-    if (peer->tablet() != NULL) {
+    if (peer->tablet() != nullptr) {
       tablet_id_or_link = TabletLink(id);
     } else {
       tablet_id_or_link = EscapeForHtmlToString(id);
@@ -202,11 +206,6 @@ void TabletServerPathHandlers::HandleTabletsPage(const Webserver::WebRequest& re
     if (status.has_estimated_on_disk_size()) {
       n_bytes = HumanReadableNumBytes::ToString(status.estimated_on_disk_size());
     }
-    string state = tablet::TabletStatePB_Name(status.state());
-    if (status.state() == tablet::FAILED) {
-      StrAppend(&state, ": ", EscapeForHtmlToString(peer->error().ToString()));
-    }
-
     string partition = peer->tablet_metadata()
                            ->partition_schema()
                             .PartitionDebugString(peer->status_listener()->partition(),
@@ -222,7 +221,7 @@ void TabletServerPathHandlers::HandleTabletsPage(const Webserver::WebRequest& re
         EscapeForHtmlToString(table_name), // $0
         tablet_id_or_link, // $1
         EscapeForHtmlToString(partition), // $2
-        state, n_bytes, // $3, $4
+        EscapeForHtmlToString(peer->HumanReadableState()), n_bytes, // $3, $4
         consensus ? ConsensusStatePBToHtml(consensus->ConsensusState(CONSENSUS_CONFIG_COMMITTED))
                   : "", // $5
         EscapeForHtmlToString(status.last_status())); // $6
@@ -247,7 +246,7 @@ string TabletServerPathHandlers::ConsensusStatePBToHtml(const ConsensusStatePB& 
   std::vector<RaftPeerPB> sorted_peers;
   sorted_peers.assign(cstate.config().peers().begin(), cstate.config().peers().end());
   std::sort(sorted_peers.begin(), sorted_peers.end(), &CompareByMemberType);
-  BOOST_FOREACH(const RaftPeerPB& peer, sorted_peers) {
+  for (const RaftPeerPB& peer : sorted_peers) {
     string peer_addr_or_uuid =
         peer.has_last_known_addr() ? peer.last_known_addr().host() : peer.permanent_uuid();
     peer_addr_or_uuid = EscapeForHtmlToString(peer_addr_or_uuid);
@@ -403,7 +402,7 @@ void TabletServerPathHandlers::HandleScansPage(const Webserver::WebRequest& req,
 
   vector<SharedScanner> scanners;
   tserver_->scanner_manager()->ListScanners(&scanners);
-  BOOST_FOREACH(const SharedScanner& scanner, scanners) {
+  for (const SharedScanner& scanner : scanners) {
     *output << ScannerToHtml(*scanner);
   }
   *output << "</table>";
@@ -446,8 +445,13 @@ string TabletServerPathHandlers::ScannerToHtml(const Scanner& scanner) const {
       range_pred_str = EncodedKey::RangeToString(spec.lower_bound_key(),
                                                  spec.exclusive_upper_bound_key());
     }
-    BOOST_FOREACH(const ColumnRangePredicate& pred, scanner.spec().predicates()) {
-      other_preds.push_back(pred.ToString());
+    for (const auto& col_pred : scanner.spec().predicates()) {
+      int32_t col_idx = projection->find_column(col_pred.first);
+      if (col_idx == Schema::kColumnNotFound) {
+        other_preds.emplace_back("unknown column");
+      } else {
+        other_preds.push_back(col_pred.second.ToString());
+      }
     }
     string other_pred_str = JoinStrings(other_preds, "\n");
     html << Substitute("<td>$0</td><td>$1</td></tr>\n",

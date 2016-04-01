@@ -1,22 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/inbound_call.h"
 
-#include <boost/foreach.hpp>
-#include <tr1/memory>
-#include <vector>
+#include <memory>
 
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/connection.h"
@@ -29,10 +30,10 @@
 #include "kudu/util/trace.h"
 
 using google::protobuf::FieldDescriptor;
+using google::protobuf::io::CodedOutputStream;
 using google::protobuf::Message;
 using google::protobuf::MessageLite;
-using google::protobuf::io::CodedOutputStream;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -40,7 +41,6 @@ DEFINE_bool(rpc_dump_all_traces, false,
             "If true, dump all RPC traces at INFO level");
 TAG_FLAG(rpc_dump_all_traces, advanced);
 TAG_FLAG(rpc_dump_all_traces, runtime);
-
 
 namespace kudu {
 namespace rpc {
@@ -79,6 +79,18 @@ void InboundCall::RespondSuccess(const MessageLite& response) {
   Respond(response, true);
 }
 
+void InboundCall::RespondUnsupportedFeature(const vector<uint32_t>& unsupported_features) {
+  TRACE_EVENT0("rpc", "InboundCall::RespondUnsupportedFeature");
+  ErrorStatusPB err;
+  err.set_message("unsupported feature flags");
+  err.set_code(ErrorStatusPB::ERROR_INVALID_REQUEST);
+  for (uint32_t feature : unsupported_features) {
+    err.add_unsupported_feature_flags(feature);
+  }
+
+  Respond(err, false);
+}
+
 void InboundCall::RespondFailure(ErrorStatusPB::RpcErrorCodePB error_code,
                                  const Status& status) {
   TRACE_EVENT0("rpc", "InboundCall::RespondFailure");
@@ -102,7 +114,7 @@ void InboundCall::ApplicationErrorToPB(int error_ext_id, const std::string& mess
   err->set_message(message);
   const FieldDescriptor* app_error_field =
     err->GetReflection()->FindKnownExtensionByNumber(error_ext_id);
-  if (app_error_field != NULL) {
+  if (app_error_field != nullptr) {
     err->GetReflection()->MutableMessage(err, app_error_field)->CheckTypeAndMergeFrom(app_error_pb);
   } else {
     LOG(DFATAL) << "Unable to find application error extension ID " << error_ext_id
@@ -124,7 +136,7 @@ void InboundCall::Respond(const MessageLite& response,
   TRACE_TO(trace_, "Queueing $0 response", is_success ? "success" : "failure");
 
   LogTrace();
-  conn_->QueueResponseForCall(gscoped_ptr<InboundCall>(this).Pass());
+  conn_->QueueResponseForCall(gscoped_ptr<InboundCall>(this));
 }
 
 Status InboundCall::SerializeResponseBuffer(const MessageLite& response,
@@ -135,7 +147,7 @@ Status InboundCall::SerializeResponseBuffer(const MessageLite& response,
   resp_hdr.set_call_id(header_.call_id());
   resp_hdr.set_is_error(!is_success);
   uint32_t absolute_sidecar_offset = protobuf_msg_size;
-  BOOST_FOREACH(RpcSidecar* car, sidecars_) {
+  for (RpcSidecar* car : sidecars_) {
     resp_hdr.add_sidecar_offsets(absolute_sidecar_offset);
     absolute_sidecar_offset += car->AsSlice().size();
   }
@@ -157,7 +169,7 @@ void InboundCall::SerializeResponseTo(vector<Slice>* slices) const {
   slices->reserve(slices->size() + 2 + sidecars_.size());
   slices->push_back(Slice(response_hdr_buf_));
   slices->push_back(Slice(response_msg_buf_));
-  BOOST_FOREACH(RpcSidecar* car, sidecars_) {
+  for (RpcSidecar* car : sidecars_) {
     slices->push_back(car->AsSlice());
   }
 }
@@ -239,7 +251,7 @@ void InboundCall::RecordCallReceived() {
 }
 
 void InboundCall::RecordHandlingStarted(scoped_refptr<Histogram> incoming_queue_time) {
-  DCHECK(incoming_queue_time != NULL);
+  DCHECK(incoming_queue_time != nullptr);
   DCHECK(!timing_.time_handled.Initialized());  // Protect against multiple calls.
   timing_.time_handled = MonoTime::Now(MonoTime::FINE);
   incoming_queue_time->Increment(
@@ -247,7 +259,7 @@ void InboundCall::RecordHandlingStarted(scoped_refptr<Histogram> incoming_queue_
 }
 
 void InboundCall::RecordHandlingCompleted(scoped_refptr<Histogram> handler_run_time) {
-  DCHECK(handler_run_time != NULL);
+  DCHECK(handler_run_time != nullptr);
   DCHECK(!timing_.time_completed.Initialized());  // Protect against multiple calls.
   timing_.time_completed = MonoTime::Now(MonoTime::FINE);
   handler_run_time->Increment(
@@ -271,6 +283,18 @@ MonoTime InboundCall::GetClientDeadline() const {
   MonoTime deadline = timing_.time_received;
   deadline.AddDelta(MonoDelta::FromMilliseconds(header_.timeout_millis()));
   return deadline;
+}
+
+MonoTime InboundCall::GetTimeReceived() const {
+  return timing_.time_received;
+}
+
+vector<uint32_t> InboundCall::GetRequiredFeatures() const {
+  vector<uint32_t> features;
+  for (uint32_t feature : header_.required_feature_flags()) {
+    features.push_back(feature);
+  }
+  return features;
 }
 
 } // namespace rpc

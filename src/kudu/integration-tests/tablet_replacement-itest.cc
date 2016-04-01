@@ -1,24 +1,26 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <boost/optional.hpp>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 
 #include "kudu/common/wire_protocol.h"
 #include "kudu/common/wire_protocol-test-util.h"
@@ -27,15 +29,14 @@
 #include "kudu/integration-tests/cluster_verifier.h"
 #include "kudu/integration-tests/test_workload.h"
 
-using boost::assign::list_of;
 using kudu::consensus::RaftPeerPB;
 using kudu::itest::TServerDetails;
 using kudu::tablet::TABLET_DATA_READY;
 using kudu::tablet::TABLET_DATA_TOMBSTONED;
 using kudu::tserver::ListTabletsResponsePB;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
+using std::unordered_map;
 using std::vector;
 using strings::Substitute;
 
@@ -49,9 +50,9 @@ class TabletReplacementITest : public ExternalMiniClusterITestBase {
 // not part of the committed config yet (only the pending config).
 TEST_F(TabletReplacementITest, TestMasterTombstoneEvictedReplica) {
   MonoDelta timeout = MonoDelta::FromSeconds(30);
-  vector<string> ts_flags = list_of("--enable_leader_failure_detection=false");
+  vector<string> ts_flags = { "--enable_leader_failure_detection=false" };
   int num_tservers = 5;
-  vector<string> master_flags = list_of("--master_add_server_when_underreplicated=false");
+  vector<string> master_flags = { "--master_add_server_when_underreplicated=false" };
   master_flags.push_back("--catalog_manager_wait_for_new_tablets_to_elect_leader=false");
   NO_FATALS(StartCluster(ts_flags, master_flags, num_tservers));
 
@@ -83,7 +84,8 @@ TEST_F(TabletReplacementITest, TestMasterTombstoneEvictedReplica) {
   ASSERT_OK(itest::RemoveServer(leader_ts, tablet_id, follower_ts, boost::none, timeout));
 
   // Wait for the Master to tombstone the replica.
-  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(kFollowerIndex, tablet_id, TABLET_DATA_TOMBSTONED,
+  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(kFollowerIndex, tablet_id,
+                                                 { TABLET_DATA_TOMBSTONED },
                                                  timeout));
 
   if (!AllowSlowTests()) {
@@ -104,14 +106,14 @@ TEST_F(TabletReplacementITest, TestMasterTombstoneEvictedReplica) {
   Status s = itest::AddServer(leader_ts, tablet_id, follower_ts, RaftPeerPB::VOTER,
                               boost::none, MonoDelta::FromSeconds(5));
   ASSERT_TRUE(s.IsTimedOut());
-  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(kFollowerIndex, tablet_id, TABLET_DATA_READY,
+  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(kFollowerIndex, tablet_id, { TABLET_DATA_READY },
                                                  timeout));
   ASSERT_OK(itest::WaitForServersToAgree(timeout, active_ts_map, tablet_id, 3));
 
   // Sleep for a few more seconds and check again to ensure that the Master
   // didn't end up tombstoning the replica.
   SleepFor(MonoDelta::FromSeconds(3));
-  ASSERT_OK(inspect_->CheckTabletDataStateOnTS(kFollowerIndex, tablet_id, TABLET_DATA_READY));
+  ASSERT_OK(inspect_->CheckTabletDataStateOnTS(kFollowerIndex, tablet_id, { TABLET_DATA_READY }));
 }
 
 // Ensure that the Master will tombstone a replica if it reports in with an old
@@ -119,8 +121,8 @@ TEST_F(TabletReplacementITest, TestMasterTombstoneEvictedReplica) {
 // than TestMasterTombstoneEvictedReplica does.
 TEST_F(TabletReplacementITest, TestMasterTombstoneOldReplicaOnReport) {
   MonoDelta timeout = MonoDelta::FromSeconds(30);
-  vector<string> ts_flags = list_of("--enable_leader_failure_detection=false");
-  vector<string> master_flags = list_of("--master_add_server_when_underreplicated=false");
+  vector<string> ts_flags = { "--enable_leader_failure_detection=false" };
+  vector<string> master_flags = { "--master_add_server_when_underreplicated=false" };
   master_flags.push_back("--catalog_manager_wait_for_new_tablets_to_elect_leader=false");
   NO_FATALS(StartCluster(ts_flags, master_flags));
 
@@ -165,7 +167,8 @@ TEST_F(TabletReplacementITest, TestMasterTombstoneOldReplicaOnReport) {
   ASSERT_OK(cluster_->tablet_server(kFollowerIndex)->Restart());
 
   // Wait for the Master to tombstone the revived follower.
-  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(kFollowerIndex, tablet_id, TABLET_DATA_TOMBSTONED,
+  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(kFollowerIndex, tablet_id,
+                                                 { TABLET_DATA_TOMBSTONED },
                                                  timeout));
 }
 
@@ -177,10 +180,9 @@ TEST_F(TabletReplacementITest, TestEvictAndReplaceDeadFollower) {
   }
 
   MonoDelta timeout = MonoDelta::FromSeconds(30);
-  vector<string> ts_flags = list_of("--enable_leader_failure_detection=false")
-                                   ("--follower_unavailable_considered_failed_sec=5");
-  vector<string> master_flags = list_of(
-      "--catalog_manager_wait_for_new_tablets_to_elect_leader=false");
+  vector<string> ts_flags = { "--enable_leader_failure_detection=false",
+                              "--follower_unavailable_considered_failed_sec=5" };
+  vector<string> master_flags = { "--catalog_manager_wait_for_new_tablets_to_elect_leader=false" };
   NO_FATALS(StartCluster(ts_flags, master_flags));
 
   TestWorkload workload(cluster_.get());
@@ -209,7 +211,7 @@ TEST_F(TabletReplacementITest, TestEvictAndReplaceDeadFollower) {
   cluster_->tablet_server(kFollowerIndex)->Shutdown();
 
   // With a RemoveServer and AddServer, the opid_index of the committed config will be 3.
-  ASSERT_OK(itest::WaitUntilCommittedConfigOpidIndexIs(3, leader_ts, tablet_id, timeout));
+  ASSERT_OK(itest::WaitUntilCommittedConfigOpIdIndexIs(3, leader_ts, tablet_id, timeout));
   ASSERT_OK(cluster_->tablet_server(kFollowerIndex)->Restart());
 }
 

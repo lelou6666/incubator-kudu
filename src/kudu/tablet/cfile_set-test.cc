@@ -1,20 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
+#include <memory>
 #include <gtest/gtest.h>
 #include <glog/logging.h>
-#include <tr1/memory>
 
 #include "kudu/common/generic_iterators.h"
 #include "kudu/tablet/cfile_set.h"
@@ -24,7 +27,7 @@
 
 DECLARE_int32(cfile_default_block_size);
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace tablet {
@@ -32,10 +35,9 @@ namespace tablet {
 class TestCFileSet : public KuduRowSetTest {
  public:
   TestCFileSet() :
-    KuduRowSetTest(Schema(boost::assign::list_of
-            (ColumnSchema("c0", UINT32))
-            (ColumnSchema("c1", UINT32, false, NULL, NULL, GetRLEStorage()))
-            (ColumnSchema("c2", UINT32)), 1))
+    KuduRowSetTest(Schema({ ColumnSchema("c0", UINT32),
+                            ColumnSchema("c1", UINT32, false, nullptr, nullptr, GetRLEStorage()),
+                            ColumnSchema("c2", UINT32) }, 1))
   {}
 
   virtual void SetUp() OVERRIDE {
@@ -78,10 +80,9 @@ class TestCFileSet : public KuduRowSetTest {
 
     // Create a scan with a range predicate on the key column.
     ScanSpec spec;
-    ColumnRangePredicate pred1(
-      schema_.column(0),
-      lower != kNoBound ? &lower : NULL,
-      upper != kNoBound ? &upper : NULL);
+    auto pred1 = ColumnPredicate::Range(schema_.column(0),
+                                        lower != kNoBound ? &lower : nullptr,
+                                        upper != kNoBound ? &upper : nullptr);
     spec.AddPredicate(pred1);
     ASSERT_OK(iter->Init(&spec));
 
@@ -94,7 +95,7 @@ class TestCFileSet : public KuduRowSetTest {
         if (block.selection_vector()->IsRowSelected(i)) {
           RowBlockRow row = block.row(i);
           if ((lower != kNoBound && *schema_.ExtractColumnFromRow<UINT32>(row, 0) < lower) ||
-              (upper != kNoBound && *schema_.ExtractColumnFromRow<UINT32>(row, 0) > upper)) {
+              (upper != kNoBound && *schema_.ExtractColumnFromRow<UINT32>(row, 0) >= upper)) {
             FAIL() << "Row " << schema_.DebugRow(row) << " should not have "
                    << "passed predicate " << pred1.ToString();
           }
@@ -126,7 +127,7 @@ TEST_F(TestCFileSet, TestPartiallyMaterialize) {
   ASSERT_OK(fileset->Open());
 
   gscoped_ptr<CFileSet::Iterator> iter(fileset->NewIterator(&schema_));
-  ASSERT_OK(iter->Init(NULL));
+  ASSERT_OK(iter->Init(nullptr));
 
   Arena arena(4096, 1024*1024);
   RowBlock block(schema_, 100, &arena);
@@ -206,18 +207,18 @@ TEST_F(TestCFileSet, TestIteratePartialSchema) {
   ASSERT_OK(fileset->Open());
 
   Schema new_schema;
-  ASSERT_OK(schema_.CreateProjectionByNames(list_of("c0")("c2"), &new_schema));
+  ASSERT_OK(schema_.CreateProjectionByNames({ "c0", "c2" }, &new_schema));
   shared_ptr<CFileSet::Iterator> cfile_iter(fileset->NewIterator(&new_schema));
   gscoped_ptr<RowwiseIterator> iter(new MaterializingIterator(cfile_iter));
 
-  ASSERT_OK(iter->Init(NULL));
+  ASSERT_OK(iter->Init(nullptr));
 
   // Read all the results.
   vector<string> results;
   ASSERT_OK(IterateToStringList(iter.get(), &results));
 
   VLOG(1) << "Results of iterating over sparse partial schema: ";
-  BOOST_FOREACH(const string &str, results) {
+  for (const string &str : results) {
     VLOG(1) << str;
   }
 
@@ -243,30 +244,29 @@ TEST_F(TestCFileSet, TestRangeScan) {
   gscoped_ptr<RowwiseIterator> iter(new MaterializingIterator(cfile_iter));
   Schema key_schema = schema_.CreateKeyProjection();
   Arena arena(1024, 256 * 1024);
-  RangePredicateEncoder encoder(&key_schema, &arena);
+  AutoReleasePool pool;
 
   // Create a scan with a range predicate on the key column.
   ScanSpec spec;
   uint32_t lower = 2000;
-  uint32_t upper = 2009;
-  ColumnRangePredicate pred1(schema_.column(0), &lower, &upper);
+  uint32_t upper = 2010;
+  auto pred1 = ColumnPredicate::Range(schema_.column(0), &lower, &upper);
   spec.AddPredicate(pred1);
-  encoder.EncodeRangePredicates(&spec, true);
+  spec.OptimizeScan(schema_, &arena, &pool, true);
   ASSERT_OK(iter->Init(&spec));
 
   // Check that the bounds got pushed as index bounds.
   // Since the key column is the rowidx * 2, we need to divide the integer bounds
   // back down.
   EXPECT_EQ(lower / 2, cfile_iter->lower_bound_idx_);
-  // + 1 because the upper bound is exclusive
-  EXPECT_EQ(upper / 2 + 1, cfile_iter->upper_bound_idx_);
+  EXPECT_EQ(upper / 2, cfile_iter->upper_bound_idx_);
 
   // Read all the results.
   vector<string> results;
   ASSERT_OK(IterateToStringList(iter.get(), &results));
 
   // Ensure that we got the expected rows.
-  BOOST_FOREACH(const string &str, results) {
+  for (const string &str : results) {
     LOG(INFO) << str;
   }
   ASSERT_EQ(5, results.size());

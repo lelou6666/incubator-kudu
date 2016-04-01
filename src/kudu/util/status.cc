@@ -15,7 +15,7 @@ namespace kudu {
 const char* Status::CopyState(const char* state) {
   uint32_t size;
   strings::memcpy_inlined(&size, state, sizeof(size));
-  char* result = new char[size + 7];
+  auto result = new char[size + 7];
   strings::memcpy_inlined(result, state, size + 7);
   return result;
 }
@@ -26,7 +26,7 @@ Status::Status(Code code, const Slice& msg, const Slice& msg2,
   const uint32_t len1 = msg.size();
   const uint32_t len2 = msg2.size();
   const uint32_t size = len1 + (len2 ? (2 + len2) : 0);
-  char* result = new char[size + 7];
+  auto result = new char[size + 7];
   memcpy(result, &size, sizeof(size));
   result[4] = static_cast<char>(code);
   memcpy(result + 5, &posix_code, sizeof(posix_code));
@@ -40,7 +40,7 @@ Status::Status(Code code, const Slice& msg, const Slice& msg2,
 }
 
 std::string Status::CodeAsString() const {
-  if (state_ == NULL) {
+  if (state_ == nullptr) {
     return "OK";
   }
 
@@ -109,7 +109,7 @@ std::string Status::CodeAsString() const {
 
 std::string Status::ToString() const {
   std::string result(CodeAsString());
-  if (state_ == NULL) {
+  if (state_ == nullptr) {
     return result;
   }
 
@@ -126,7 +126,7 @@ std::string Status::ToString() const {
 }
 
 Slice Status::message() const {
-  if (state_ == NULL) {
+  if (state_ == nullptr) {
     return Slice();
   }
 
@@ -136,7 +136,7 @@ Slice Status::message() const {
 }
 
 int16_t Status::posix_code() const {
-  if (state_ == NULL) {
+  if (state_ == nullptr) {
     return 0;
   }
   int16_t posix_code;

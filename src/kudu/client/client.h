@@ -1,27 +1,31 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CLIENT_CLIENT_H
 #define KUDU_CLIENT_CLIENT_H
 
 #include <stdint.h>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_set>
 #include <vector>
 
+#include "kudu/client/row_result.h"
+#include "kudu/client/scan_batch.h"
 #include "kudu/client/scan_predicate.h"
 #include "kudu/client/schema.h"
+#include "kudu/client/shared_ptr.h"
 #ifdef KUDU_HEADERS_NO_STUBS
 #include <gtest/gtest_prod.h>
 #include "kudu/gutil/macros.h"
@@ -34,19 +38,22 @@
 #include "kudu/util/monotime.h"
 #include "kudu/util/status.h"
 
+#if _GLIBCXX_USE_CXX11_ABI
+#error \
+  "Kudu will not function properly if built with gcc 5's new ABI. " \
+  "Please modify your application to set -D_GLIBCXX_USE_CXX11_ABI=0. " \
+  "For more information about the new ABI, see " \
+  "https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html."
+#endif
+
 namespace kudu {
 
 class LinkedListTester;
 class PartitionSchema;
 
-namespace tools {
-class TsAdminClient;
-} // namespace tools
-
 namespace client {
 
 class KuduLoggingCallback;
-class KuduRowResult;
 class KuduSession;
 class KuduStatusCallback;
 class KuduTable;
@@ -101,6 +108,13 @@ void KUDU_EXPORT SetVerboseLogLevel(int level);
 // workaround conflicts.
 Status KUDU_EXPORT SetInternalSignalNumber(int signum);
 
+// Return a single-version string identifying the Kudu client.
+std::string KUDU_EXPORT GetShortVersionString();
+
+// Return a longer multi-line version string identifying the client, including
+// build time, etc.
+std::string KUDU_EXPORT GetAllVersionInfo();
+
 // Creates a new KuduClient with the desired options.
 //
 // Note that KuduClients are shared amongst multiple threads and, as such,
@@ -134,7 +148,7 @@ class KUDU_EXPORT KuduClientBuilder {
   // The return value may indicate an error in the create operation, or a
   // misuse of the builder; in the latter case, only the last error is
   // returned.
-  Status Build(std::tr1::shared_ptr<KuduClient>* client);
+  Status Build(sp::shared_ptr<KuduClient>* client);
  private:
   class KUDU_NO_EXPORT Data;
 
@@ -168,7 +182,7 @@ class KUDU_EXPORT KuduClientBuilder {
 // as well.
 //
 // This class is thread-safe.
-class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClient> {
+class KUDU_EXPORT KuduClient : public sp::enable_shared_from_this<KuduClient> {
  public:
   ~KuduClient();
 
@@ -211,12 +225,12 @@ class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClie
   // TODO: should we offer an async version of this as well?
   // TODO: probably should have a configurable timeout in KuduClientBuilder?
   Status OpenTable(const std::string& table_name,
-                   std::tr1::shared_ptr<KuduTable>* table);
+                   sp::shared_ptr<KuduTable>* table);
 
   // Create a new session for interacting with the cluster.
   // User is responsible for destroying the session object.
   // This is a fully local operation (no RPCs or blocking).
-  std::tr1::shared_ptr<KuduSession> NewSession();
+  sp::shared_ptr<KuduSession> NewSession();
 
   // Policy with which to choose amongst multiple replicas.
   enum ReplicaSelection {
@@ -278,7 +292,7 @@ class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClie
   FRIEND_TEST(ClientTest, TestScanFaultTolerance);
   FRIEND_TEST(ClientTest, TestScanTimeout);
   FRIEND_TEST(ClientTest, TestWriteWithDeadMaster);
-  FRIEND_TEST(MasterFailoverTest, DISABLED_TestPauseAfterCreateTableIssued);
+  FRIEND_TEST(MasterFailoverTest, TestPauseAfterCreateTableIssued);
 
   KuduClient();
 
@@ -386,7 +400,7 @@ class KUDU_EXPORT KuduTableCreator {
 // and the schema fetched for introspection.
 //
 // This class is thread-safe.
-class KUDU_EXPORT KuduTable : public std::tr1::enable_shared_from_this<KuduTable> {
+class KUDU_EXPORT KuduTable : public sp::enable_shared_from_this<KuduTable> {
  public:
   ~KuduTable();
 
@@ -433,7 +447,7 @@ class KUDU_EXPORT KuduTable : public std::tr1::enable_shared_from_this<KuduTable
 
   friend class KuduClient;
 
-  KuduTable(const std::tr1::shared_ptr<KuduClient>& client,
+  KuduTable(const sp::shared_ptr<KuduClient>& client,
             const std::string& name,
             const std::string& table_id,
             const KuduSchema& schema,
@@ -600,7 +614,7 @@ class KUDU_EXPORT KuduError {
 // concept of a Session familiar.
 //
 // This class is not thread-safe except where otherwise specified.
-class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSession> {
+class KUDU_EXPORT KuduSession : public sp::enable_shared_from_this<KuduSession> {
  public:
   ~KuduSession();
 
@@ -803,7 +817,7 @@ class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSes
 
   friend class KuduClient;
   friend class internal::Batcher;
-  explicit KuduSession(const std::tr1::shared_ptr<KuduClient>& client);
+  explicit KuduSession(const sp::shared_ptr<KuduClient>& client);
 
   // Owned.
   Data* data_;
@@ -834,11 +848,19 @@ class KUDU_EXPORT KuduScanner {
     // performed at the expense of waiting for in-flight transactions whose timestamp
     // is lower than the snapshot's timestamp to complete, so it might incur a latency
     // penalty.
+<<<<<<< HEAD
     //
     // In ACID terms this, by itself, corresponds to Isolation mode "Repeatable
     // Read". If all writes to the scanned tablet are made externally consistent,
     // then this corresponds to Isolation mode "Strict-Serializable".
     //
+=======
+    //
+    // In ACID terms this, by itself, corresponds to Isolation mode "Repeatable
+    // Read". If all writes to the scanned tablet are made externally consistent,
+    // then this corresponds to Isolation mode "Strict-Serializable".
+    //
+>>>>>>> refs/remotes/apache/master
     // Note: there currently "holes", which happen in rare edge conditions, by which writes
     // are sometimes not externally consistent even when action was taken to make them so.
     // In these cases Isolation may degenerate to mode "Read Committed". See KUDU-430.
@@ -971,7 +993,16 @@ class KUDU_EXPORT KuduScanner {
   // Clears 'rows' and populates it with the next batch of rows from the tablet server.
   // A call to NextBatch() invalidates all previously fetched results which might
   // now be pointing to garbage memory.
+  //
+  // DEPRECATED: Use NextBatch(KuduScanBatch*) instead.
   Status NextBatch(std::vector<KuduRowResult>* rows);
+
+  // Fetches the next batch of results for this scanner.
+  //
+  // A single KuduScanBatch instance may be reused. Each subsequent call replaces the data
+  // from the previous call, and invalidates any KuduScanBatch::RowPtr objects previously
+  // obtained from the batch.
+  Status NextBatch(KuduScanBatch* batch);
 
   // Get the KuduTabletServer that is currently handling the scan.
   // More concretely, this is the server that handled the most recent Open or NextBatch
@@ -1002,7 +1033,8 @@ class KUDU_EXPORT KuduScanner {
   // in the case of failure.
   //
   // Fault tolerant scans typically have lower throughput than non
-  // fault-tolerant scans. Fault tolerant scans must use READ_AT_SNAPSHOT mode.
+  // fault-tolerant scans. Fault tolerant scans use READ_AT_SNAPSHOT mode,
+  // if no snapshot timestamp is provided, the server will pick one.
   Status SetFaultTolerant() WARN_UNUSED_RESULT;
 
   // Sets the snapshot timestamp, in microseconds since the epoch, for scans in
@@ -1016,11 +1048,13 @@ class KUDU_EXPORT KuduScanner {
   // Sets the maximum time that Open() and NextBatch() are allowed to take.
   Status SetTimeoutMillis(int millis);
 
+  // Returns the schema of the projection being scanned.
+  KuduSchema GetProjectionSchema() const;
+
   // Returns a string representation of this scan.
   std::string ToString() const;
  private:
   class KUDU_NO_EXPORT Data;
-  friend class kudu::tools::TsAdminClient;
 
   FRIEND_TEST(ClientTest, TestScanCloseProxy);
   FRIEND_TEST(ClientTest, TestScanFaultTolerance);

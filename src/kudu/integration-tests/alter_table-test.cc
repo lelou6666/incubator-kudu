@@ -1,25 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <boost/assign.hpp>
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
-#include <string>
-#include <tr1/memory>
-#include <utility>
 #include <map>
+#include <string>
+#include <utility>
 
 #include "kudu/client/client.h"
 #include "kudu/client/client-test-util.h"
@@ -53,10 +54,6 @@ DECLARE_bool(use_hybrid_clock);
 
 namespace kudu {
 
-using std::map;
-using std::pair;
-using std::vector;
-using std::tr1::shared_ptr;
 using client::KuduClient;
 using client::KuduClientBuilder;
 using client::KuduColumnSchema;
@@ -72,9 +69,13 @@ using client::KuduTableAlterer;
 using client::KuduTableCreator;
 using client::KuduUpdate;
 using client::KuduValue;
-using master::MiniMaster;
+using client::sp::shared_ptr;
 using master::AlterTableRequestPB;
 using master::AlterTableResponsePB;
+using master::MiniMaster;
+using std::map;
+using std::pair;
+using std::vector;
 using tablet::TabletPeer;
 using tserver::MiniTabletServer;
 
@@ -111,6 +112,7 @@ class AlterTableTest : public KuduTest {
 
     CHECK_OK(KuduClientBuilder()
              .add_master_server_addr(cluster_->mini_master()->bound_rpc_addr_str())
+             .default_admin_operation_timeout(MonoDelta::FromSeconds(60))
              .Build(&client_));
 
     // Add a table, make sure it reports itself.
@@ -144,7 +146,7 @@ class AlterTableTest : public KuduTest {
     // we'll end up calling the destructor from the test code instead of the
     // normal location, which can cause crashes, etc.
     tablet_peer_.reset();
-    if (cluster_->mini_tablet_server(0)->server() != NULL) {
+    if (cluster_->mini_tablet_server(0)->server() != nullptr) {
       cluster_->mini_tablet_server(0)->Shutdown();
     }
   }
@@ -235,7 +237,7 @@ class AlterTableTest : public KuduTest {
   static const char *kTableName;
 
   gscoped_ptr<MiniCluster> cluster_;
-  std::tr1::shared_ptr<KuduClient> client_;
+  shared_ptr<KuduClient> client_;
 
   KuduSchema schema_;
 
@@ -297,7 +299,7 @@ TEST_F(AlterTableTest, TestAddNotNullableColumnWithoutDefaults) {
                      step->mutable_add_column()->mutable_schema());
     AlterTableResponsePB resp;
     Status s = cluster_->mini_master()->master()->catalog_manager()->AlterTable(
-      &req, &resp, NULL);
+      &req, &resp, nullptr);
     ASSERT_TRUE(s.IsInvalidArgument());
     ASSERT_STR_CONTAINS(s.ToString(), "column `c2`: NOT NULL columns must have a default");
   }
@@ -444,7 +446,7 @@ void AlterTableTest::UpdateRow(int32_t row_key,
   int32_t key = bswap_32(row_key); // endian swap to match 'InsertRows'
   CHECK_OK(update->mutable_row()->SetInt32(0, key));
   typedef map<string, int32_t>::value_type entry;
-  BOOST_FOREACH(const entry& e, updates) {
+  for (const entry& e : updates) {
     CHECK_OK(update->mutable_row()->SetInt32(e.first, e.second));
   }
   CHECK_OK(session->Apply(update.release()));
@@ -473,7 +475,7 @@ void AlterTableTest::VerifyRows(int start_row, int num_rows, VerifyPattern patte
   while (scanner.HasMoreRows()) {
     CHECK_OK(scanner.NextBatch(&results));
 
-    BOOST_FOREACH(const KuduRowResult& row, results) {
+    for (const KuduRowResult& row : results) {
       int32_t key = 0;
       CHECK_OK(row.GetInt32(0, &key));
       int32_t row_idx = bswap_32(key);
@@ -554,8 +556,8 @@ TEST_F(AlterTableTest, TestBootstrapAfterAlters) {
   ASSERT_OK(tablet_peer_->tablet()->Flush());
   InsertRows(1, 1);
 
-  UpdateRow(0, boost::assign::map_list_of("c1", 10001));
-  UpdateRow(1, boost::assign::map_list_of("c1", 10002));
+  UpdateRow(0, { {"c1", 10001} });
+  UpdateRow(1, { {"c1", 10002} });
 
   NO_FATALS(ScanToStrings(&rows));
   ASSERT_EQ(2, rows.size());
@@ -614,7 +616,7 @@ TEST_F(AlterTableTest, TestCompactAfterUpdatingRemovedColumn) {
   ASSERT_EQ("(int32 c0=16777216, int32 c1=1, int32 c2=12345)", rows[1]);
 
   // Add a delta for c1.
-  UpdateRow(0, boost::assign::map_list_of("c1", 54321));
+  UpdateRow(0, { {"c1", 54321} });
 
   // Drop c1.
   LOG(INFO) << "Dropping c1";
@@ -647,7 +649,7 @@ TEST_F(AlterTableTest, TestMajorCompactDeltasAfterUpdatingRemovedColumn) {
   ASSERT_EQ("(int32 c0=0, int32 c1=0, int32 c2=12345)", rows[0]);
 
   // Add a delta for c1.
-  UpdateRow(0, boost::assign::map_list_of("c1", 54321));
+  UpdateRow(0, { {"c1", 54321} });
 
   // Make sure the delta is in a delta-file.
   ASSERT_OK(tablet_peer_->tablet()->FlushBiggestDMS());
@@ -672,7 +674,7 @@ TEST_F(AlterTableTest, TestMajorCompactDeltasAfterUpdatingRemovedColumn) {
   ASSERT_EQ("Dumping tablet:\n"
             "---------------------------\n"
             "MRS memrowset:\n"
-            "RowSet RowSet(1):\n"
+            "RowSet RowSet(0):\n"
             "(int32 c0=0, int32 c2=12345) Undos: [@2(DELETE)] Redos: []",
             JoinStrings(rows, "\n"));
 
@@ -696,7 +698,7 @@ TEST_F(AlterTableTest, TestMajorCompactDeltasIntoMissingBaseData) {
   ASSERT_OK(AddNewI32Column(kTableName, "c2", 12345));
 
   // Add a delta for c2.
-  UpdateRow(0, boost::assign::map_list_of("c2", 54321));
+  UpdateRow(0, { {"c2", 54321} });
 
   // Make sure the delta is in a delta-file.
   ASSERT_OK(tablet_peer_->tablet()->FlushBiggestDMS());
@@ -745,7 +747,7 @@ TEST_F(AlterTableTest, TestMajorCompactDeltasAfterAddUpdateRemoveColumn) {
   ASSERT_OK(AddNewI32Column(kTableName, "c2", 12345));
 
   // Add a delta for c2.
-  UpdateRow(0, boost::assign::map_list_of("c2", 54321));
+  UpdateRow(0, { {"c2", 54321} });
 
   // Make sure the delta is in a delta-file.
   ASSERT_OK(tablet_peer_->tablet()->FlushBiggestDMS());

@@ -1,19 +1,21 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tserver/remote_bootstrap-test-base.h"
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <limits>
 
@@ -77,9 +79,9 @@ class RemoteBootstrapServiceTest : public RemoteBootstrapTest {
   }
 
   Status DoBeginValidRemoteBootstrapSession(string* session_id,
-                                            tablet::TabletSuperBlockPB* superblock = NULL,
-                                            uint64_t* idle_timeout_millis = NULL,
-                                            vector<uint64_t>* sequence_numbers = NULL) {
+                                            tablet::TabletSuperBlockPB* superblock = nullptr,
+                                            uint64_t* idle_timeout_millis = nullptr,
+                                            vector<uint64_t>* sequence_numbers = nullptr) {
     BeginRemoteBootstrapSessionResponsePB resp;
     RpcController controller;
     RETURN_NOT_OK(DoBeginRemoteBootstrapSession(GetTabletId(), GetLocalUUID(), &resp, &controller));
@@ -200,7 +202,7 @@ TEST_F(RemoteBootstrapServiceTest, TestSimpleBeginEndSession) {
 
   EndRemoteBootstrapSessionResponsePB resp;
   RpcController controller;
-  ASSERT_OK(DoEndRemoteBootstrapSession(session_id, true, NULL, &resp, &controller));
+  ASSERT_OK(DoEndRemoteBootstrapSession(session_id, true, nullptr, &resp, &controller));
 }
 
 // Test starting two sessions. The current implementation will silently only create one.
@@ -220,22 +222,22 @@ TEST_F(RemoteBootstrapServiceTest, TestInvalidSessionId) {
   bad_session_ids.push_back(GetLocalUUID());
 
   // Fetch a block for a non-existent session.
-  BOOST_FOREACH(const string& session_id, bad_session_ids) {
+  for (const string& session_id : bad_session_ids) {
     FetchDataResponsePB resp;
     RpcController controller;
     DataIdPB data_id;
     data_id.set_type(DataIdPB::BLOCK);
     data_id.mutable_block_id()->set_id(1);
-    Status status = DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller);
+    Status status = DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller);
     ASSERT_REMOTE_ERROR(status, controller.error_response(), RemoteBootstrapErrorPB::NO_SESSION,
                         Status::NotFound("").CodeAsString());
   }
 
   // End a non-existent session.
-  BOOST_FOREACH(const string& session_id, bad_session_ids) {
+  for (const string& session_id : bad_session_ids) {
     EndRemoteBootstrapSessionResponsePB resp;
     RpcController controller;
-    Status status = DoEndRemoteBootstrapSession(session_id, true, NULL, &resp, &controller);
+    Status status = DoEndRemoteBootstrapSession(session_id, true, nullptr, &resp, &controller);
     ASSERT_REMOTE_ERROR(status, controller.error_response(), RemoteBootstrapErrorPB::NO_SESSION,
                         Status::NotFound("").CodeAsString());
   }
@@ -263,7 +265,7 @@ TEST_F(RemoteBootstrapServiceTest, TestInvalidBlockOrOpId) {
     DataIdPB data_id;
     data_id.set_type(DataIdPB::BLOCK);
     data_id.mutable_block_id()->set_id(1);
-    Status status = DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller);
+    Status status = DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller);
     ASSERT_REMOTE_ERROR(status, controller.error_response(),
                         RemoteBootstrapErrorPB::BLOCK_NOT_FOUND,
                         Status::NotFound("").CodeAsString());
@@ -276,7 +278,7 @@ TEST_F(RemoteBootstrapServiceTest, TestInvalidBlockOrOpId) {
     DataIdPB data_id;
     data_id.set_type(DataIdPB::LOG_SEGMENT);
     data_id.set_wal_segment_seqno(31337);
-    Status status = DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller);
+    Status status = DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller);
     ASSERT_REMOTE_ERROR(status, controller.error_response(),
                         RemoteBootstrapErrorPB::WAL_SEGMENT_NOT_FOUND,
                         Status::NotFound("").CodeAsString());
@@ -289,7 +291,7 @@ TEST_F(RemoteBootstrapServiceTest, TestInvalidBlockOrOpId) {
     RpcController controller;
     DataIdPB data_id;
     data_id.mutable_block_id()->set_id(1);
-    Status status = DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller);
+    Status status = DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller);
     ASSERT_TRUE(status.IsInvalidArgument());
   }
 
@@ -299,7 +301,7 @@ TEST_F(RemoteBootstrapServiceTest, TestInvalidBlockOrOpId) {
     RpcController controller;
     DataIdPB data_id;
     data_id.set_type(DataIdPB::LOG_SEGMENT);
-    Status status = DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller);
+    Status status = DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller);
     ASSERT_REMOTE_ERROR(status, controller.error_response(),
                         RemoteBootstrapErrorPB::INVALID_REMOTE_BOOTSTRAP_REQUEST,
                         Status::InvalidArgument("").CodeAsString());
@@ -313,7 +315,7 @@ TEST_F(RemoteBootstrapServiceTest, TestInvalidBlockOrOpId) {
     data_id.set_type(DataIdPB::BLOCK);
     data_id.mutable_block_id()->set_id(1);
     data_id.set_wal_segment_seqno(0);
-    Status status = DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller);
+    Status status = DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller);
     ASSERT_REMOTE_ERROR(status, controller.error_response(),
                         RemoteBootstrapErrorPB::INVALID_REMOTE_BOOTSTRAP_REQUEST,
                         Status::InvalidArgument("").CodeAsString());
@@ -331,7 +333,7 @@ TEST_F(RemoteBootstrapServiceTest, TestFetchInvalidBlockOffset) {
   // Impossible offset.
   uint64_t offset = std::numeric_limits<uint64_t>::max();
   Status status = DoFetchData(session_id, AsDataTypeId(FirstColumnBlockId(superblock)),
-                              &offset, NULL, &resp, &controller);
+                              &offset, nullptr, &resp, &controller);
   ASSERT_REMOTE_ERROR(status, controller.error_response(),
                       RemoteBootstrapErrorPB::INVALID_REMOTE_BOOTSTRAP_REQUEST,
                       Status::InvalidArgument("").CodeAsString());
@@ -353,7 +355,7 @@ TEST_F(RemoteBootstrapServiceTest, TestFetchBlockAtOnce) {
   // Remote.
   FetchDataResponsePB resp;
   RpcController controller;
-  ASSERT_OK(DoFetchData(session_id, AsDataTypeId(block_id), NULL, NULL, &resp, &controller));
+  ASSERT_OK(DoFetchData(session_id, AsDataTypeId(block_id), nullptr, nullptr, &resp, &controller));
 
   AssertDataEqual(local_data.data(), local_data.size(), resp.chunk());
 }
@@ -406,11 +408,11 @@ TEST_F(RemoteBootstrapServiceTest, TestFetchLog) {
   DataIdPB data_id;
   data_id.set_type(DataIdPB::LOG_SEGMENT);
   data_id.set_wal_segment_seqno(seg_seqno);
-  ASSERT_OK(DoFetchData(session_id, data_id, NULL, NULL, &resp, &controller));
+  ASSERT_OK(DoFetchData(session_id, data_id, nullptr, nullptr, &resp, &controller));
 
   // Fetch the local data.
   log::SegmentSequence local_segments;
-  ASSERT_OK(tablet_peer_->log()->GetLogReader()->GetSegmentsSnapshot(&local_segments));
+  ASSERT_OK(tablet_peer_->log()->reader()->GetSegmentsSnapshot(&local_segments));
 
   uint64_t first_seg_seqno = (*local_segments.begin())->header().sequence_number();
 

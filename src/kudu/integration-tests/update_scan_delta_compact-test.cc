@@ -1,18 +1,21 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -39,9 +42,6 @@ DEFINE_int32(row_count, 2000, "How many rows will be used in this test for the b
 DEFINE_int32(seconds_to_run, 4,
              "How long this test runs for, after inserting the base data, in seconds");
 
-using boost::assign::list_of;
-using std::tr1::shared_ptr;
-
 namespace kudu {
 namespace tablet {
 
@@ -59,6 +59,7 @@ using client::KuduStatusMemberCallback;
 using client::KuduTable;
 using client::KuduTableCreator;
 using client::KuduUpdate;
+using client::sp::shared_ptr;
 
 // This integration test tries to trigger all the update-related bits while also serving as a
 // foundation for benchmarking. It first inserts 'row_count' rows and then starts two threads,
@@ -84,6 +85,7 @@ class UpdateScanDeltaCompactionTest : public KuduTest {
     gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
     ASSERT_OK(table_creator->table_name(kTableName)
              .schema(&schema_)
+             .num_replicas(1)
              .Create());
     ASSERT_OK(client_->OpenTable(kTableName, &table_));
   }
@@ -147,7 +149,7 @@ class UpdateScanDeltaCompactionTest : public KuduTest {
                                   shared_ptr<KuduSession> session);
 
   KuduSchema schema_;
-  shared_ptr<MiniCluster> cluster_;
+  std::shared_ptr<MiniCluster> cluster_;
   shared_ptr<KuduTable> table_;
   shared_ptr<KuduClient> client_;
 };
@@ -227,7 +229,7 @@ void UpdateScanDeltaCompactionTest::RunThreads() {
   SleepFor(MonoDelta::FromSeconds(FLAGS_seconds_to_run * 1.0));
   stop_latch.CountDown();
 
-  BOOST_FOREACH(const scoped_refptr<Thread>& thread, threads) {
+  for (const scoped_refptr<Thread>& thread : threads) {
     ASSERT_OK(ThreadJoiner(thread.get())
               .warn_every_ms(500)
               .Join());
@@ -277,7 +279,7 @@ void UpdateScanDeltaCompactionTest::CurlWebPages(CountDownLatch* stop_latch) con
   EasyCurl curl;
   faststring dst;
   while (stop_latch->count() > 0) {
-    BOOST_FOREACH(const string& url, urls) {
+    for (const string& url : urls) {
       VLOG(1) << "Curling URL " << url;
       Status status = curl.FetchURL(url, &dst);
       if (status.ok()) {

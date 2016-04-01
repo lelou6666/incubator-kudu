@@ -1,19 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
+#include <string>
 
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/strings/util.h"
@@ -24,6 +28,8 @@
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/test_util.h"
 
+using std::string;
+
 DECLARE_int32(webserver_max_post_length_bytes);
 
 namespace kudu {
@@ -31,8 +37,12 @@ namespace kudu {
 class WebserverTest : public KuduTest {
  public:
   WebserverTest() {
+    static_dir_ = GetTestPath("webserver-docroot");
+    CHECK_OK(env_->CreateDir(static_dir_));
+
     WebserverOptions opts;
     opts.port = 0;
+    opts.doc_root = static_dir_;
     server_.reset(new Webserver(opts));
   }
 
@@ -53,6 +63,8 @@ class WebserverTest : public KuduTest {
   faststring buf_;
   gscoped_ptr<Webserver> server_;
   Sockaddr addr_;
+
+  string static_dir_;
 };
 
 TEST_F(WebserverTest, TestIndexPage) {
@@ -126,5 +138,26 @@ TEST_F(WebserverTest, TestPostTooBig) {
   ASSERT_EQ("Remote error: HTTP 413", s.ToString());
 }
 
+// Test that static files are served and that directory listings are
+// disabled.
+TEST_F(WebserverTest, TestStaticFiles) {
+  // Fetch a non-existent static file.
+  Status s = curl_.FetchURL(strings::Substitute("http://$0/foo.txt", addr_.ToString()),
+                            &buf_);
+  ASSERT_EQ("Remote error: HTTP 404", s.ToString());
+
+  // Create the file and fetch again. This time it should succeed.
+  ASSERT_OK(WriteStringToFile(env_.get(), "hello world",
+                              strings::Substitute("$0/foo.txt", static_dir_)));
+  ASSERT_OK(curl_.FetchURL(strings::Substitute("http://$0/foo.txt", addr_.ToString()),
+                           &buf_));
+  ASSERT_EQ("hello world", buf_.ToString());
+
+  // Create a directory and ensure that subdirectory listing is disabled.
+  ASSERT_OK(env_->CreateDir(strings::Substitute("$0/dir", static_dir_)));
+  s = curl_.FetchURL(strings::Substitute("http://$0/dir/", addr_.ToString()),
+                     &buf_);
+  ASSERT_EQ("Remote error: HTTP 403", s.ToString());
+}
 
 } // namespace kudu

@@ -1,21 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/raft_consensus.h"
 
 #include <algorithm>
-#include <boost/assign/list_of.hpp>
 #include <boost/optional.hpp>
 #include <gflags/gflags.h>
 #include <iostream>
@@ -93,6 +95,11 @@ DEFINE_bool(follower_reject_update_consensus_requests, false,
             "Warning! This is only intended for testing.");
 TAG_FLAG(follower_reject_update_consensus_requests, unsafe);
 
+DEFINE_bool(follower_fail_all_prepare, false,
+            "Whether a follower will fail preparing all transactions. "
+            "Warning! This is only intended for testing.");
+TAG_FLAG(follower_fail_all_prepare, unsafe);
+
 DECLARE_int32(memory_limit_warn_threshold_percentage);
 
 METRIC_DEFINE_counter(tablet, follower_memory_pressure_rejections,
@@ -134,8 +141,7 @@ namespace kudu {
 namespace consensus {
 
 using log::LogEntryBatch;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
+using std::shared_ptr;
 using strings::Substitute;
 using tserver::TabletServerErrorPB;
 
@@ -181,11 +187,11 @@ scoped_refptr<RaftConsensus> RaftConsensus::Create(
 
   return make_scoped_refptr(new RaftConsensus(
                               options,
-                              cmeta.Pass(),
-                              rpc_factory.Pass(),
-                              queue.Pass(),
-                              peer_manager.Pass(),
-                              thread_pool.Pass(),
+                              std::move(cmeta),
+                              std::move(rpc_factory),
+                              std::move(queue),
+                              std::move(peer_manager),
+                              std::move(thread_pool),
                               metric_entity,
                               peer_uuid,
                               clock,
@@ -195,45 +201,40 @@ scoped_refptr<RaftConsensus> RaftConsensus::Create(
                               mark_dirty_clbk));
 }
 
-RaftConsensus::RaftConsensus(const ConsensusOptions& options,
-                             gscoped_ptr<ConsensusMetadata> cmeta,
-                             gscoped_ptr<PeerProxyFactory> proxy_factory,
-                             gscoped_ptr<PeerMessageQueue> queue,
-                             gscoped_ptr<PeerManager> peer_manager,
-                             gscoped_ptr<ThreadPool> thread_pool,
-                             const scoped_refptr<MetricEntity>& metric_entity,
-                             const std::string& peer_uuid,
-                             const scoped_refptr<server::Clock>& clock,
-                             ReplicaTransactionFactory* txn_factory,
-                             const scoped_refptr<log::Log>& log,
-                             const shared_ptr<MemTracker>& parent_mem_tracker,
-                             const Callback<void(const std::string& reason)>& mark_dirty_clbk)
-    : thread_pool_(thread_pool.Pass()),
+RaftConsensus::RaftConsensus(
+    const ConsensusOptions& options, gscoped_ptr<ConsensusMetadata> cmeta,
+    gscoped_ptr<PeerProxyFactory> proxy_factory,
+    gscoped_ptr<PeerMessageQueue> queue, gscoped_ptr<PeerManager> peer_manager,
+    gscoped_ptr<ThreadPool> thread_pool,
+    const scoped_refptr<MetricEntity>& metric_entity,
+    const std::string& peer_uuid, const scoped_refptr<server::Clock>& clock,
+    ReplicaTransactionFactory* txn_factory, const scoped_refptr<log::Log>& log,
+    shared_ptr<MemTracker> parent_mem_tracker,
+    Callback<void(const std::string& reason)> mark_dirty_clbk)
+    : thread_pool_(std::move(thread_pool)),
       log_(log),
       clock_(clock),
-      peer_proxy_factory_(proxy_factory.Pass()),
-      peer_manager_(peer_manager.Pass()),
-      queue_(queue.Pass()),
+      peer_proxy_factory_(std::move(proxy_factory)),
+      peer_manager_(std::move(peer_manager)),
+      queue_(std::move(queue)),
       rng_(GetRandomSeed32()),
-      failure_monitor_(GetRandomSeed32(),
-                       GetFailureMonitorCheckMeanMs(),
+      failure_monitor_(GetRandomSeed32(), GetFailureMonitorCheckMeanMs(),
                        GetFailureMonitorCheckStddevMs()),
-      failure_detector_(new TimedFailureDetector(
-          MonoDelta::FromMilliseconds(
-              FLAGS_raft_heartbeat_interval_ms *
-              FLAGS_leader_failure_max_missed_heartbeat_periods))),
+      failure_detector_(new TimedFailureDetector(MonoDelta::FromMilliseconds(
+          FLAGS_raft_heartbeat_interval_ms *
+          FLAGS_leader_failure_max_missed_heartbeat_periods))),
       withhold_votes_until_(MonoTime::Min()),
-      mark_dirty_clbk_(mark_dirty_clbk),
+      mark_dirty_clbk_(std::move(mark_dirty_clbk)),
       shutdown_(false),
       follower_memory_pressure_rejections_(metric_entity->FindOrCreateCounter(
           &METRIC_follower_memory_pressure_rejections)),
       term_metric_(metric_entity->FindOrCreateGauge(&METRIC_raft_term,
                                                     cmeta->current_term())),
-      parent_mem_tracker_(parent_mem_tracker) {
+      parent_mem_tracker_(std::move(parent_mem_tracker)) {
   DCHECK_NOTNULL(log_.get());
   state_.reset(new ReplicaState(options,
                                 peer_uuid,
-                                cmeta.Pass(),
+                                std::move(cmeta),
                                 DCHECK_NOTNULL(txn_factory)));
 }
 
@@ -268,7 +269,7 @@ Status RaftConsensus::Start(const ConsensusBootstrapInfo& info) {
                                    << info.orphaned_replicates.size()
                                    << " pending transactions. Active config: "
                                    << state_->GetActiveConfigUnlocked().ShortDebugString();
-    BOOST_FOREACH(ReplicateMsg* replicate, info.orphaned_replicates) {
+    for (ReplicateMsg* replicate : info.orphaned_replicates) {
       ReplicateRefPtr replicate_ptr = make_scoped_refptr_replicate(new ReplicateMsg(*replicate));
       RETURN_NOT_OK(StartReplicaTransactionUnlocked(replicate_ptr));
     }
@@ -400,7 +401,7 @@ Status RaftConsensus::StartElection(ElectionMode mode) {
 
     election.reset(new LeaderElection(active_config,
                                       peer_proxy_factory_.get(),
-                                      request, counter.Pass(), timeout,
+                                      request, std::move(counter), timeout,
                                       Bind(&RaftConsensus::ElectionCallback, this)));
   }
 
@@ -451,7 +452,7 @@ Status RaftConsensus::BecomeLeaderUnlocked() {
 
   // Initiate a NO_OP transaction that is sent at the beginning of every term
   // change in raft.
-  ReplicateMsg* replicate = new ReplicateMsg;
+  auto replicate = new ReplicateMsg;
   replicate->set_op_type(NO_OP);
   replicate->mutable_noop_request(); // Define the no-op request field.
 
@@ -694,6 +695,11 @@ Status RaftConsensus::StartReplicaTransactionUnlocked(const ReplicateRefPtr& msg
     return StartConsensusOnlyRoundUnlocked(msg);
   }
 
+  if (PREDICT_FALSE(FLAGS_follower_fail_all_prepare)) {
+    return Status::IllegalState("Rejected: --follower_fail_all_prepare "
+                                "is set to true.");
+  }
+
   VLOG_WITH_PREFIX_UNLOCKED(1) << "Starting transaction: " << msg->get()->id().ShortDebugString();
   scoped_refptr<ConsensusRound> round(new ConsensusRound(this, msg));
   ConsensusRound* round_ptr = round.get();
@@ -858,7 +864,7 @@ Status RaftConsensus::CheckLeaderRequestUnlocked(const ConsensusRequestPB* reque
   // we initialize raft_consensus-state is preventing us from doing so.
   Status s;
   const OpId* prev = deduped_req->preceding_opid;
-  BOOST_FOREACH(const ReplicateRefPtr& message, deduped_req->messages) {
+  for (const ReplicateRefPtr& message : deduped_req->messages) {
     s = ReplicaState::CheckOpInSequence(*prev, message->get()->id());
     if (PREDICT_FALSE(!s.ok())) {
       LOG(ERROR) << "Leader request contained out-of-sequence messages. Status: "
@@ -876,7 +882,7 @@ Status RaftConsensus::CheckLeaderRequestUnlocked(const ConsensusRequestPB* reque
     mutable_req->mutable_ops()->ExtractSubrange(
         deduped_req->first_message_idx,
         deduped_req->messages.size(),
-        NULL);
+        nullptr);
   }
 
   RETURN_NOT_OK(s);
@@ -1069,7 +1075,7 @@ Status RaftConsensus::UpdateReplica(const ConsensusRequestPB* request,
     TRACE("Triggering prepare for $0 ops", deduped_req.messages.size());
 
     Status prepare_status;
-    std::vector<ReplicateRefPtr>::iterator iter = deduped_req.messages.begin();
+    auto iter = deduped_req.messages.begin();
 
     if (PREDICT_TRUE(deduped_req.messages.size() > 0)) {
       // TODO Temporary until the leader explicitly propagates the safe timestamp.
@@ -1107,11 +1113,31 @@ Status RaftConsensus::UpdateReplica(const ConsensusRequestPB* request,
     // that were actually prepared, and deleting the other ones since we've taken ownership
     // when we first deduped.
     if (iter != deduped_req.messages.end()) {
+      bool need_to_warn = true;
       while (iter != deduped_req.messages.end()) {
         ReplicateRefPtr msg = (*iter);
         iter = deduped_req.messages.erase(iter);
-        LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Could not prepare transaction for op: "
-            << msg->get()->id() << ". Status: " << prepare_status.ToString();
+        if (need_to_warn) {
+          need_to_warn = false;
+          LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Could not prepare transaction for op: "
+              << msg->get()->id() << ". Suppressed " << deduped_req.messages.size() <<
+              " other warnings. Status for this op: " << prepare_status.ToString();
+        }
+      }
+
+      // If this is empty, it means we couldn't prepare a single de-duped message. There is nothing
+      // else we can do. The leader will detect this and retry later.
+      if (deduped_req.messages.empty()) {
+        string msg = Substitute("Rejecting Update request from peer $0 for term $1. "
+                                "Could not prepare a single transaction due to: $2",
+                                request->caller_uuid(),
+                                request->caller_term(),
+                                prepare_status.ToString());
+        LOG_WITH_PREFIX_UNLOCKED(INFO) << msg;
+        FillConsensusResponseError(response, ConsensusErrorPB::CANNOT_PREPARE,
+                                   Status::IllegalState(msg));
+        FillConsensusResponseOKUnlocked(response);
+        return Status::OK();
       }
     }
 
@@ -1650,7 +1676,7 @@ void RaftConsensus::SetLeaderUuidUnlocked(const string& uuid) {
 Status RaftConsensus::ReplicateConfigChangeUnlocked(const RaftConfigPB& old_config,
                                                     const RaftConfigPB& new_config,
                                                     const StatusCallback& client_cb) {
-  ReplicateMsg* cc_replicate = new ReplicateMsg();
+  auto cc_replicate = new ReplicateMsg();
   cc_replicate->set_op_type(CHANGE_CONFIG_OP);
   ChangeConfigRecordPB* cc_req = cc_replicate->mutable_change_config_record();
   cc_req->set_tablet_id(tablet_id());
@@ -1813,10 +1839,16 @@ void RaftConsensus::DoElectionCallback(const ElectionResult& result) {
   CHECK_OK(BecomeLeaderUnlocked());
 }
 
-Status RaftConsensus::GetLastReceivedOpId(OpId* id) {
+Status RaftConsensus::GetLastOpId(OpIdType type, OpId* id) {
   ReplicaState::UniqueLock lock;
   RETURN_NOT_OK(state_->LockForRead(&lock));
-  DCHECK_NOTNULL(id)->CopyFrom(state_->GetLastReceivedOpIdUnlocked());
+  if (type == RECEIVED_OPID) {
+    *DCHECK_NOTNULL(id) = state_->GetLastReceivedOpIdUnlocked();
+  } else if (type == COMMITTED_OPID) {
+    *DCHECK_NOTNULL(id) = state_->GetCommittedOpIdUnlocked();
+  } else {
+    return Status::InvalidArgument("Unsupported OpIdType", OpIdType_Name(type));
+  }
   return Status::OK();
 }
 
@@ -1841,7 +1873,8 @@ void RaftConsensus::NonTxRoundReplicationFinished(ConsensusRound* round,
   string op_type_str = OperationType_Name(op_type);
   CHECK(IsConsensusOnlyOperation(op_type)) << "Unexpected op type: " << op_type_str;
   if (!status.ok()) {
-    // TODO: Do something with the status on failure?
+    // In the case that a change-config operation is aborted, RaftConsensusState
+    // already handled clearing the pending config state.
     LOG(INFO) << state_->LogPrefixThreadSafe() << op_type_str << " replication failed: "
               << status.ToString();
     client_cb.Run(status);
@@ -1853,7 +1886,7 @@ void RaftConsensus::NonTxRoundReplicationFinished(ConsensusRound* round,
   commit_msg->set_op_type(round->replicate_msg()->op_type());
   *commit_msg->mutable_commited_op_id() = round->id();
 
-  WARN_NOT_OK(log_->AsyncAppendCommit(commit_msg.Pass(), Bind(&DoNothingStatusCB)),
+  WARN_NOT_OK(log_->AsyncAppendCommit(std::move(commit_msg), Bind(&DoNothingStatusCB)),
               "Unable to append commit message");
   client_cb.Run(status);
 }

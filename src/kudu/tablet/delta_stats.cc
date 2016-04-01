@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tablet/delta_stats.h"
 
 #include <utility>
@@ -53,7 +56,7 @@ Status DeltaStats::UpdateStats(const Timestamp& timestamp,
   } else if (PREDICT_TRUE(update_decoder.is_update())) {
     vector<ColumnId> col_ids;
     RETURN_NOT_OK(update_decoder.GetIncludedColumnIds(&col_ids));
-    BOOST_FOREACH(ColumnId col_id, col_ids) {
+    for (ColumnId col_id : col_ids) {
       IncrUpdateCount(col_id, 1);
     }
   } // Don't handle re-inserts
@@ -86,7 +89,7 @@ void DeltaStats::ToPB(DeltaStatsPB* pb) const {
   pb->Clear();
   pb->set_delete_count(delete_count_);
   typedef std::pair<ColumnId, int64_t> entry;
-  BOOST_FOREACH(const entry& e, update_counts_by_col_id_) {
+  for (const entry& e : update_counts_by_col_id_) {
     DeltaStatsPB::ColumnStats* stats = pb->add_column_stats();
     stats->set_col_id(e.first);
     stats->set_update_count(e.second);
@@ -99,7 +102,7 @@ void DeltaStats::ToPB(DeltaStatsPB* pb) const {
 Status DeltaStats::InitFromPB(const DeltaStatsPB& pb) {
   delete_count_ = pb.delete_count();
   update_counts_by_col_id_.clear();
-  BOOST_FOREACH(const DeltaStatsPB::ColumnStats stats, pb.column_stats()) {
+  for (const DeltaStatsPB::ColumnStats stats : pb.column_stats()) {
     IncrUpdateCount(ColumnId(stats.col_id()), stats.update_count());
   }
   RETURN_NOT_OK(max_timestamp_.FromUint64(pb.max_timestamp()));
@@ -109,7 +112,7 @@ Status DeltaStats::InitFromPB(const DeltaStatsPB& pb) {
 
 void DeltaStats::AddColumnIdsWithUpdates(std::set<ColumnId>* col_ids) const {
   typedef std::pair<ColumnId, int64_t> entry;
-  BOOST_FOREACH(const entry& e, update_counts_by_col_id_) {
+  for (const entry& e : update_counts_by_col_id_) {
     if (e.second > 0) {
       col_ids->insert(e.first);
     }

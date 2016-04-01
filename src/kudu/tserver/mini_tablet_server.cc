@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/mini_tablet_server.h"
 
-#include <boost/assign/list_of.hpp>
 #include <utility>
 
 #include <glog/logging.h>
@@ -64,7 +66,7 @@ MiniTabletServer::MiniTabletServer(const string& fs_root,
   opts_.rpc_opts.rpc_bind_addresses = Substitute("127.0.0.1:$0", rpc_port);
   opts_.webserver_opts.port = 0;
   opts_.fs_opts.wal_path = fs_root;
-  opts_.fs_opts.data_paths = boost::assign::list_of(fs_root);
+  opts_.fs_opts.data_paths = { fs_root };
 }
 
 MiniTabletServer::~MiniTabletServer() {
@@ -88,6 +90,11 @@ Status MiniTabletServer::WaitStarted() {
 
 void MiniTabletServer::Shutdown() {
   if (started_) {
+    // Save the bound ports back into the options structure so that, if we restart the
+    // server, it will come back on the same address. This is necessary since we don't
+    // currently support tablet servers re-registering on different ports (KUDU-418).
+    opts_.webserver_opts.port = bound_http_addr().port();
+    opts_.rpc_opts.rpc_bind_addresses = Substitute("127.0.0.1:$0", bound_rpc_addr().port());
     server_->Shutdown();
     server_.reset();
   }
@@ -96,8 +103,6 @@ void MiniTabletServer::Shutdown() {
 
 Status MiniTabletServer::Restart() {
   CHECK(started_);
-  opts_.rpc_opts.rpc_bind_addresses = Substitute("127.0.0.1:$0", bound_rpc_addr().port());
-  opts_.webserver_opts.port = bound_http_addr().port();
   Shutdown();
   RETURN_NOT_OK(Start());
   return Status::OK();
@@ -131,7 +136,7 @@ Status MiniTabletServer::AddTestTablet(const std::string& table_id,
 
   return server_->tablet_manager()->CreateNewTablet(
     table_id, tablet_id, partition.second, table_id,
-    schema_with_ids, partition.first, config, NULL);
+    schema_with_ids, partition.first, config, nullptr);
 }
 
 void MiniTabletServer::FailHeartbeats() {

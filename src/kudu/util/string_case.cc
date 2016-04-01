@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/string_case.h"
 
@@ -28,8 +31,7 @@ void SnakeToCamelCase(const std::string &snake_case,
   camel_case->reserve(snake_case.size());
 
   bool uppercase_next = true;
-  for (int i = 0; i < snake_case.size(); i++) {
-    char c = snake_case[i];
+  for (char c : snake_case) {
     if ((c == '_') ||
         (c == '-')) {
       uppercase_next = true;
@@ -50,8 +52,8 @@ void ToUpperCase(const std::string &string,
     *out = string;
   }
 
-  for (int i = 0; i < out->size(); i++) {
-    (*out)[i] = toupper((*out)[i]);
+  for (char& c : *out) {
+    c = toupper(c);
   }
 }
 

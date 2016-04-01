@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_TABLET_TRANSACTION_H_
 #define KUDU_TABLET_TRANSACTION_H_
@@ -98,12 +101,6 @@ class Transaction {
   // this phase depend on the transaction type, but usually this is the
   // method where data-structures are changed.
   virtual Status Apply(gscoped_ptr<consensus::CommitMsg>* commit_msg) = 0;
-
-  // Executed after Apply() but before the commit is submitted to consensus.
-  // Some transactions use this to perform pre-commit actions (e.g. write
-  // transactions perform early lock release on this hook).
-  // Default implementation does nothing.
-  virtual void PreCommit() {}
 
   // Executed after the transaction has been applied and the commit message has
   // been appended to the log (though it might not be durable yet), or if the
@@ -325,9 +322,8 @@ class LatchTransactionCompletionCallback : public TransactionCompletionCallback 
 // calls it with the transaction status when it completes.
 class StatusTransactionCompletionCallback : public TransactionCompletionCallback {
  public:
-  explicit StatusTransactionCompletionCallback(const StatusCallback& callback)
-   : callback_(callback) {
-  }
+  explicit StatusTransactionCompletionCallback(StatusCallback callback)
+      : callback_(std::move(callback)) {}
 
   virtual void TransactionCompleted() OVERRIDE {
     callback_.Run(status());

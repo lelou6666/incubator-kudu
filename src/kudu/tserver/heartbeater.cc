@@ -1,22 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/heartbeater.h"
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <memory>
 #include <vector>
 
 #include "kudu/common/wire_protocol.h"
@@ -57,7 +60,7 @@ using kudu::master::ListMastersResponsePB;
 using kudu::master::Master;
 using kudu::master::MasterServiceProxy;
 using kudu::rpc::RpcController;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
 
 namespace kudu {
@@ -132,9 +135,6 @@ class Heartbeater::Thread {
   // The most recent response from a heartbeat.
   master::TSHeartbeatResponsePB last_hb_response_;
 
-  // True once at least one heartbeat has been sent.
-  bool has_heartbeated_;
-
   // The number of heartbeats which have failed in a row.
   // This is tracked so as to back-off heartbeating.
   int consecutive_failed_heartbeats_;
@@ -174,11 +174,10 @@ Heartbeater::Thread::Thread(const TabletServerOptions& opts, TabletServer* serve
   : master_addrs_(opts.master_addresses),
     last_locate_master_idx_(0),
     server_(server),
-    has_heartbeated_(false),
     consecutive_failed_heartbeats_(0),
     cond_(&mutex_),
     should_run_(false),
-    heartbeat_asap_(false) {
+    heartbeat_asap_(true) {
   CHECK(!master_addrs_.empty());
 }
 
@@ -203,7 +202,7 @@ Status Heartbeater::Thread::FindLeaderMaster(const MonoTime& deadline,
     return Status::OK();
   }
   vector<Sockaddr> master_sock_addrs;
-  BOOST_FOREACH(const HostPort& master_addr, master_addrs_) {
+  for (const HostPort& master_addr : master_addrs_) {
     vector<Sockaddr> addrs;
     Status s = master_addr.ResolveAddresses(&addrs);
     if (!s.ok()) {
@@ -290,11 +289,6 @@ int Heartbeater::Thread::GetMinimumHeartbeatMillis() const {
 }
 
 int Heartbeater::Thread::GetMillisUntilNextHeartbeat() const {
-  // When we first start up, heartbeat immediately.
-  if (!has_heartbeated_) {
-    return GetMinimumHeartbeatMillis();
-  }
-
   // If the master needs something from us, we should immediately
   // send another heartbeat with that info, rather than waiting for the interval.
   if (last_hb_response_.needs_reregister() ||
@@ -336,6 +330,7 @@ Status Heartbeater::Thread::DoHeartbeat() {
     server_->tablet_manager()->GenerateIncrementalTabletReport(
       req.mutable_tablet_report());
   }
+  req.set_num_live_tablets(server_->tablet_manager()->GetNumLiveTablets());
 
   RpcController rpc;
   rpc.set_timeout(MonoDelta::FromSeconds(10));
@@ -419,7 +414,6 @@ void Heartbeater::Thread::RunThread() {
       continue;
     }
     consecutive_failed_heartbeats_ = 0;
-    has_heartbeated_ = true;
   }
 }
 
@@ -428,7 +422,7 @@ bool Heartbeater::Thread::IsCurrentThread() const {
 }
 
 Status Heartbeater::Thread::Start() {
-  CHECK(thread_ == NULL);
+  CHECK(thread_ == nullptr);
 
   should_run_ = true;
   return kudu::Thread::Create("heartbeater", "heartbeat",
@@ -446,7 +440,7 @@ Status Heartbeater::Thread::Stop() {
     cond_.Signal();
   }
   RETURN_NOT_OK(ThreadJoiner(thread_.get()).Join());
-  thread_ = NULL;
+  thread_ = nullptr;
   return Status::OK();
 }
 

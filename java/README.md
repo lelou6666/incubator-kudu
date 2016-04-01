@@ -1,4 +1,3 @@
-Copyright 2014 Cloudera, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,7 +18,7 @@ System Requirements
 
 - Java 7
 - Maven 3
-- protobuf 2.6.0
+- protobuf 2.6.1 (it needs to be the exact version)
 
 
 Building the Client
@@ -30,36 +29,13 @@ $ mvn package -DskipTests
 The client jar will can then be found at kudu-client/target.
 
 
-Building the Kudu CSD
-------------------------------------------------------------
-
-By default, the Kudu CSD will not be built with the client.
-It requires access to the Kudu binaries which may not be
-available. For example, when building on OSX.
-
-Here's how to build the kudu-csd module:
-
-$ mvn package -DskipTests -PbuildCSD
-
-Also by default, building the CSD does not validate it,
-because (for the moment) this requires access to an internal
-Cloudera repository containing the validator maven plugin.
-
-Here's how to build the kudu-csd module with validation:
-
-$ mvn package -DskipTests -PbuildCSD -PvalidateCSD
-
-
 Running the Tests
 ------------------------------------------------------------
 
-Most of the unit tests will start their own cluster but it
-is also possible to provide your own.
-
-By default, the unit tests will start a master and a tablet
+The unit tests will start a master and a tablet
 server using the flags file located in the src/test/resources/
 directory. The tests will locate the master and tablet server
-binaries by looking in 'build/latest/' from the root of
+binaries by looking in 'build/latest/bin' from the root of
 the git repository. If you have recently built the C++ code
 for Kudu, those should be present already.
 
@@ -67,20 +43,8 @@ Once everything is setup correctly, run:
 
 $ mvn test
 
-In order to point the unit tests to an existing cluster,
-you need to use a command line like this one:
-
-$ mvn test -DstartCluster=false
-
-If you choose to not start a cluster, the tests will look for
-a master running on localhost:7051. If you would like to run
-against a remote cluster, you can override this using
--DmasterAddress:
-
-$ mvn test -DstartCluster=false -DmasterAddress=foo.example.com:7051
-
-If for some reason you would like to start a cluster, but use
-binaries other than the ones in build/latest/, you can pass
+If for some reason the binaries aren't in the expected location
+as shown above, you can pass
 -DbinDir=/path/to/directory.
 
 Integration tests, including tests which cover Hadoop integration,
@@ -159,3 +123,19 @@ likely a bug in maven-protoc-plugin.
 
 There's a simple workaround: delete the errant folder within
 Eclipse and refresh the kudu-client project.
+
+
+Building the Kudu Custom Service Descriptor (CSD)
+------------------------------------------------------------
+
+By default, the Kudu CSD will not be built with the client
+and isn't needed by any API.
+
+It requires access to the Kudu binaries which have to be built
+prior to building this module.
+
+Here's how to build the kudu-csd module:
+
+$ mvn package -DskipTests -PbuildCSD
+
+This will both build the Kudu CSD and validate it for correctness.

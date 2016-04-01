@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_INTERVAL_TREE_INL_H
 #define KUDU_UTIL_INTERVAL_TREE_INL_H
 
@@ -83,7 +86,7 @@ void IntervalTree<Traits>::Partition(const IntervalVector &in,
   // Pick a split point which is the median of all of the interval boundaries.
   std::vector<point_type> endpoints;
   endpoints.reserve(in.size() * 2);
-  BOOST_FOREACH(const interval_type &interval, in) {
+  for (const interval_type &interval : in) {
     endpoints.push_back(Traits::get_left(interval));
     endpoints.push_back(Traits::get_right(interval));
   }
@@ -91,7 +94,7 @@ void IntervalTree<Traits>::Partition(const IntervalVector &in,
   *split_point = endpoints[endpoints.size() / 2];
 
   // Partition into the groups based on the determined split point.
-  BOOST_FOREACH(const interval_type &interval, in) {
+  for (const interval_type &interval : in) {
     if (Traits::compare(Traits::get_right(interval), *split_point) < 0) {
       //                 | split point
       // |------------|  |
@@ -188,14 +191,11 @@ bool ITNode<Traits>::SortByDescRight(const interval_type &a, const interval_type
   return Traits::compare(Traits::get_right(a), Traits::get_right(b)) > 0;
 }
 
-template<class Traits>
+template <class Traits>
 ITNode<Traits>::ITNode(typename Traits::point_type split_point,
-                       ITNode<Traits> *left,
-                       const IntervalVector &overlap,
+                       ITNode<Traits> *left, const IntervalVector &overlap,
                        ITNode<Traits> *right)
-  : split_point_(split_point),
-    left_(left),
-    right_(right) {
+    : split_point_(std::move(split_point)), left_(left), right_(right) {
   // Store two copies of the set of intervals which overlap the split point:
   // 1) Sorted by ascending left boundary
   overlapping_by_asc_left_.assign(overlap.begin(), overlap.end());
@@ -223,7 +223,7 @@ void ITNode<Traits>::FindContainingPoint(const point_type &query,
 
     // Any intervals which start before the query point and overlap the split point
     // must therefore contain the query point.
-    BOOST_FOREACH(const interval_type &interval, overlapping_by_asc_left_) {
+    for (const interval_type &interval : overlapping_by_asc_left_) {
       if (Traits::compare(Traits::get_left(interval), query) <= 0) {
         results->push_back(interval);
       } else {
@@ -238,7 +238,7 @@ void ITNode<Traits>::FindContainingPoint(const point_type &query,
 
     // Any intervals which end after the query point and overlap the split point
     // must therefore contain the query point.
-    BOOST_FOREACH(const interval_type &interval, overlapping_by_desc_right_) {
+    for (const interval_type &interval : overlapping_by_desc_right_) {
       if (Traits::compare(Traits::get_right(interval), query) >= 0) {
         results->push_back(interval);
       } else {
@@ -266,7 +266,7 @@ void ITNode<Traits>::FindIntersectingInterval(const interval_type &query,
 
     // Any intervals whose left edge is <= the query interval's right edge
     // intersect the query interval.
-    BOOST_FOREACH(const interval_type &interval, overlapping_by_asc_left_) {
+    for (const interval_type &interval : overlapping_by_asc_left_) {
       if (Traits::compare(Traits::get_left(interval),Traits::get_right(query)) <= 0) {
         results->push_back(interval);
       } else {
@@ -282,7 +282,7 @@ void ITNode<Traits>::FindIntersectingInterval(const interval_type &query,
 
     // Any intervals whose right edge is >= the query interval's left edge
     // intersect the query interval.
-    BOOST_FOREACH(const interval_type &interval, overlapping_by_desc_right_) {
+    for (const interval_type &interval : overlapping_by_desc_right_) {
       if (Traits::compare(Traits::get_right(interval), Traits::get_left(query)) >= 0) {
         results->push_back(interval);
       } else {

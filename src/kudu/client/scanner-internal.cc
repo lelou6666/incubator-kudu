@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/client/scanner-internal.h"
 
@@ -24,6 +27,7 @@
 #include "kudu/client/meta_cache.h"
 #include "kudu/client/row_result.h"
 #include "kudu/client/table-internal.h"
+#include "kudu/common/common.pb.h"
 #include "kudu/common/wire_protocol.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/rpc_controller.h"
@@ -34,10 +38,12 @@ using std::string;
 
 namespace kudu {
 
+using kudu::ColumnPredicatePB;
 using rpc::RpcController;
-using tserver::ColumnRangePredicatePB;
+using strings::Substitute;
+using strings::SubstituteAndAppend;
 using tserver::NewScanRequestPB;
-using tserver::ScanResponsePB;
+using tserver::TabletServerFeatures;
 
 namespace client {
 
@@ -54,12 +60,12 @@ KuduScanner::Data::Data(KuduTable* table)
     read_mode_(READ_LATEST),
     is_fault_tolerant_(false),
     snapshot_timestamp_(kNoTimestamp),
+    short_circuit_(false),
     table_(DCHECK_NOTNULL(table)),
-    projection_(table->schema().schema_),
     arena_(1024, 1024*1024),
-    spec_encoder_(table->schema().schema_, &arena_),
     timeout_(MonoDelta::FromMilliseconds(kScanTimeoutMillis)),
     scan_attempts_(0) {
+  SetProjectionSchema(table->schema().schema_);
 }
 
 KuduScanner::Data::~Data() {
@@ -73,9 +79,10 @@ Status KuduScanner::Data::CheckForErrors() {
   return StatusFromPB(last_response_.error().status());
 }
 
-void KuduScanner::Data::CopyPredicateBound(const ColumnSchema& col,
-                                           const void* bound_src,
-                                           string* bound_dst) {
+namespace {
+void CopyPredicateBound(const ColumnSchema& col,
+                        const void* bound_src,
+                        string* bound_dst) {
   const void* src;
   size_t size;
   if (col.type_info()->physical_type() == BINARY) {
@@ -91,6 +98,40 @@ void KuduScanner::Data::CopyPredicateBound(const ColumnSchema& col,
   bound_dst->assign(reinterpret_cast<const char*>(src), size);
 }
 
+void ColumnPredicateIntoPB(const ColumnPredicate& predicate,
+                           ColumnPredicatePB* pb) {
+  pb->set_column(predicate.column().name());
+  switch (predicate.predicate_type()) {
+    case PredicateType::Equality: {
+      CopyPredicateBound(predicate.column(),
+                         predicate.raw_lower(),
+                         pb->mutable_equality()->mutable_value());
+      return;
+    };
+    case PredicateType::Range: {
+      auto range_pred = pb->mutable_range();
+      if (predicate.raw_lower() != nullptr) {
+        CopyPredicateBound(predicate.column(),
+                           predicate.raw_lower(),
+                           range_pred->mutable_lower());
+      }
+      if (predicate.raw_upper() != nullptr) {
+        CopyPredicateBound(predicate.column(),
+                           predicate.raw_upper(),
+                           range_pred->mutable_upper());
+      }
+      return;
+    };
+    case PredicateType::IsNotNull: {
+      pb->mutable_is_not_null();
+      return;
+    };
+    case PredicateType::None: LOG(FATAL) << "None predicate may not be converted to protobuf";
+  }
+  LOG(FATAL) << "unknown predicate type";
+}
+} // anonymous namespace
+
 Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
                                        const Status& rpc_status, const Status& server_status,
                                        const MonoTime& actual_deadline, const MonoTime& deadline,
@@ -98,11 +139,20 @@ Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
                                        set<string>* blacklist) {
   CHECK(!rpc_status.ok() || !server_status.ok());
 
+  // Check for ERROR_INVALID_REQUEST, which should not retry.
+  if (server_status.ok() &&
+      !rpc_status.ok() &&
+      controller_.error_response() != nullptr &&
+      controller_.error_response()->code() == rpc::ErrorStatusPB::ERROR_INVALID_REQUEST) {
+    return rpc_status;
+  }
+
   // Check for ERROR_SERVER_TOO_BUSY, which should result in a retry after a delay.
   if (server_status.ok() &&
       !rpc_status.ok() &&
       controller_.error_response() &&
       controller_.error_response()->code() == rpc::ErrorStatusPB::ERROR_SERVER_TOO_BUSY) {
+    UpdateLastError(rpc_status);
 
     // Exponential backoff with jitter anchored between 10ms and 20ms, and an
     // upper bound between 2.5s and 5s.
@@ -111,7 +161,10 @@ Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
     MonoTime now = MonoTime::Now(MonoTime::FINE);
     now.AddDelta(sleep);
     if (deadline.ComesBefore(now)) {
-      return Status::TimedOut("unable to retry before timeout", rpc_status.ToString());
+      Status ret = Status::TimedOut("unable to retry before timeout",
+                                    rpc_status.ToString());
+      return last_error_.ok() ?
+          ret : ret.CloneAndAppend(last_error_.ToString());
     }
     LOG(INFO) << "Retrying scan to busy tablet server " << ts_->ToString()
               << " after " << sleep.ToString() << "; attempt " << scan_attempts_;
@@ -126,9 +179,11 @@ Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
       // We didn't wait a full RPC timeout though, so don't mark the tserver as failed.
       LOG(INFO) << "Scan of tablet " << remote_->tablet_id() << " at "
           << ts_->ToString() << " deadline expired.";
-      return rpc_status;
+      return last_error_.ok()
+          ? rpc_status : rpc_status.CloneAndAppend(last_error_.ToString());
     } else {
       // All other types of network errors are retriable, and also indicate the tserver is failed.
+      UpdateLastError(rpc_status);
       table_->client()->data_->meta_cache_->MarkTSFailed(ts_, rpc_status);
     }
   }
@@ -151,33 +206,67 @@ Status KuduScanner::Data::CanBeRetried(const bool isNewScan,
   //   - TABLET_NOT_RUNNING : The scan can be retried at a different tablet server, subject
   //                          to the client's specified selection criteria.
   //
+  //   - TABLET_NOT_FOUND   : The scan can be retried at a different tablet server, subject
+  //                          to the client's specified selection criteria.
+  //                          The metadata for this tablet should be refreshed.
+  //
   //   - Any other error    : Fatal. This indicates an unexpected error while processing the scan
   //                          request.
   if (rpc_status.ok() && !server_status.ok()) {
+    UpdateLastError(server_status);
+
     const tserver::TabletServerErrorPB& error = last_response_.error();
-    if (error.code() == tserver::TabletServerErrorPB::SCANNER_EXPIRED) {
-      VLOG(1) << "Got SCANNER_EXPIRED error code, non-fatal error.";
-    } else if (error.code() == tserver::TabletServerErrorPB::TABLET_NOT_RUNNING) {
-      VLOG(1) << "Got TABLET_NOT_RUNNING error code, temporarily blacklisting node "
-          << ts_->permanent_uuid();
-      blacklist->insert(ts_->permanent_uuid());
-      // We've blacklisted all the live candidate tservers.
-      // Do a short random sleep, clear the temp blacklist, then do another round of retries.
-      if (!candidates.empty() && candidates.size() == blacklist->size()) {
-        MonoDelta sleep_delta = MonoDelta::FromMilliseconds((random() % 5000) + 1000);
-        LOG(INFO) << "All live candidate nodes are unavailable because of transient errors."
-            << " Sleeping for " << sleep_delta.ToMilliseconds() << " ms before trying again.";
-        SleepFor(sleep_delta);
-        blacklist->clear();
+    switch (error.code()) {
+      case tserver::TabletServerErrorPB::SCANNER_EXPIRED:
+        VLOG(1) << "Got SCANNER_EXPIRED error code, non-fatal error.";
+        break;
+      case tserver::TabletServerErrorPB::TABLET_NOT_RUNNING:
+        VLOG(1) << "Got error code " << tserver::TabletServerErrorPB::Code_Name(error.code())
+            << ": temporarily blacklisting node " << ts_->permanent_uuid();
+        blacklist->insert(ts_->permanent_uuid());
+        // We've blacklisted all the live candidate tservers.
+        // Do a short random sleep, clear the temp blacklist, then do another round of retries.
+        if (!candidates.empty() && candidates.size() == blacklist->size()) {
+          MonoDelta sleep_delta = MonoDelta::FromMilliseconds((random() % 5000) + 1000);
+          LOG(INFO) << "All live candidate nodes are unavailable because of transient errors."
+              << " Sleeping for " << sleep_delta.ToMilliseconds() << " ms before trying again.";
+          SleepFor(sleep_delta);
+          blacklist->clear();
+        }
+        break;
+      case tserver::TabletServerErrorPB::TABLET_NOT_FOUND: {
+        // There was either a tablet configuration change or the table was
+        // deleted, since at the time of this writing we don't support splits.
+        // Backoff, then force a re-fetch of the tablet metadata.
+        remote_->MarkStale();
+        // TODO: Only backoff on the second time we hit TABLET_NOT_FOUND on the
+        // same tablet (see KUDU-1314).
+        MonoDelta backoff_time = MonoDelta::FromMilliseconds((random() % 1000) + 500);
+        SleepFor(backoff_time);
+        break;
       }
-    } else {
-      // All other server errors are fatal. Usually indicates a malformed request, e.g. a bad scan
-      // specification.
-      return server_status;
+      default:
+        // All other server errors are fatal. Usually indicates a malformed request, e.g. a bad scan
+        // specification.
+        return server_status;
     }
   }
 
   return Status::OK();
+}
+
+Status KuduScanner::Data::OpenNextTablet(const MonoTime& deadline,
+                                         std::set<std::string>* blacklist) {
+  return OpenTablet(partition_pruner_.NextPartitionKey(),
+                    deadline,
+                    blacklist);
+}
+
+Status KuduScanner::Data::ReopenCurrentTablet(const MonoTime& deadline,
+                                              std::set<std::string>* blacklist) {
+  return OpenTablet(remote_->partition().partition_key_start(),
+                    deadline,
+                    blacklist);
 }
 
 Status KuduScanner::Data::OpenTablet(const string& partition_key,
@@ -217,20 +306,9 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
   }
 
   // Set up the predicates.
-  scan->clear_range_predicates();
-  BOOST_FOREACH(const ColumnRangePredicate& pred, spec_.predicates()) {
-    const ColumnSchema& col = pred.column();
-    const ValueRange& range = pred.range();
-    ColumnRangePredicatePB* pb = scan->add_range_predicates();
-    if (range.has_lower_bound()) {
-      CopyPredicateBound(col, range.lower_bound(),
-                         pb->mutable_lower_bound());
-    }
-    if (range.has_upper_bound()) {
-      CopyPredicateBound(col, range.upper_bound(),
-                         pb->mutable_upper_bound());
-    }
-    ColumnSchemaToPB(col, pb->mutable_column());
+  scan->clear_column_predicates();
+  for (const auto& col_pred : spec_.predicates()) {
+    ColumnPredicateIntoPB(col_pred.second, scan->add_column_predicates());
   }
 
   if (spec_.lower_bound_key()) {
@@ -265,7 +343,7 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
     vector<RemoteTabletServer*> candidates;
     Status lookup_status = table_->client()->data_->GetTabletServer(
         table_->client(),
-        remote_->tablet_id(),
+        remote_,
         selection_,
         *blacklist,
         &candidates,
@@ -285,6 +363,13 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
     }
     RETURN_NOT_OK(lookup_status);
 
+    MonoTime now = MonoTime::Now(MonoTime::FINE);
+    if (deadline.ComesBefore(now)) {
+      Status ret = Status::TimedOut("Scan timed out, deadline expired");
+      return last_error_.ok() ?
+          ret : ret.CloneAndAppend(last_error_.ToString());
+    }
+
     // Recalculate the deadlines.
     // If we have other replicas beyond this one to try, then we'll try to
     // open the scanner with the default RPC timeout. That gives us time to
@@ -292,7 +377,7 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
     // full remaining deadline for the user's call.
     MonoTime rpc_deadline;
     if (static_cast<int>(candidates.size()) - blacklist->size() > 1) {
-      rpc_deadline = MonoTime::Now(MonoTime::FINE);
+      rpc_deadline = now;
       rpc_deadline.AddDelta(table_->client()->default_rpc_timeout());
       rpc_deadline = MonoTime::Earliest(deadline, rpc_deadline);
     } else {
@@ -301,6 +386,10 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
 
     controller_.Reset();
     controller_.set_deadline(rpc_deadline);
+
+    if (!spec_.predicates().empty()) {
+      controller_.RequireServerFeature(TabletServerFeatures::COLUMN_PREDICATES);
+    }
 
     CHECK(ts->proxy());
     ts_ = CHECK_NOTNULL(ts);
@@ -315,6 +404,8 @@ Status KuduScanner::Data::OpenTablet(const string& partition_key,
     RETURN_NOT_OK(CanBeRetried(true, rpc_status, server_status, rpc_deadline, deadline,
                                candidates, blacklist));
   }
+
+  partition_pruner_.RemovePartitionKeyRange(remote_->partition().partition_key_end());
 
   next_req_.clear_new_scan_request();
   data_in_open_ = last_response_.has_data();
@@ -366,95 +457,10 @@ Status KuduScanner::Data::KeepAlive() {
   return Status::OK();
 }
 
-Status KuduScanner::Data::ExtractRows(vector<KuduRowResult>* rows) {
-  return ExtractRows(controller_, projection_, &last_response_, rows);
-}
-
-Status KuduScanner::Data::ExtractRows(const RpcController& controller,
-                                      const Schema* projection,
-                                      ScanResponsePB* resp,
-                                      vector<KuduRowResult>* rows) {
-  // First, rewrite the relative addresses into absolute ones.
-  RowwiseRowBlockPB* rowblock_pb = resp->mutable_data();
-  Slice direct, indirect;
-
-  if (PREDICT_FALSE(!rowblock_pb->has_rows_sidecar())) {
-    return Status::Corruption("Server sent invalid response: no row data");
-  } else {
-    Status s = controller.GetSidecar(rowblock_pb->rows_sidecar(), &direct);
-    if (!s.ok()) {
-      return Status::Corruption("Server sent invalid response: row data "
-                                "sidecar index corrupt", s.ToString());
-    }
-  }
-
-  if (rowblock_pb->has_indirect_data_sidecar()) {
-    Status s = controller.GetSidecar(rowblock_pb->indirect_data_sidecar(),
-                                      &indirect);
-    if (!s.ok()) {
-      return Status::Corruption("Server sent invalid response: indirect data "
-                                "sidecar index corrupt", s.ToString());
-    }
-  }
-
-  RETURN_NOT_OK(RewriteRowBlockPointers(*projection, *rowblock_pb, indirect, &direct));
-
-  int n_rows = rowblock_pb->num_rows();
-  if (PREDICT_FALSE(n_rows == 0)) {
-    // Early-out here to avoid a UBSAN failure.
-    VLOG(1) << "Extracted 0 rows";
-    return Status::OK();
-  }
-
-  // Next, allocate a block of KuduRowResults in 'rows'.
-  size_t before = rows->size();
-  rows->resize(before + n_rows);
-
-  // Lastly, initialize each KuduRowResult with data from the response.
-  //
-  // Doing this resize and array indexing turns out to be noticeably faster
-  // than using reserve and push_back.
-  int projected_row_size = CalculateProjectedRowSize(*projection);
-  const uint8_t* src = direct.data();
-  KuduRowResult* dst = &(*rows)[before];
-  while (n_rows > 0) {
-    dst->Init(projection, src);
-    dst++;
-    src += projected_row_size;
-    n_rows--;
-  }
-  VLOG(1) << "Extracted " << rows->size() - before << " rows";
-  return Status::OK();
-}
-
 bool KuduScanner::Data::MoreTablets() const {
   CHECK(open_);
   // TODO(KUDU-565): add a test which has a scan end on a tablet boundary
-
-  if (remote_->partition().partition_key_end().empty()) {
-    // Last tablet -- nothing more to scan.
-    return false;
-  }
-
-  if (!spec_.exclusive_upper_bound_partition_key().empty() &&
-      spec_.exclusive_upper_bound_partition_key() <= remote_->partition().partition_key_end()) {
-    // We are not past the scan's upper bound partition key.
-    return false;
-  }
-
-  if (!table_->partition_schema().IsSimplePKRangePartitioning(*table_->schema().schema_)) {
-    // We can't do culling yet if the partitioning isn't simple.
-    return true;
-  }
-
-  if (spec_.exclusive_upper_bound_key() == NULL) {
-    // No upper bound - keep going!
-    return true;
-  }
-
-  // Otherwise, we have to compare the upper bound.
-  return spec_.exclusive_upper_bound_key()->encoded_key()
-          .compare(remote_->partition().partition_key_end()) > 0;
+  return partition_pruner_.HasMorePartitionKeyRanges();
 }
 
 void KuduScanner::Data::PrepareRequest(RequestType state) {
@@ -473,9 +479,93 @@ void KuduScanner::Data::PrepareRequest(RequestType state) {
   }
 }
 
-size_t KuduScanner::Data::CalculateProjectedRowSize(const Schema& proj) {
+void KuduScanner::Data::UpdateLastError(const Status& error) {
+  if (last_error_.ok() || last_error_.IsTimedOut()) {
+    last_error_ = error;
+  }
+}
+
+void KuduScanner::Data::SetProjectionSchema(const Schema* schema) {
+  projection_ = schema;
+  client_projection_ = KuduSchema(*schema);
+}
+
+////////////////////////////////////////////////////////////
+// KuduScanBatch
+////////////////////////////////////////////////////////////
+
+KuduScanBatch::Data::Data() : projection_(NULL) {}
+
+KuduScanBatch::Data::~Data() {}
+
+size_t KuduScanBatch::Data::CalculateProjectedRowSize(const Schema& proj) {
   return proj.byte_size() +
         (proj.has_nullables() ? BitmapSize(proj.num_columns()) : 0);
+}
+
+Status KuduScanBatch::Data::Reset(RpcController* controller,
+                                  const Schema* projection,
+                                  const KuduSchema* client_projection,
+                                  gscoped_ptr<RowwiseRowBlockPB> data) {
+  CHECK(controller->finished());
+  controller_.Swap(controller);
+  projection_ = projection;
+  client_projection_ = client_projection;
+  resp_data_.Swap(data.get());
+
+  // First, rewrite the relative addresses into absolute ones.
+  if (PREDICT_FALSE(!resp_data_.has_rows_sidecar())) {
+    return Status::Corruption("Server sent invalid response: no row data");
+  } else {
+    Status s = controller_.GetSidecar(resp_data_.rows_sidecar(), &direct_data_);
+    if (!s.ok()) {
+      return Status::Corruption("Server sent invalid response: row data "
+                                "sidecar index corrupt", s.ToString());
+    }
+  }
+
+  if (resp_data_.has_indirect_data_sidecar()) {
+    Status s = controller_.GetSidecar(resp_data_.indirect_data_sidecar(),
+                                      &indirect_data_);
+    if (!s.ok()) {
+      return Status::Corruption("Server sent invalid response: indirect data "
+                                "sidecar index corrupt", s.ToString());
+    }
+  }
+
+  RETURN_NOT_OK(RewriteRowBlockPointers(*projection_, resp_data_, indirect_data_, &direct_data_));
+  projected_row_size_ = CalculateProjectedRowSize(*projection_);
+  return Status::OK();
+}
+
+void KuduScanBatch::Data::ExtractRows(vector<KuduScanBatch::RowPtr>* rows) {
+  int n_rows = resp_data_.num_rows();
+  rows->resize(n_rows);
+
+  if (PREDICT_FALSE(n_rows == 0)) {
+    // Early-out here to avoid a UBSAN failure.
+    VLOG(1) << "Extracted 0 rows";
+    return;
+  }
+
+  // Initialize each RowPtr with data from the response.
+  //
+  // Doing this resize and array indexing turns out to be noticeably faster
+  // than using reserve and push_back.
+  const uint8_t* src = direct_data_.data();
+  KuduScanBatch::RowPtr* dst = &(*rows)[0];
+  while (n_rows > 0) {
+    *dst = KuduScanBatch::RowPtr(projection_, src);
+    dst++;
+    src += projected_row_size_;
+    n_rows--;
+  }
+  VLOG(1) << "Extracted " << rows->size() << " rows";
+}
+
+void KuduScanBatch::Data::Clear() {
+  resp_data_.Clear();
+  controller_.Reset();
 }
 
 } // namespace client

@@ -1,25 +1,30 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/mem_tracker.h"
 
+#include <atomic>
 #include <string>
-#include <tr1/unordered_map>
+#include <thread>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
 #include <gperftools/malloc_extension.h>
 
 #include "kudu/util/test_util.h"
@@ -29,10 +34,11 @@ DECLARE_int32(memory_limit_soft_percentage);
 namespace kudu {
 
 using std::equal_to;
+using std::hash;
+using std::pair;
+using std::shared_ptr;
 using std::string;
-using std::tr1::hash;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
+using std::unordered_map;
 using std::vector;
 
 TEST(MemTrackerTest, SingleTrackerNoLimit) {
@@ -169,11 +175,12 @@ TEST(MemTrackerTest, GcFunctions) {
 
 TEST(MemTrackerTest, STLContainerAllocator) {
   shared_ptr<MemTracker> t = MemTracker::CreateTracker(-1, "t");
-  MemTrackerAllocator<int> alloc(t);
+  MemTrackerAllocator<int> vec_alloc(t);
+  MemTrackerAllocator<pair<const int, int>> map_alloc(t);
 
   // Simple test: use the allocator in a vector.
   {
-    vector<int, MemTrackerAllocator<int> > v(alloc);
+    vector<int, MemTrackerAllocator<int> > v(vec_alloc);
     ASSERT_EQ(0, t->consumption());
     v.reserve(5);
     ASSERT_EQ(5 * sizeof(int), t->consumption());
@@ -185,11 +192,11 @@ TEST(MemTrackerTest, STLContainerAllocator) {
   // Complex test: use it in an unordered_map, where it must be rebound in
   // order to allocate the map's buckets.
   {
-    unordered_map<int, int, equal_to<int>, hash<int>, MemTrackerAllocator<int> > um(
+    unordered_map<int, int, hash<int>, equal_to<int>, MemTrackerAllocator<pair<const int, int>>> um(
         10,
-        equal_to<int>(),
         hash<int>(),
-        alloc);
+        equal_to<int>(),
+        map_alloc);
 
     // Don't care about the value (it depends on map internals).
     ASSERT_GT(t->consumption(), 0);
@@ -221,7 +228,7 @@ TEST(MemTrackerTest, FindFunctionsTakeOwnership) {
     shared_ptr<MemTracker> m = MemTracker::CreateTracker(-1, "test");
     MemTracker::ListTrackers(&refs);
   }
-  BOOST_FOREACH(const shared_ptr<MemTracker>& r, refs) {
+  for (const shared_ptr<MemTracker>& r : refs) {
     LOG(INFO) << r->ToString();
   }
   refs.clear();
@@ -249,7 +256,7 @@ TEST(MemTrackerTest, SoftLimitExceeded) {
 
   // Consumption is 0; the soft limit is never exceeded.
   for (int i = 0; i < kNumIters; i++) {
-    ASSERT_FALSE(m->SoftLimitExceeded(NULL));
+    ASSERT_FALSE(m->SoftLimitExceeded(nullptr));
   }
 
   // Consumption is half of the actual limit, so we expect to exceed the soft
@@ -294,6 +301,9 @@ TEST(MemTrackerTest, TcMallocRootTracker) {
 
   // But if we allocate something really big, we should see a change.
   gscoped_ptr<char[]> big_alloc(new char[4*1024*1024]);
+  // clang in release mode can optimize out the above allocation unless
+  // we do something with the pointer... so we just log it.
+  VLOG(8) << static_cast<void*>(big_alloc.get());
   root->UpdateConsumption();
   ASSERT_GT(root->consumption(), value);
 }
@@ -327,6 +337,24 @@ TEST(MemTrackerTest, UnregisterFromParent) {
 
   // And this should no-op.
   c->UnregisterFromParent();
+}
+
+TEST(MemTrackerTest, TestMultiThreadedRegisterAndDestroy) {
+  std::atomic<bool> done(false);
+  vector<std::thread> threads;
+  for (int i = 0; i < 10; i++) {
+    threads.emplace_back([&done]{
+        while (!done.load()) {
+          shared_ptr<MemTracker> t = MemTracker::FindOrCreateTracker(1000, "foo");
+        }
+      });
+  }
+
+  SleepFor(MonoDelta::FromSeconds(AllowSlowTests() ? 5 : 1));
+  done.store(true);
+  for (auto& t : threads) {
+    t.join();
+  }
 }
 
 } // namespace kudu

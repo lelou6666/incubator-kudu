@@ -1,28 +1,31 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log-test-base.h"
 
 #include <boost/thread/locks.hpp>
-#include <boost/assign/list_of.hpp>
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/thread.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <vector>
 
-#include "kudu/gutil/algorithm.h"
+#include "kudu/consensus/log_index.h"
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/locks.h"
@@ -36,7 +39,7 @@ DEFINE_int32(num_ops_per_batch_avg, 5, "Target average number of ops per batch")
 namespace kudu {
 namespace log {
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
 using consensus::ReplicateRefPtr;
 using consensus::make_scoped_refptr_replicate;
@@ -114,9 +117,9 @@ class MultiThreadedLogTest : public LogTestBase {
         CreateBatchFromAllocatedOperations(batch_replicates,
                                            &entry_batch_pb);
 
-        ASSERT_OK(log_->Reserve(REPLICATE, entry_batch_pb.Pass(), &entry_batch));
+        ASSERT_OK(log_->Reserve(REPLICATE, std::move(entry_batch_pb), &entry_batch));
       } // lock_guard scope
-      CustomLatchCallback* cb = new CustomLatchCallback(&latch, &errors);
+      auto cb = new CustomLatchCallback(&latch, &errors);
       entry_batch->SetReplicates(batch_replicates);
       ASSERT_OK(log_->AsyncAppend(entry_batch, cb->AsStatusCallback()));
     }
@@ -124,7 +127,7 @@ class MultiThreadedLogTest : public LogTestBase {
                                         thread_id, FLAGS_num_batches_per_thread)) {
       latch.Wait();
     }
-    BOOST_FOREACH(const Status& status, errors) {
+    for (const Status& status : errors) {
       WARN_NOT_OK(status, "Unexpected failure during AsyncAppend");
     }
     ASSERT_EQ(0, errors.size());
@@ -137,7 +140,7 @@ class MultiThreadedLogTest : public LogTestBase {
           &MultiThreadedLogTest::LogWriterThread, this, i, &new_thread));
       threads_.push_back(new_thread);
     }
-    BOOST_FOREACH(scoped_refptr<kudu::Thread>& thread, threads_) {
+    for (scoped_refptr<kudu::Thread>& thread : threads_) {
       ASSERT_OK(ThreadJoiner(thread.get()).Join());
     }
   }
@@ -157,17 +160,19 @@ TEST_F(MultiThreadedLogTest, TestAppends) {
   }
   ASSERT_OK(log_->Close());
 
+  shared_ptr<LogReader> reader;
+  ASSERT_OK(LogReader::Open(fs_manager_.get(), NULL, kTestTablet, NULL, &reader));
   SegmentSequence segments;
-  ASSERT_OK(log_->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(reader->GetSegmentsSnapshot(&segments));
 
-  BOOST_FOREACH(const SegmentSequence::value_type& entry, segments) {
+  for (const SegmentSequence::value_type& entry : segments) {
     ASSERT_OK(entry->ReadEntries(&entries_));
   }
   vector<uint32_t> ids;
   EntriesToIdList(&ids);
   DVLOG(1) << "Wrote total of " << current_index_ - start_current_id << " ops";
   ASSERT_EQ(current_index_ - start_current_id, ids.size());
-  ASSERT_TRUE(util::gtl::is_sorted(ids.begin(), ids.end()));
+  ASSERT_TRUE(std::is_sorted(ids.begin(), ids.end()));
 }
 
 } // namespace log

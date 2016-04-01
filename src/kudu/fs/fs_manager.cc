@@ -1,35 +1,35 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/fs/fs_manager.h"
 
 #include <deque>
 #include <iostream>
 #include <map>
-#include <tr1/memory>
-#include <tr1/unordered_set>
+#include <unordered_set>
 
-#include <boost/foreach.hpp>
-#include <boost/assign/list_of.hpp>
 #include <glog/logging.h>
 #include <glog/stl_logging.h>
 #include <google/protobuf/message.h>
 
 #include "kudu/fs/block_id.h"
 #include "kudu/fs/file_block_manager.h"
-#include "kudu/fs/log_block_manager.h"
 #include "kudu/fs/fs.pb.h"
+#include "kudu/fs/log_block_manager.h"
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/numbers.h"
@@ -41,8 +41,8 @@
 #include "kudu/gutil/walltime.h"
 #include "kudu/util/env_util.h"
 #include "kudu/util/flag_tags.h"
-#include "kudu/util/net/net_util.h"
 #include "kudu/util/metrics.h"
+#include "kudu/util/net/net_util.h"
 #include "kudu/util/oid_generator.h"
 #include "kudu/util/path_util.h"
 #include "kudu/util/pb_util.h"
@@ -71,19 +71,17 @@ DEFINE_string(fs_data_dirs, "",
               "block directory.");
 TAG_FLAG(fs_data_dirs, stable);
 
-using boost::assign::list_of;
 using google::protobuf::Message;
-using strings::Substitute;
-using std::map;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
 using kudu::env_util::ScopedFileDeleter;
-using kudu::fs::CreateBlockOptions;
 using kudu::fs::BlockManagerOptions;
+using kudu::fs::CreateBlockOptions;
 using kudu::fs::FileBlockManager;
 using kudu::fs::LogBlockManager;
 using kudu::fs::ReadableBlock;
 using kudu::fs::WritableBlock;
+using std::map;
+using std::unordered_set;
+using strings::Substitute;
 
 namespace kudu {
 
@@ -114,8 +112,8 @@ FsManager::FsManager(Env* env, const string& root_path)
   : env_(DCHECK_NOTNULL(env)),
     read_only_(false),
     wal_fs_root_(root_path),
-    data_fs_roots_(list_of(root_path).convert_to_container<vector<string> >()),
-    metric_entity_(NULL),
+    data_fs_roots_({ root_path }),
+    metric_entity_(nullptr),
     initted_(false) {
 }
 
@@ -146,7 +144,7 @@ Status FsManager::Init() {
   // Deduplicate all of the roots.
   set<string> all_roots;
   all_roots.insert(wal_fs_root_);
-  BOOST_FOREACH(const string& data_fs_root, data_fs_roots_) {
+  for (const string& data_fs_root : data_fs_roots_) {
     all_roots.insert(data_fs_root);
   }
 
@@ -154,7 +152,7 @@ Status FsManager::Init() {
   // root a bit as we go.
   typedef map<string, string> RootMap;
   RootMap canonicalized_roots;
-  BOOST_FOREACH(const string& root, all_roots) {
+  for (const string& root : all_roots) {
     if (root.empty()) {
       return Status::IOError("Empty string provided for filesystem root");
     }
@@ -183,7 +181,7 @@ Status FsManager::Init() {
   canonicalized_wal_fs_root_ = FindOrDie(canonicalized_roots, wal_fs_root_);
   if (!data_fs_roots_.empty()) {
     canonicalized_metadata_fs_root_ = FindOrDie(canonicalized_roots, data_fs_roots_[0]);
-    BOOST_FOREACH(const string& data_fs_root, data_fs_roots_) {
+    for (const string& data_fs_root : data_fs_roots_) {
       canonicalized_data_fs_roots_.insert(FindOrDie(canonicalized_roots, data_fs_root));
     }
   } else {
@@ -192,7 +190,7 @@ Status FsManager::Init() {
     canonicalized_metadata_fs_root_ = canonicalized_wal_fs_root_;
     canonicalized_data_fs_roots_.insert(canonicalized_wal_fs_root_);
   }
-  BOOST_FOREACH(const RootMap::value_type& e, canonicalized_roots) {
+  for (const RootMap::value_type& e : canonicalized_roots) {
     canonicalized_all_fs_roots_.insert(e.second);
   }
 
@@ -227,7 +225,7 @@ void FsManager::InitBlockManager() {
 
 Status FsManager::Open() {
   RETURN_NOT_OK(Init());
-  BOOST_FOREACH(const string& root, canonicalized_all_fs_roots_) {
+  for (const string& root : canonicalized_all_fs_roots_) {
     gscoped_ptr<InstanceMetadataPB> pb(new InstanceMetadataPB);
     RETURN_NOT_OK(pb_util::ReadPBContainerFromPath(env_, GetInstanceMetadataPath(root),
                                                    pb.get()));
@@ -252,7 +250,7 @@ Status FsManager::CreateInitialFileSystemLayout() {
   RETURN_NOT_OK(Init());
 
   // It's OK if a root already exists as long as there's nothing in it.
-  BOOST_FOREACH(const string& root, canonicalized_all_fs_roots_) {
+  for (const string& root : canonicalized_all_fs_roots_) {
     if (!env_->FileExists(root)) {
       // We'll create the directory below.
       continue;
@@ -275,7 +273,7 @@ Status FsManager::CreateInitialFileSystemLayout() {
   InstanceMetadataPB metadata;
   CreateInstanceMetadata(&metadata);
   unordered_set<string> to_sync;
-  BOOST_FOREACH(const string& root, canonicalized_all_fs_roots_) {
+  for (const string& root : canonicalized_all_fs_roots_) {
     bool created;
     RETURN_NOT_OK_PREPEND(CreateDirIfMissing(root, &created),
                           "Unable to create FSManager root");
@@ -290,11 +288,10 @@ Status FsManager::CreateInitialFileSystemLayout() {
   }
 
   // Initialize ancillary directories.
-  vector<string> ancillary_dirs = list_of
-      (GetWalsRootDir())
-      (GetTabletMetadataDir())
-      (GetConsensusMetadataDir());
-  BOOST_FOREACH(const string& dir, ancillary_dirs) {
+  vector<string> ancillary_dirs = { GetWalsRootDir(),
+                                    GetTabletMetadataDir(),
+                                    GetConsensusMetadataDir() };
+  for (const string& dir : ancillary_dirs) {
     bool created;
     RETURN_NOT_OK_PREPEND(CreateDirIfMissing(dir, &created),
                           Substitute("Unable to create directory $0", dir));
@@ -306,7 +303,7 @@ Status FsManager::CreateInitialFileSystemLayout() {
 
   // Ensure newly created directories are synchronized to disk.
   if (FLAGS_enable_data_block_fsync) {
-    BOOST_FOREACH(const string& dir, to_sync) {
+    for (const string& dir : to_sync) {
       RETURN_NOT_OK_PREPEND(env_->SyncDir(dir),
                             Substitute("Unable to synchronize directory $0", dir));
     }
@@ -316,7 +313,7 @@ Status FsManager::CreateInitialFileSystemLayout() {
   RETURN_NOT_OK_PREPEND(block_manager_->Create(), "Unable to create block manager");
 
   // Success: don't delete any files.
-  BOOST_FOREACH(ScopedFileDeleter* deleter, delete_on_failure) {
+  for (ScopedFileDeleter* deleter : delete_on_failure) {
     deleter->Cancel();
   }
   return Status::OK();
@@ -327,7 +324,7 @@ void FsManager::CreateInstanceMetadata(InstanceMetadataPB* metadata) {
   metadata->set_uuid(oid_generator.Next());
 
   string time_str;
-  StringAppendStrftime(&time_str, "%Y-%m-%d %H:%M:%S", time(NULL), false);
+  StringAppendStrftime(&time_str, "%Y-%m-%d %H:%M:%S", time(nullptr), false);
   string hostname;
   if (!GetHostname(&hostname).ok()) {
     hostname = "<unknown host>";
@@ -353,7 +350,7 @@ Status FsManager::WriteInstanceMetadata(const InstanceMetadataPB& metadata,
 Status FsManager::IsDirectoryEmpty(const string& path, bool* is_empty) {
   vector<string> children;
   RETURN_NOT_OK(env_->GetChildren(path, &children));
-  BOOST_FOREACH(const string& child, children) {
+  for (const string& child : children) {
     if (child == "." || child == "..") {
       continue;
     } else {
@@ -376,7 +373,7 @@ const string& FsManager::uuid() const {
 vector<string> FsManager::GetDataRootDirs() const {
   // Add the data subdirectory to each data root.
   std::vector<std::string> data_paths;
-  BOOST_FOREACH(const string& data_fs_root, canonicalized_data_fs_roots_) {
+  for (const string& data_fs_root : canonicalized_data_fs_roots_) {
     data_paths.push_back(JoinPathSegments(data_fs_root, kDataDirName));
   }
   return data_paths;
@@ -416,7 +413,7 @@ Status FsManager::ListTabletIds(vector<string>* tablet_ids) {
                         Substitute("Couldn't list tablets in metadata directory $0", dir));
 
   vector<string> tablets;
-  BOOST_FOREACH(const string& child, children) {
+  for (const string& child : children) {
     if (!IsValidTabletId(child)) {
       continue;
     }
@@ -451,7 +448,7 @@ string FsManager::GetWalSegmentFileName(const string& tablet_id,
 void FsManager::DumpFileSystemTree(ostream& out) {
   DCHECK(initted_);
 
-  BOOST_FOREACH(const string& root, canonicalized_all_fs_roots_) {
+  for (const string& root : canonicalized_all_fs_roots_) {
     out << "File-System Root: " << root << std::endl;
 
     std::vector<string> objects;
@@ -467,7 +464,7 @@ void FsManager::DumpFileSystemTree(ostream& out) {
 
 void FsManager::DumpFileSystemTree(ostream& out, const string& prefix,
                                    const string& path, const vector<string>& objects) {
-  BOOST_FOREACH(const string& name, objects) {
+  for (const string& name : objects) {
     if (name == "." || name == "..") continue;
 
     std::vector<string> sub_objects;

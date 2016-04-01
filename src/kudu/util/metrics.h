@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_METRICS_H
 #define KUDU_UTIL_METRICS_H
 
@@ -222,7 +225,7 @@
 
 #include <algorithm>
 #include <string>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest_prod.h>
@@ -374,6 +377,7 @@ struct MetricUnit {
     kLogBlockContainers,
     kTasks,
     kMessages,
+    kContextSwitches,
   };
   static const char* Name(Type unit);
 };
@@ -417,7 +421,7 @@ class MetricEntityPrototype {
   scoped_refptr<MetricEntity> Instantiate(
       MetricRegistry* registry,
       const std::string& id) const {
-    return Instantiate(registry, id, std::tr1::unordered_map<std::string, std::string>());
+    return Instantiate(registry, id, std::unordered_map<std::string, std::string>());
   }
 
   // If the entity already exists, then 'initial_attrs' will replace all existing
@@ -425,7 +429,7 @@ class MetricEntityPrototype {
   scoped_refptr<MetricEntity> Instantiate(
       MetricRegistry* registry,
       const std::string& id,
-      const std::tr1::unordered_map<std::string, std::string>& initial_attrs) const;
+      const std::unordered_map<std::string, std::string>& initial_attrs) const;
 
  private:
   const char* const name_;
@@ -435,8 +439,8 @@ class MetricEntityPrototype {
 
 class MetricEntity : public RefCountedThreadSafe<MetricEntity> {
  public:
-  typedef std::tr1::unordered_map<const MetricPrototype*, scoped_refptr<Metric> > MetricMap;
-  typedef std::tr1::unordered_map<std::string, std::string> AttributeMap;
+  typedef std::unordered_map<const MetricPrototype*, scoped_refptr<Metric> > MetricMap;
+  typedef std::unordered_map<std::string, std::string> AttributeMap;
 
   scoped_refptr<Counter> FindOrCreateCounter(const CounterPrototype* proto);
   scoped_refptr<Histogram> FindOrCreateHistogram(const HistogramPrototype* proto);
@@ -490,9 +494,8 @@ class MetricEntity : public RefCountedThreadSafe<MetricEntity> {
   friend class MetricRegistry;
   friend class RefCountedThreadSafe<MetricEntity>;
 
-  MetricEntity(const MetricEntityPrototype* prototype,
-               const std::string& id,
-               const AttributeMap& attributes);
+  MetricEntity(const MetricEntityPrototype* prototype, std::string id,
+               AttributeMap attributes);
   ~MetricEntity();
 
   // Ensure that the given metric prototype is allowed to be instantiated
@@ -582,7 +585,7 @@ class MetricRegistry {
   }
 
  private:
-  typedef std::tr1::unordered_map<std::string, scoped_refptr<MetricEntity> > EntityMap;
+  typedef std::unordered_map<std::string, scoped_refptr<MetricEntity> > EntityMap;
   EntityMap entities_;
 
   mutable simple_spinlock lock_;
@@ -675,7 +678,7 @@ class MetricPrototype {
                    const MetricJsonOptions& opts) const;
 
  protected:
-  explicit MetricPrototype(const CtorArgs& args);
+  explicit MetricPrototype(CtorArgs args);
   virtual ~MetricPrototype() {
   }
 
@@ -737,7 +740,8 @@ class Gauge : public Metric {
 // Gauge implementation for string that uses locks to ensure thread safety.
 class StringGauge : public Gauge {
  public:
-  StringGauge(const GaugePrototype<std::string>* proto, const std::string& initial_value);
+  StringGauge(const GaugePrototype<std::string>* proto,
+              std::string initial_value);
   std::string value() const;
   void set_value(const std::string& value);
  protected:
@@ -893,11 +897,8 @@ class FunctionGauge : public Gauge {
  private:
   friend class MetricEntity;
 
-  FunctionGauge(const GaugePrototype<T>* proto,
-                const Callback<T()>& function)
-    : Gauge(proto),
-      function_(function) {
-  }
+  FunctionGauge(const GaugePrototype<T>* proto, Callback<T()> function)
+      : Gauge(proto), function_(std::move(function)) {}
 
   static T Return(T v) {
     return v;

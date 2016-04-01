@@ -1,21 +1,22 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tests for the kudu-admin command-line tool.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 
 #include "kudu/client/client.h"
@@ -29,8 +30,14 @@
 namespace kudu {
 namespace tools {
 
+<<<<<<< HEAD
 using kudu::client::KuduClient;
 using kudu::client::KuduClientBuilder;
+=======
+using client::KuduClient;
+using client::KuduClientBuilder;
+using client::sp::shared_ptr;
+>>>>>>> refs/remotes/apache/master
 using itest::TabletServerMap;
 using itest::TServerDetails;
 using strings::Substitute;
@@ -80,14 +87,14 @@ TEST_F(AdminCliTest, TestChangeConfig) {
   InsertOrDie(&active_tablet_servers, leader->uuid(), leader);
   InsertOrDie(&active_tablet_servers, follower->uuid(), follower);
 
-  TServerDetails* new_node = NULL;
-  BOOST_FOREACH(TServerDetails* ts, tservers) {
+  TServerDetails* new_node = nullptr;
+  for (TServerDetails* ts : tservers) {
     if (!ContainsKey(active_tablet_servers, ts->uuid())) {
       new_node = ts;
       break;
     }
   }
-  ASSERT_TRUE(new_node != NULL);
+  ASSERT_TRUE(new_node != nullptr);
 
   // Elect the leader (still only a consensus config size of 2).
   ASSERT_OK(StartElection(leader, tablet_id_, MonoDelta::FromSeconds(10)));

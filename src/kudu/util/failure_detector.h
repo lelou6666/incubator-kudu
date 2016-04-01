@@ -1,22 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_UTIL_FAILURE_DETECTOR_H_
 #define KUDU_UTIL_FAILURE_DETECTOR_H_
 
-#include <tr1/unordered_map>
 #include <string>
+#include <unordered_map>
 
 #include "kudu/gutil/callback.h"
 #include "kudu/gutil/gscoped_ptr.h"
@@ -42,7 +45,7 @@ class FailureDetector : public RefCountedThreadSafe<FailureDetector> {
     DEAD,
     ALIVE
   };
-  typedef std::tr1::unordered_map<std::string, NodeStatus> StatusMap;
+  typedef std::unordered_map<std::string, NodeStatus> StatusMap;
 
   typedef Callback<void(const std::string& name,
                         const Status& status)> FailureDetectedCallback;
@@ -103,7 +106,7 @@ class TimedFailureDetector : public FailureDetector {
   virtual void CheckForFailures(const MonoTime& now) OVERRIDE;
 
  private:
-  typedef std::tr1::unordered_map<std::string, Node*> NodeMap;
+  typedef std::unordered_map<std::string, Node*> NodeMap;
 
   // Check if the named failure detector has failed.
   // Does not invoke the callback.
@@ -150,7 +153,7 @@ class RandomizedFailureMonitor {
   Status UnmonitorFailureDetector(const std::string& name);
 
  private:
-  typedef std::tr1::unordered_map<std::string, scoped_refptr<FailureDetector> > FDMap;
+  typedef std::unordered_map<std::string, scoped_refptr<FailureDetector> > FDMap;
 
   // Runs the monitor thread.
   void RunThread();

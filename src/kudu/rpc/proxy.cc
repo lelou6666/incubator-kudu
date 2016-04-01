@@ -1,24 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/proxy.h"
 
 #include <boost/bind.hpp>
 #include <glog/logging.h>
 #include <inttypes.h>
+#include <memory>
 #include <stdint.h>
-#include <tr1/memory>
 
 #include <iostream>
 #include <sstream>
@@ -37,18 +40,17 @@
 
 using google::protobuf::Message;
 using std::string;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace rpc {
 
-Proxy::Proxy(const std::tr1::shared_ptr<Messenger>& messenger,
-             const Sockaddr& remote,
-             const string& service_name)
-  : service_name_(service_name),
-    messenger_(messenger),
-    is_started_(false) {
-  CHECK(messenger != NULL);
+Proxy::Proxy(const std::shared_ptr<Messenger>& messenger,
+             const Sockaddr& remote, string service_name)
+    : service_name_(std::move(service_name)),
+      messenger_(messenger),
+      is_started_(false) {
+  CHECK(messenger != nullptr);
   DCHECK(!service_name_.empty()) << "Proxy service name must not be blank";
 
   // By default, we set the real user to the currently logged-in user.
@@ -72,7 +74,7 @@ void Proxy::AsyncRequest(const string& method,
                          google::protobuf::Message* response,
                          RpcController* controller,
                          const ResponseCallback& callback) const {
-  CHECK(controller->call_.get() == NULL) << "Controller should be reset";
+  CHECK(controller->call_.get() == nullptr) << "Controller should be reset";
   base::subtle::NoBarrier_Store(&is_started_, true);
   RemoteMethod remote_method(service_name_, method);
   OutboundCall* call = new OutboundCall(conn_id_, remote_method, response, controller, callback);

@@ -1,47 +1,35 @@
-*.pb.cc
-*.pb.h
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-Makefile
-CMakeFiles
-CMakeCache.txt
-cmake_install.cmake
-CTestTestfile.cmake
-TAGS
-tags
-cscope.*
-Testing
+# Most common in-tree build directory.
+#
+# Note: build output files are not explicitly listed here because they are
+# expected to fall within in the build directory (and indeed, if they're
+# outside for some reason, we want to know as it's likely an error).
+build/
+
 perf.data
 perf.data.old
 oprofile_data
-*.service.cc
-*.service.h
-*.proxy.cc
-*.proxy.h
-build/
-.ycm_extra_conf.py
 .ycm_extra_conf.pyc
 *.kdev4
 .kdev4/
 .metadata/
 *.iml
-
-# CMake-generated Clang compilation database file
-compile_commands.json
-
-# CMake-generated library export headers
-*_export.h
-
-# CMake-generated "make install" file
-install_manifest.txt
-
-# CMake-generated library export make file
-clientConfig.cmake
-
-# CMake-generated ninja build stuff
-.ninja_deps
-.ninja_log
-build.ninja
-rules.ninja
 
 # VIM/emacs stuff
 *.swp
@@ -62,6 +50,3 @@ www/tracing.*
 python/kudu/*.so
 python/kudu/*.cpp
 *.py[ocd]
-
-# JavaDoc
-apidocs/

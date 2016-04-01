@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010-2012  The Async HBase Authors.  All rights reserved.
- * Portions copyright 2014 Cloudera, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -322,7 +321,7 @@ public final class AsyncKuduScanner {
    * @return a long representing the maximum number of rows that can be returned
    */
   public long getLimit() {
-    return limit;
+    return this.limit;
   }
 
   /**
@@ -347,7 +346,7 @@ public final class AsyncKuduScanner {
    * from a tablet server
    */
   public long getBatchSizeBytes() {
-    return batchSizeBytes;
+    return this.batchSizeBytes;
   }
 
   /**
@@ -356,6 +355,15 @@ public final class AsyncKuduScanner {
    */
   public ReadMode getReadMode() {
     return this.readMode;
+  }
+
+  /**
+   * Returns the projection schema of this scanner. If specific columns were
+   * not specified during scanner creation, the table schema is returned.
+   * @return the projection schema for this scanner
+   */
+  public Schema getProjectionSchema() {
+    return this.schema;
   }
 
   long getSnapshotTimestamp() {
@@ -477,6 +485,7 @@ public final class AsyncKuduScanner {
     }
     nextPartitionKey = partition.getPartitionKeyEnd();
     scannerId = null;
+    sequenceId = 0;
     invalidate();
   }
 
@@ -693,7 +702,7 @@ public final class AsyncKuduScanner {
           }
 
           if (!columnRangePredicates.isEmpty()) {
-            newBuilder.addAllRangePredicates(columnRangePredicates);
+            newBuilder.addAllDEPRECATEDRangePredicates(columnRangePredicates);
           }
           builder.setNewScanRequest(newBuilder.build())
                  .setBatchSizeBytes(batchSizeBytes);

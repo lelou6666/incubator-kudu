@@ -1,23 +1,25 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gtest/gtest.h>
 #include <glog/logging.h>
 #include <stdlib.h>
 #include <list>
 
-#include <boost/assign/list_of.hpp>
 #include "kudu/cfile/cfile-test-base.h"
 #include "kudu/cfile/cfile_reader.h"
 #include "kudu/cfile/cfile_writer.h"
@@ -44,7 +46,7 @@ METRIC_DECLARE_counter(block_cache_hits_caching);
 
 METRIC_DECLARE_entity(server);
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace cfile {
@@ -65,7 +67,7 @@ class TestCFile : public CFileTestBase {
     gscoped_ptr<ReadableBlock> block;
     ASSERT_OK(fs_manager_->OpenBlock(block_id, &block));
     gscoped_ptr<CFileReader> reader;
-    ASSERT_OK(CFileReader::Open(block.Pass(), ReaderOptions(), &reader));
+    ASSERT_OK(CFileReader::Open(std::move(block), ReaderOptions(), &reader));
 
     BlockPointer ptr;
 
@@ -106,13 +108,13 @@ class TestCFile : public CFileTestBase {
     // Fetch all data using small batches of only a few rows.
     // This should catch edge conditions like a batch lining up exactly
     // with the end of a block.
-    unsigned int seed = time(NULL);
+    unsigned int seed = time(nullptr);
     LOG(INFO) << "Using random seed: " << seed;
     srand(seed);
     ASSERT_OK(iter->SeekToOrdinal(0));
     size_t fetched = 0;
     while (fetched < 10000) {
-      ColumnBlock advancing_block(out.type_info(), NULL,
+      ColumnBlock advancing_block(out.type_info(), nullptr,
                                   out.data() + (fetched * out.stride()),
                                   out.nrows() - fetched, out.arena());
       ASSERT_TRUE(iter->HasNext());
@@ -146,7 +148,7 @@ class TestCFile : public CFileTestBase {
     gscoped_ptr<ReadableBlock> block;
     ASSERT_OK(fs_manager_->OpenBlock(block_id, &block));
     gscoped_ptr<CFileReader> reader;
-    ASSERT_OK(CFileReader::Open(block.Pass(), ReaderOptions(), &reader));
+    ASSERT_OK(CFileReader::Open(std::move(block), ReaderOptions(), &reader));
     ASSERT_EQ(DataGeneratorType::kDataType, reader->type_info()->type());
 
     gscoped_ptr<CFileIterator> iter;
@@ -213,7 +215,7 @@ class TestCFile : public CFileTestBase {
     opts.write_validx = false;
     opts.storage_attributes.cfile_block_size = FLAGS_cfile_test_block_size;
     opts.storage_attributes.encoding = PLAIN_ENCODING;
-    CFileWriter w(opts, GetTypeInfo(STRING), false, sink.Pass());
+    CFileWriter w(opts, GetTypeInfo(STRING), false, std::move(sink));
     ASSERT_OK(w.Start());
     for (uint32_t i = 0; i < num_entries; i++) {
       vector<Slice> slices;
@@ -221,7 +223,7 @@ class TestCFile : public CFileTestBase {
       slices.push_back(Slice("Body"));
       slices.push_back(Slice("Tail"));
       slices.push_back(Slice(reinterpret_cast<uint8_t *>(&i), 4));
-      ASSERT_OK(w.AppendRawBlock(slices, i, NULL, "raw-data"));
+      ASSERT_OK(w.AppendRawBlock(slices, i, nullptr, "raw-data"));
     }
     ASSERT_OK(w.Finish());
 
@@ -229,7 +231,7 @@ class TestCFile : public CFileTestBase {
     gscoped_ptr<ReadableBlock> source;
     ASSERT_OK(fs_manager_->OpenBlock(id, &source));
     gscoped_ptr<CFileReader> reader;
-    ASSERT_OK(CFileReader::Open(source.Pass(), ReaderOptions(), &reader));
+    ASSERT_OK(CFileReader::Open(std::move(source), ReaderOptions(), &reader));
 
     gscoped_ptr<IndexTreeIterator> iter;
     iter.reset(IndexTreeIterator::Create(reader.get(), reader->posidx_root()));
@@ -324,7 +326,7 @@ template<DataType type>
 void CopyOne(CFileIterator *it,
              typename TypeTraits<type>::cpp_type *ret,
              Arena *arena) {
-  ColumnBlock cb(GetTypeInfo(type), NULL, ret, 1, arena);
+  ColumnBlock cb(GetTypeInfo(type), nullptr, ret, 1, arena);
   size_t n = 1;
   ASSERT_OK(it->CopyNextValues(&n, &cb));
   ASSERT_EQ(1, n);
@@ -469,9 +471,7 @@ void EncodeStringKey(const Schema &schema, const Slice& key,
 }
 
 void TestCFile::TestReadWriteStrings(EncodingType encoding) {
-  Schema schema(boost::assign::list_of
-                (ColumnSchema("key", STRING)),
-                1);
+  Schema schema({ ColumnSchema("key", STRING) }, 1);
 
   const int nrows = 10000;
   BlockId block_id;
@@ -482,7 +482,7 @@ void TestCFile::TestReadWriteStrings(EncodingType encoding) {
   gscoped_ptr<ReadableBlock> block;
   ASSERT_OK(fs_manager_->OpenBlock(block_id, &block));
   gscoped_ptr<CFileReader> reader;
-  ASSERT_OK(CFileReader::Open(block.Pass(), ReaderOptions(), &reader));
+  ASSERT_OK(CFileReader::Open(std::move(block), ReaderOptions(), &reader));
 
   rowid_t reader_nrows;
   ASSERT_OK(reader->CountRows(&reader_nrows));
@@ -595,7 +595,7 @@ TEST_P(TestCFileBothCacheTypes, TestMetadata) {
     ASSERT_OK(fs_manager_->CreateNewBlock(&sink));
     block_id = sink->id();
     WriterOptions opts;
-    CFileWriter w(opts, GetTypeInfo(INT32), false, sink.Pass());
+    CFileWriter w(opts, GetTypeInfo(INT32), false, std::move(sink));
 
     w.AddMetadataPair("key_in_header", "header value");
     ASSERT_OK(w.Start());
@@ -612,7 +612,7 @@ TEST_P(TestCFileBothCacheTypes, TestMetadata) {
     gscoped_ptr<ReadableBlock> source;
     ASSERT_OK(fs_manager_->OpenBlock(block_id, &source));
     gscoped_ptr<CFileReader> reader;
-    ASSERT_OK(CFileReader::Open(source.Pass(), ReaderOptions(), &reader));
+    ASSERT_OK(CFileReader::Open(std::move(source), ReaderOptions(), &reader));
     string val;
     ASSERT_TRUE(reader->GetMetadataEntry("key_in_header", &val));
     ASSERT_EQ(val, "header value");
@@ -635,7 +635,7 @@ TEST_P(TestCFileBothCacheTypes, TestDefaultColumnIter) {
   // Test Int Default Value
   uint32_t int_value = 15;
   DefaultColumnValueIterator iter(GetTypeInfo(UINT32), &int_value);
-  ColumnBlock int_col(GetTypeInfo(UINT32), NULL, data, kNumItems, NULL);
+  ColumnBlock int_col(GetTypeInfo(UINT32), nullptr, data, kNumItems, nullptr);
   ASSERT_OK(iter.Scan(&int_col));
   for (size_t i = 0; i < int_col.nrows(); ++i) {
     ASSERT_EQ(int_value, *reinterpret_cast<const uint32_t *>(int_col.cell_ptr(i)));
@@ -644,7 +644,7 @@ TEST_P(TestCFileBothCacheTypes, TestDefaultColumnIter) {
   // Test Int Nullable Default Value
   int_value = 321;
   DefaultColumnValueIterator nullable_iter(GetTypeInfo(UINT32), &int_value);
-  ColumnBlock nullable_col(GetTypeInfo(UINT32), null_bitmap, data, kNumItems, NULL);
+  ColumnBlock nullable_col(GetTypeInfo(UINT32), null_bitmap, data, kNumItems, nullptr);
   ASSERT_OK(nullable_iter.Scan(&nullable_col));
   for (size_t i = 0; i < nullable_col.nrows(); ++i) {
     ASSERT_FALSE(nullable_col.is_null(i));
@@ -652,8 +652,8 @@ TEST_P(TestCFileBothCacheTypes, TestDefaultColumnIter) {
   }
 
   // Test NULL Default Value
-  DefaultColumnValueIterator null_iter(GetTypeInfo(UINT32),  NULL);
-  ColumnBlock null_col(GetTypeInfo(UINT32), null_bitmap, data, kNumItems, NULL);
+  DefaultColumnValueIterator null_iter(GetTypeInfo(UINT32),  nullptr);
+  ColumnBlock null_col(GetTypeInfo(UINT32), null_bitmap, data, kNumItems, nullptr);
   ASSERT_OK(null_iter.Scan(&null_col));
   for (size_t i = 0; i < null_col.nrows(); ++i) {
     ASSERT_TRUE(null_col.is_null(i));
@@ -664,7 +664,7 @@ TEST_P(TestCFileBothCacheTypes, TestDefaultColumnIter) {
   Slice str_value("Hello");
   Arena arena(32*1024, 256*1024);
   DefaultColumnValueIterator str_iter(GetTypeInfo(STRING), &str_value);
-  ColumnBlock str_col(GetTypeInfo(STRING), NULL, str_data, kNumItems, &arena);
+  ColumnBlock str_col(GetTypeInfo(STRING), nullptr, str_data, kNumItems, &arena);
   ASSERT_OK(str_iter.Scan(&str_col));
   for (size_t i = 0; i < str_col.nrows(); ++i) {
     ASSERT_EQ(str_value, *reinterpret_cast<const Slice *>(str_col.cell_ptr(i)));
@@ -713,7 +713,7 @@ TEST_P(TestCFileBothCacheTypes, TestReleaseBlock) {
   ASSERT_OK(fs_manager_->CreateNewBlock(&sink));
   ASSERT_EQ(WritableBlock::CLEAN, sink->state());
   WriterOptions opts;
-  CFileWriter w(opts, GetTypeInfo(STRING), false, sink.Pass());
+  CFileWriter w(opts, GetTypeInfo(STRING), false, std::move(sink));
   ASSERT_OK(w.Start());
   fs::ScopedWritableBlockCloser closer;
   ASSERT_OK(w.FinishAndReleaseBlock(&closer));
@@ -751,14 +751,14 @@ TEST_P(TestCFileBothCacheTypes, TestLazyInit) {
   ASSERT_OK(fs_manager_->OpenBlock(block_id, &block));
   size_t bytes_read = 0;
   gscoped_ptr<ReadableBlock> count_block(
-      new CountingReadableBlock(block.Pass(), &bytes_read));
+      new CountingReadableBlock(std::move(block), &bytes_read));
   ASSERT_EQ(initial_mem_usage, tracker->consumption());
 
   // Lazily opening the cfile should not trigger any reads.
   ReaderOptions opts;
   opts.parent_mem_tracker = tracker;
   gscoped_ptr<CFileReader> reader;
-  ASSERT_OK(CFileReader::OpenNoInit(count_block.Pass(), opts, &reader));
+  ASSERT_OK(CFileReader::OpenNoInit(std::move(count_block), opts, &reader));
   ASSERT_EQ(0, bytes_read);
   int64_t lazy_mem_usage = tracker->consumption();
   ASSERT_GT(lazy_mem_usage, initial_mem_usage);
@@ -776,8 +776,8 @@ TEST_P(TestCFileBothCacheTypes, TestLazyInit) {
   // same number of bytes read.
   ASSERT_OK(fs_manager_->OpenBlock(block_id, &block));
   bytes_read = 0;
-  count_block.reset(new CountingReadableBlock(block.Pass(), &bytes_read));
-  ASSERT_OK(CFileReader::Open(count_block.Pass(), ReaderOptions(), &reader));
+  count_block.reset(new CountingReadableBlock(std::move(block), &bytes_read));
+  ASSERT_OK(CFileReader::Open(std::move(count_block), ReaderOptions(), &reader));
   ASSERT_EQ(bytes_read_after_init, bytes_read);
 }
 
@@ -805,7 +805,7 @@ TEST_P(TestCFileBothCacheTypes, TestCacheKeysAreStable) {
     gscoped_ptr<ReadableBlock> source;
     ASSERT_OK(fs_manager_->OpenBlock(block_id, &source));
     gscoped_ptr<CFileReader> reader;
-    ASSERT_OK(CFileReader::Open(source.Pass(), ReaderOptions(), &reader));
+    ASSERT_OK(CFileReader::Open(std::move(source), ReaderOptions(), &reader));
 
     gscoped_ptr<IndexTreeIterator> iter;
     iter.reset(IndexTreeIterator::Create(reader.get(), reader->posidx_root()));

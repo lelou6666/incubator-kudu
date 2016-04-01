@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/master/mini_master.h"
 
-#include <boost/assign/list_of.hpp>
 #include <string>
 
 #include <glog/logging.h>
@@ -34,12 +36,11 @@ DECLARE_bool(rpc_server_allow_ephemeral_ports);
 namespace kudu {
 namespace master {
 
-MiniMaster::MiniMaster(Env* env, const string& fs_root, uint16_t rpc_port)
-  : running_(false),
-    env_(env),
-    fs_root_(fs_root),
-    rpc_port_(rpc_port) {
-}
+MiniMaster::MiniMaster(Env* env, string fs_root, uint16_t rpc_port)
+    : running_(false),
+      env_(env),
+      fs_root_(std::move(fs_root)),
+      rpc_port_(rpc_port) {}
 
 MiniMaster::~MiniMaster() {
   CHECK(!running_);
@@ -79,7 +80,7 @@ Status MiniMaster::StartOnPorts(uint16_t rpc_port, uint16_t web_port,
   opts->rpc_opts.rpc_bind_addresses = Substitute("127.0.0.1:$0", rpc_port);
   opts->webserver_opts.port = web_port;
   opts->fs_opts.wal_path = fs_root_;
-  opts->fs_opts.data_paths = boost::assign::list_of(fs_root_);
+  opts->fs_opts.data_paths = { fs_root_ };
 
   gscoped_ptr<Master> server(new Master(*opts));
   RETURN_NOT_OK(server->Init());
@@ -99,7 +100,7 @@ Status MiniMaster::StartDistributedMasterOnPorts(uint16_t rpc_port, uint16_t web
   MasterOptions opts;
 
   vector<HostPort> peer_addresses;
-  BOOST_FOREACH(uint16_t peer_port, peer_ports) {
+  for (uint16_t peer_port : peer_ports) {
     HostPort peer_address("127.0.0.1", peer_port);
     peer_addresses.push_back(peer_address);
   }

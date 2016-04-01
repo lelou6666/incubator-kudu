@@ -1,19 +1,20 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 #include <sys/types.h>
@@ -38,7 +39,7 @@ class EMCTest : public KuduTest {
     // Hard-coded RPC ports for the masters. This is safe, as this unit test
     // runs under a resource lock (see CMakeLists.txt in this directory).
     // TODO we should have a generic method to obtain n free ports.
-    master_peer_ports_ = boost::assign::list_of(11010)(11011)(11012);
+    master_peer_ports_ = { 11010, 11011, 11012 };
   }
 
  protected:

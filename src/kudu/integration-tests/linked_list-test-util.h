@@ -1,25 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <iostream>
 #include <list>
 #include <string>
-#include <tr1/memory>
 #include <utility>
 #include <vector>
 
@@ -59,23 +59,18 @@ typedef vector<pair<uint64_t, int64_t> > SnapsAndCounts;
 // facilitates checking for data integrity.
 class LinkedListTester {
  public:
-  LinkedListTester(const std::tr1::shared_ptr<client::KuduClient>& client,
-                   const std::string& table_name,
-                   int num_chains,
-                   int num_tablets,
-                   int num_replicas,
-                   bool enable_mutation)
-    : verify_projection_(boost::assign::list_of
-                         (kKeyColumnName)(kLinkColumnName)(kUpdatedColumnName)
-                         .convert_to_container<vector<string> >()),
-      table_name_(table_name),
-      num_chains_(num_chains),
-      num_tablets_(num_tablets),
-      num_replicas_(num_replicas),
-      enable_mutation_(enable_mutation),
-      latency_histogram_(1000000, 3),
-      client_(client) {
-
+  LinkedListTester(client::sp::shared_ptr<client::KuduClient> client,
+                   std::string table_name, int num_chains, int num_tablets,
+                   int num_replicas, bool enable_mutation)
+      : verify_projection_(
+            {kKeyColumnName, kLinkColumnName, kUpdatedColumnName}),
+        table_name_(std::move(table_name)),
+        num_chains_(num_chains),
+        num_tablets_(num_tablets),
+        num_replicas_(num_replicas),
+        enable_mutation_(enable_mutation),
+        latency_histogram_(1000000, 3),
+        client_(std::move(client)) {
     client::KuduSchemaBuilder b;
 
     b.AddColumn(kKeyColumnName)->Type(client::KuduColumnSchema::INT64)->NotNull()->PrimaryKey();
@@ -167,7 +162,7 @@ class LinkedListTester {
   const int num_replicas_;
   const bool enable_mutation_;
   HdrHistogram latency_histogram_;
-  std::tr1::shared_ptr<client::KuduClient> client_;
+  client::sp::shared_ptr<client::KuduClient> client_;
   SnapsAndCounts sampled_timestamps_and_counts_;
 
  private:
@@ -182,11 +177,12 @@ class LinkedListChainGenerator {
   // 'chain_idx' is a unique ID for this chain. Chains with different indexes
   // will always generate distinct sets of keys (thus avoiding the possibility of
   // a collision even in a longer run).
-  explicit LinkedListChainGenerator(uint8_t chain_idx)
+  explicit LinkedListChainGenerator(int chain_idx)
     : chain_idx_(chain_idx),
       rand_(chain_idx * 0xDEADBEEF),
       prev_key_(0) {
-    CHECK_LT(chain_idx, 256);
+    CHECK_GE(chain_idx, 0);
+    CHECK_LT(chain_idx, 65536);
   }
 
   ~LinkedListChainGenerator() {
@@ -198,9 +194,9 @@ class LinkedListChainGenerator {
   }
 
   Status GenerateNextInsert(client::KuduTable* table, client::KuduSession* session) {
-    // Encode the chain index in the lowest 8 bits so that different chains never
+    // Encode the chain index in the lowest 16 bits so that different chains never
     // intersect.
-    int64_t this_key = (Rand64() << 8) | chain_idx_;
+    int64_t this_key = (Rand64() << 16) | chain_idx_;
     int64_t ts = GetCurrentTimeMicros();
 
     gscoped_ptr<client::KuduInsert> insert(table->NewInsert());
@@ -219,7 +215,7 @@ class LinkedListChainGenerator {
   }
 
  private:
-  const uint8_t chain_idx_;
+  const int chain_idx_;
 
   // This is a linear congruential random number generator, so it won't repeat until
   // it has exhausted its period (which is quite large)
@@ -255,7 +251,7 @@ class ScopedRowUpdater {
 
  private:
   void RowUpdaterThread() {
-    std::tr1::shared_ptr<client::KuduSession> session(table_->client()->NewSession());
+    client::sp::shared_ptr<client::KuduSession> session(table_->client()->NewSession());
     session->SetTimeoutMillis(15000);
     CHECK_OK(session->SetFlushMode(client::KuduSession::MANUAL_FLUSH));
 
@@ -283,12 +279,9 @@ class ScopedRowUpdater {
 // linked list test.
 class PeriodicWebUIChecker {
  public:
-
   PeriodicWebUIChecker(const ExternalMiniCluster& cluster,
-                       const std::string& tablet_id,
-                       const MonoDelta& period)
-    : period_(period),
-      is_running_(true) {
+                       const std::string& tablet_id, MonoDelta period)
+      : period_(std::move(period)), is_running_(true) {
     // List of master and ts web pages to fetch
     vector<std::string> master_pages, ts_pages;
 
@@ -304,7 +297,7 @@ class PeriodicWebUIChecker {
 
     // Generate list of urls for each master and tablet server
     for (int i = 0; i < cluster.num_masters(); i++) {
-      BOOST_FOREACH(std::string page, master_pages) {
+      for (std::string page : master_pages) {
         urls_.push_back(strings::Substitute(
             "http://$0$1",
             cluster.master(i)->bound_http_hostport().ToString(),
@@ -312,7 +305,7 @@ class PeriodicWebUIChecker {
       }
     }
     for (int i = 0; i < cluster.num_tablet_servers(); i++) {
-      BOOST_FOREACH(std::string page, ts_pages) {
+      for (std::string page : ts_pages) {
         urls_.push_back(strings::Substitute(
             "http://$0$1",
             cluster.tablet_server(i)->bound_http_hostport().ToString(),
@@ -337,7 +330,7 @@ class PeriodicWebUIChecker {
     faststring dst;
     LOG(INFO) << "Curl thread will poll the following URLs every " << period_.ToMilliseconds()
         << " ms: ";
-    BOOST_FOREACH(std::string url, urls_) {
+    for (std::string url : urls_) {
       LOG(INFO) << url;
     }
     for (int count = 0; is_running_.Load(); count++) {
@@ -369,7 +362,7 @@ class PeriodicWebUIChecker {
 class LinkedListVerifier {
  public:
   LinkedListVerifier(int num_chains, bool enable_mutation, int64_t expected,
-                     const std::vector<int64_t>& split_key_ints);
+                     std::vector<int64_t> split_key_ints);
 
   // Start the scan timer. The duration between starting the scan and verifying
   // the data is logged in the VerifyData() step, so this should be called
@@ -403,7 +396,7 @@ class LinkedListVerifier {
 std::vector<const KuduPartialRow*> LinkedListTester::GenerateSplitRows(
     const client::KuduSchema& schema) {
   std::vector<const KuduPartialRow*> split_keys;
-  BOOST_FOREACH(int64_t val, GenerateSplitInts()) {
+  for (int64_t val : GenerateSplitInts()) {
     KuduPartialRow* row = schema.NewRow();
     CHECK_OK(row->SetInt64(kKeyColumnName, val));
     split_keys.push_back(row);
@@ -438,7 +431,7 @@ Status LinkedListTester::LoadLinkedList(
     int64_t *written_count) {
 
   sampled_timestamps_and_counts_.clear();
-  std::tr1::shared_ptr<client::KuduTable> table;
+  client::sp::shared_ptr<client::KuduTable> table;
   RETURN_NOT_OK_PREPEND(client_->OpenTable(table_name_, &table),
                         "Could not open table " + table_name_);
 
@@ -454,7 +447,7 @@ Status LinkedListTester::LoadLinkedList(
   MonoTime deadline = start;
   deadline.AddDelta(run_for);
 
-  std::tr1::shared_ptr<client::KuduSession> session = client_->NewSession();
+  client::sp::shared_ptr<client::KuduSession> session = client_->NewSession();
   session->SetTimeoutMillis(15000);
   RETURN_NOT_OK_PREPEND(session->SetFlushMode(client::KuduSession::MANUAL_FLUSH),
                         "Couldn't set flush mode");
@@ -497,7 +490,7 @@ Status LinkedListTester::LoadLinkedList(
       }
       return Status::OK();
     }
-    BOOST_FOREACH(LinkedListChainGenerator* chain, chains) {
+    for (LinkedListChainGenerator* chain : chains) {
       RETURN_NOT_OK_PREPEND(chain->GenerateNextInsert(table.get(), session.get()),
                             "Unable to generate next insert into linked list chain");
     }
@@ -511,7 +504,7 @@ Status LinkedListTester::LoadLinkedList(
 
     if (enable_mutation_) {
       // Rows have been inserted; they're now safe to update.
-      BOOST_FOREACH(LinkedListChainGenerator* chain, chains) {
+      for (LinkedListChainGenerator* chain : chains) {
         updater.to_update()->Put(chain->prev_key());
       }
     }
@@ -567,7 +560,7 @@ Status LinkedListTester::VerifyLinkedListRemote(
     const uint64_t snapshot_timestamp, const int64_t expected, bool log_errors,
     const boost::function<Status(const std::string&)>& cb, int64_t* verified_count) {
 
-  std::tr1::shared_ptr<client::KuduTable> table;
+  client::sp::shared_ptr<client::KuduTable> table;
   RETURN_NOT_OK(client_->OpenTable(table_name_, &table));
 
   string snapshot_str;
@@ -612,7 +605,7 @@ Status LinkedListTester::VerifyLinkedListRemote(
       cb_called = true;
     }
     RETURN_NOT_OK_PREPEND(scanner.NextBatch(&rows), "Couldn't fetch next row batch");
-    BOOST_FOREACH(const client::KuduRowResult& row, rows) {
+    for (const client::KuduRowResult& row : rows) {
       int64_t key;
       int64_t link;
       bool updated;
@@ -695,7 +688,7 @@ Status LinkedListTester::WaitAndVerify(int seconds_to_run,
     const int kBaseTimeToWaitSecs = 5;
     bool last_attempt = sw.elapsed().wall_seconds() > kBaseTimeToWaitSecs + seconds_to_run;
     s = Status::OK();
-    std::list<pair<int64_t, int64_t> >::iterator iter = samples_as_list.begin();
+    auto iter = samples_as_list.begin();
 
     while (iter != samples_as_list.end()) {
       // Only call the callback once, on the first verify pass, since it may be destructive.
@@ -765,13 +758,14 @@ Status LinkedListTester::WaitAndVerify(int seconds_to_run,
 // LinkedListVerifier
 /////////////////////////////////////////////////////////////
 
-LinkedListVerifier::LinkedListVerifier(int num_chains, bool enable_mutation, int64_t expected,
-                                       const std::vector<int64_t>& split_key_ints)
-  : num_chains_(num_chains),
-    expected_(expected),
-    enable_mutation_(enable_mutation),
-    split_key_ints_(split_key_ints),
-    errors_(0) {
+LinkedListVerifier::LinkedListVerifier(int num_chains, bool enable_mutation,
+                                       int64_t expected,
+                                       std::vector<int64_t> split_key_ints)
+    : num_chains_(num_chains),
+      expected_(expected),
+      enable_mutation_(enable_mutation),
+      split_key_ints_(std::move(split_key_ints)),
+      errors_(0) {
   if (expected != kNoParticularCountExpected) {
     DCHECK_GE(expected, 0);
     seen_key_.reserve(expected);
@@ -803,7 +797,7 @@ void LinkedListVerifier::SummarizeBrokenLinks(const std::vector<int64_t>& broken
   int n_logged = 0;
   const int kMaxToLog = 100;
 
-  BOOST_FOREACH(int64_t broken, broken_links) {
+  for (int64_t broken : broken_links) {
     int tablet = std::upper_bound(split_key_ints_.begin(),
                                   split_key_ints_.end(),
                                   broken) - split_key_ints_.begin();

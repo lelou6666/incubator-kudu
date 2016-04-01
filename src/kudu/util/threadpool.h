@@ -1,40 +1,44 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_THREAD_POOL_H
 #define KUDU_UTIL_THREAD_POOL_H
 
 #include <boost/function.hpp>
-#include <tr1/memory>
+#include <gtest/gtest_prod.h>
 #include <list>
+#include <memory>
+#include <unordered_set>
 #include <string>
 #include <vector>
-
-#include <gtest/gtest_prod.h>
 
 #include "kudu/gutil/callback_forward.h"
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/port.h"
 #include "kudu/gutil/ref_counted.h"
-#include "kudu/util/monotime.h"
 #include "kudu/util/condition_variable.h"
+#include "kudu/util/monotime.h"
 #include "kudu/util/mutex.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
 
 class Histogram;
+class Thread;
 class ThreadPool;
 class Trace;
 
@@ -67,7 +71,7 @@ class Runnable {
 //
 class ThreadPoolBuilder {
  public:
-  explicit ThreadPoolBuilder(const std::string& name);
+  explicit ThreadPoolBuilder(std::string name);
 
   // Note: We violate the style guide by returning mutable references here
   // in order to provide traditional Builder pattern conveniences.
@@ -134,7 +138,7 @@ class ThreadPool {
       WARN_UNUSED_RESULT;
 
   // Submit a Runnable class
-  Status Submit(const std::tr1::shared_ptr<Runnable>& task)
+  Status Submit(const std::shared_ptr<Runnable>& task)
       WARN_UNUSED_RESULT;
 
   // Wait until all the tasks are completed.
@@ -183,12 +187,15 @@ class ThreadPool {
   // Create new thread. Required that lock_ is held.
   Status CreateThreadUnlocked();
 
+  // Aborts if the current thread is a member of this thread pool.
+  void CheckNotPoolThreadUnlocked();
+
  private:
   FRIEND_TEST(TestThreadPool, TestThreadPoolWithNoMinimum);
   FRIEND_TEST(TestThreadPool, TestVariableSizeThreadPool);
 
   struct QueueEntry {
-    std::tr1::shared_ptr<Runnable> runnable;
+    std::shared_ptr<Runnable> runnable;
     Trace* trace;
 
     // Time at which the entry was submitted to the pool.
@@ -210,6 +217,12 @@ class ThreadPool {
   int active_threads_;
   int queue_size_;
   std::list<QueueEntry> queue_;
+
+  // Pointers to all running threads. Raw pointers are safe because a Thread
+  // may only go out of scope after being removed from threads_.
+  //
+  // Protected by lock_.
+  std::unordered_set<Thread*> threads_;
 
   scoped_refptr<Histogram> queue_length_histogram_;
   scoped_refptr<Histogram> queue_time_us_histogram_;

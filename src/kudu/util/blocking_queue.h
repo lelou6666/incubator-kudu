@@ -1,25 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_BLOCKING_QUEUE_H
 #define KUDU_UTIL_BLOCKING_QUEUE_H
 
-#include <boost/foreach.hpp>
 #include <boost/type_traits/remove_pointer.hpp>
-#include <unistd.h>
 #include <list>
 #include <string>
-#include <tr1/type_traits>
+#include <type_traits>
+#include <unistd.h>
 #include <vector>
 
 #include "kudu/gutil/basictypes.h"
@@ -63,7 +65,7 @@ class BlockingQueue {
   // If the queue holds a bare pointer, it must be empty on destruction, since
   // it may have ownership of the pointer.
   ~BlockingQueue() {
-    DCHECK(list_.empty() || !std::tr1::is_pointer<T>::value)
+    DCHECK(list_.empty() || !std::is_pointer<T>::value)
         << "BlockingQueue holds bare pointers at destruction time";
   }
 
@@ -105,7 +107,7 @@ class BlockingQueue {
     while (true) {
       if (!list_.empty()) {
         out->reserve(list_.size());
-        BOOST_FOREACH(const T& elt, list_) {
+        for (const T& elt : list_) {
           out->push_back(elt);
           decrement_size_unlocked(elt);
         }
@@ -205,7 +207,7 @@ class BlockingQueue {
     std::string ret;
 
     MutexLock l(lock_);
-    BOOST_FOREACH(const T& t, list_) {
+    for (const T& t : list_) {
       ret.append(t->ToString());
       ret.append("\n");
     }

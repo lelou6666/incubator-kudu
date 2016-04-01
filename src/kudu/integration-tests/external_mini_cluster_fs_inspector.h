@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_INTEGRATION_TESTS_CLUSTER_EXTERNAL_MINI_CLUSTER_FS_INSPECTOR_H_
 #define KUDU_INTEGRATION_TESTS_CLUSTER_EXTERNAL_MINI_CLUSTER_FS_INSPECTOR_H_
@@ -49,7 +52,18 @@ class ExternalMiniClusterFsInspector {
   Status ListFilesInDir(const std::string& path, std::vector<std::string>* entries);
   int CountFilesInDir(const std::string& path);
   int CountWALSegmentsOnTS(int index);
+
+  // List all of the tablets with tablet metadata in the cluster.
+  std::vector<std::string> ListTablets();
+
+  // List all of the tablets with tablet metadata on the given tablet server index.
+  // This may include tablets that are tombstoned and not running.
   std::vector<std::string> ListTabletsOnTS(int index);
+
+  // List the tablet IDs on the given tablet which actually have data (as
+  // evidenced by their having a WAL). This excludes those that are tombstoned.
+  std::vector<std::string> ListTabletsWithDataOnTS(int index);
+
   int CountWALSegmentsForTabletOnTS(int index, const std::string& tablet_id);
   bool DoesConsensusMetaExistForTabletOnTS(int index, const std::string& tablet_id);
 
@@ -63,18 +77,18 @@ class ExternalMiniClusterFsInspector {
                                    consensus::ConsensusMetadataPB* cmeta_pb);
   Status CheckTabletDataStateOnTS(int index,
                                   const std::string& tablet_id,
-                                  tablet::TabletDataState state);
+                                  const std::vector<tablet::TabletDataState>& expected_states);
 
   Status WaitForNoData(const MonoDelta& timeout = MonoDelta::FromSeconds(30));
   Status WaitForNoDataOnTS(int index, const MonoDelta& timeout = MonoDelta::FromSeconds(30));
   Status WaitForMinFilesInTabletWalDirOnTS(int index,
                                            const std::string& tablet_id,
                                            int count,
-                                           const MonoDelta& timeout = MonoDelta::FromSeconds(30));
+                                           const MonoDelta& timeout = MonoDelta::FromSeconds(60));
   Status WaitForReplicaCount(int expected, const MonoDelta& timeout = MonoDelta::FromSeconds(30));
   Status WaitForTabletDataStateOnTS(int index,
                                     const std::string& tablet_id,
-                                    tablet::TabletDataState data_state,
+                                    const std::vector<tablet::TabletDataState>& expected_states,
                                     const MonoDelta& timeout = MonoDelta::FromSeconds(30));
 
   // Loop and check for certain filenames in the WAL directory of the specified

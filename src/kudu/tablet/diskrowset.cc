@@ -1,21 +1,23 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
 #include <boost/thread/locks.hpp>
 #include <glog/logging.h>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/common/generic_iterators.h"
@@ -48,6 +50,10 @@ DEFINE_double(tablet_delta_store_major_compact_min_ratio, 0.1f,
              "can run (Advanced option)");
 TAG_FLAG(tablet_delta_store_major_compact_min_ratio, experimental);
 
+DEFINE_int32(default_composite_key_index_block_size_bytes, 4096,
+             "Block size used for composite key indexes.");
+TAG_FLAG(default_composite_key_index_block_size_bytes, experimental);
+
 namespace kudu {
 namespace tablet {
 
@@ -55,20 +61,20 @@ using cfile::BloomFileWriter;
 using fs::ScopedWritableBlockCloser;
 using fs::WritableBlock;
 using log::LogAnchorRegistry;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 
 const char *DiskRowSet::kMinKeyMetaEntryName = "min_key";
 const char *DiskRowSet::kMaxKeyMetaEntryName = "max_key";
 
-DiskRowSetWriter::DiskRowSetWriter(RowSetMetadata *rowset_metadata,
+DiskRowSetWriter::DiskRowSetWriter(RowSetMetadata* rowset_metadata,
                                    const Schema* schema,
-                                   const BloomFilterSizing &bloom_sizing)
-  : rowset_metadata_(rowset_metadata),
-    schema_(schema),
-    bloom_sizing_(bloom_sizing),
-    finished_(false),
-    written_count_(0) {
+                                   BloomFilterSizing bloom_sizing)
+    : rowset_metadata_(rowset_metadata),
+      schema_(schema),
+      bloom_sizing_(std::move(bloom_sizing)),
+      finished_(false),
+      written_count_(0) {
   CHECK(schema->has_column_ids());
 }
 
@@ -98,7 +104,7 @@ Status DiskRowSetWriter::InitBloomFileWriter() {
                         "Couldn't allocate a block for bloom filter");
   rowset_metadata_->set_bloom_block(block->id());
 
-  bloom_writer_.reset(new cfile::BloomFileWriter(block.Pass(), bloom_sizing_));
+  bloom_writer_.reset(new cfile::BloomFileWriter(std::move(block), bloom_sizing_));
   RETURN_NOT_OK(bloom_writer_->Start());
   return Status::OK();
 }
@@ -126,13 +132,15 @@ Status DiskRowSetWriter::InitAdHocIndexWriter() {
   opts.write_posidx = false;
 
   opts.storage_attributes.encoding = PREFIX_ENCODING;
+  opts.storage_attributes.compression = LZ4;
+  opts.storage_attributes.cfile_block_size = FLAGS_default_composite_key_index_block_size_bytes;
 
   // Create the CFile writer for the ad-hoc index.
   ad_hoc_index_writer_.reset(new cfile::CFileWriter(
       opts,
       GetTypeInfo(BINARY),
       false,
-      block.Pass()));
+      std::move(block)));
   return ad_hoc_index_writer_->Start();
 
 }
@@ -170,7 +178,7 @@ Status DiskRowSetWriter::AppendBlock(const RowBlock &block) {
     RETURN_NOT_OK(bloom_writer_->AppendKeys(&enc_key, 1));
 
     // Write the batch to the ad hoc index if we're using one
-    if (ad_hoc_index_writer_ != NULL) {
+    if (ad_hoc_index_writer_ != nullptr) {
       RETURN_NOT_OK(ad_hoc_index_writer_->AppendEntries(&enc_key, 1));
     }
 
@@ -205,7 +213,10 @@ Status DiskRowSetWriter::FinishAndReleaseBlocks(ScopedWritableBlockCloser* close
   // Save the last encoded (max) key
   CHECK_GT(last_encoded_key_.size(), 0);
   Slice last_enc_slice(last_encoded_key_);
-  Slice first_enc_slice(key_index_writer()->GetMetaValueOrDie(DiskRowSet::kMinKeyMetaEntryName));
+  std::string first_encoded_key =
+      key_index_writer()->GetMetaValueOrDie(DiskRowSet::kMinKeyMetaEntryName);
+  Slice first_enc_slice(first_encoded_key);
+
   CHECK_LE(first_enc_slice.compare(last_enc_slice), 0)
       << "First Key not <= Last key: first_key=" << first_enc_slice.ToDebugString()
       << "   last_key=" << last_enc_slice.ToDebugString();
@@ -219,7 +230,7 @@ Status DiskRowSetWriter::FinishAndReleaseBlocks(ScopedWritableBlockCloser* close
   col_writer_->GetFlushedBlocksByColumnId(&flushed_blocks);
   rowset_metadata_->SetColumnDataBlocks(flushed_blocks);
 
-  if (ad_hoc_index_writer_ != NULL) {
+  if (ad_hoc_index_writer_ != nullptr) {
     Status s = ad_hoc_index_writer_->FinishAndReleaseBlock(closer);
     if (!s.ok()) {
       LOG(WARNING) << "Unable to Finish ad hoc index writer: " << s.ToString();
@@ -263,19 +274,18 @@ size_t DiskRowSetWriter::written_size() const {
 DiskRowSetWriter::~DiskRowSetWriter() {
 }
 
-RollingDiskRowSetWriter::RollingDiskRowSetWriter(TabletMetadata* tablet_metadata,
-                                                 const Schema &schema,
-                                                 const BloomFilterSizing &bloom_sizing,
-                                                 size_t target_rowset_size)
-  : state_(kInitialized),
-    tablet_metadata_(DCHECK_NOTNULL(tablet_metadata)),
-    schema_(schema),
-    bloom_sizing_(bloom_sizing),
-    target_rowset_size_(target_rowset_size),
-    row_idx_in_cur_drs_(0),
-    can_roll_(false),
-    written_count_(0),
-    written_size_(0) {
+RollingDiskRowSetWriter::RollingDiskRowSetWriter(
+    TabletMetadata* tablet_metadata, const Schema& schema,
+    BloomFilterSizing bloom_sizing, size_t target_rowset_size)
+    : state_(kInitialized),
+      tablet_metadata_(DCHECK_NOTNULL(tablet_metadata)),
+      schema_(schema),
+      bloom_sizing_(std::move(bloom_sizing)),
+      target_rowset_size_(target_rowset_size),
+      row_idx_in_cur_drs_(0),
+      can_roll_(false),
+      written_count_(0),
+      written_size_(0) {
   CHECK(schema.has_column_ids());
 }
 
@@ -305,8 +315,8 @@ Status RollingDiskRowSetWriter::RollWriter() {
   RETURN_NOT_OK(fs->CreateNewBlock(&redo_data_block));
   cur_undo_ds_block_id_ = undo_data_block->id();
   cur_redo_ds_block_id_ = redo_data_block->id();
-  cur_undo_writer_.reset(new DeltaFileWriter(undo_data_block.Pass()));
-  cur_redo_writer_.reset(new DeltaFileWriter(redo_data_block.Pass()));
+  cur_undo_writer_.reset(new DeltaFileWriter(std::move(undo_data_block)));
+  cur_redo_writer_.reset(new DeltaFileWriter(std::move(redo_data_block)));
   cur_undo_delta_stats.reset(new DeltaStats());
   cur_redo_delta_stats.reset(new DeltaStats());
 
@@ -363,7 +373,7 @@ Status RollingDiskRowSetWriter::AppendDeltas(rowid_t row_idx_in_block,
   can_roll_ = false;
 
   *row_idx = row_idx_in_cur_drs_ + row_idx_in_block;
-  for (const Mutation *mut = delta_head; mut != NULL; mut = mut->next()) {
+  for (const Mutation *mut = delta_head; mut != nullptr; mut = mut->next()) {
     DeltaKey undo_key(*row_idx, mut->timestamp());
     RETURN_NOT_OK(writer->AppendDelta<Type>(undo_key, mut->changelist()));
     delta_stats->UpdateStats(mut->timestamp(), mut->changelist());
@@ -397,14 +407,14 @@ Status RollingDiskRowSetWriter::FinishCurrentWriter() {
 
     // If the writer is not null _AND_ we've written something to the undo
     // delta store commit the undo delta block.
-    if (cur_undo_writer_.get() != NULL &&
+    if (cur_undo_writer_.get() != nullptr &&
         cur_undo_delta_stats->min_timestamp().CompareTo(Timestamp::kMax) != 0) {
       cur_drs_metadata_->CommitUndoDeltaDataBlock(cur_undo_ds_block_id_);
     }
 
     // If the writer is not null _AND_ we've written something to the redo
     // delta store commit the redo delta block.
-    if (cur_redo_writer_.get() != NULL &&
+    if (cur_redo_writer_.get() != nullptr &&
         cur_redo_delta_stats->min_timestamp().CompareTo(Timestamp::kMax) != 0) {
       cur_drs_metadata_->CommitRedoDeltaDataBlock(0, cur_redo_ds_block_id_);
     } else {
@@ -417,9 +427,9 @@ Status RollingDiskRowSetWriter::FinishCurrentWriter() {
     written_drs_metas_.push_back(cur_drs_metadata_);
   }
 
-  cur_writer_.reset(NULL);
-  cur_undo_writer_.reset(NULL);
-  cur_redo_writer_.reset(NULL);
+  cur_writer_.reset(nullptr);
+  cur_undo_writer_.reset(nullptr);
+  cur_redo_writer_.reset(nullptr);
 
   cur_drs_metadata_.reset();
 
@@ -461,14 +471,13 @@ Status DiskRowSet::Open(const shared_ptr<RowSetMetadata>& rowset_metadata,
   return Status::OK();
 }
 
-DiskRowSet::DiskRowSet(const shared_ptr<RowSetMetadata>& rowset_metadata,
+DiskRowSet::DiskRowSet(shared_ptr<RowSetMetadata> rowset_metadata,
                        LogAnchorRegistry* log_anchor_registry,
-                       const shared_ptr<MemTracker>& parent_tracker)
-  : rowset_metadata_(rowset_metadata),
-    open_(false),
-    log_anchor_registry_(log_anchor_registry),
-    parent_tracker_(parent_tracker) {
-}
+                       shared_ptr<MemTracker> parent_tracker)
+    : rowset_metadata_(std::move(rowset_metadata)),
+      open_(false),
+      log_anchor_registry_(log_anchor_registry),
+      parent_tracker_(std::move(parent_tracker)) {}
 
 Status DiskRowSet::Open() {
   TRACE_EVENT0("tablet", "DiskRowSet::Open");
@@ -657,7 +666,7 @@ uint64_t DiskRowSet::EstimateDeltaDiskSize() const {
 uint64_t DiskRowSet::EstimateOnDiskSize() const {
   DCHECK(open_);
   boost::shared_lock<rw_spinlock> lock(component_lock_.get_lock());
-  return EstimateBaseDataDiskSize() + EstimateDeltaDiskSize();
+  return base_data_->EstimateOnDiskSize() + delta_tracker_->EstimateOnDiskSize();
 }
 
 size_t DiskRowSet::DeltaMemStoreSize() const {

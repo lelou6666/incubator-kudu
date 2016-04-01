@@ -1,21 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log_cache.h"
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <google/protobuf/wire_format_lite.h>
 #include <google/protobuf/wire_format_lite_inl.h>
@@ -93,7 +95,7 @@ LogCache::LogCache(const scoped_refptr<MetricEntity>& metric_entity,
 
   // Put a fake message at index 0, since this simplifies a lot of our
   // code paths elsewhere.
-  ReplicateMsg* zero_op = new ReplicateMsg();
+  auto zero_op = new ReplicateMsg();
   *zero_op->mutable_id() = MinimumOpId();
   InsertOrDie(&cache_, 0, make_scoped_refptr_replicate(zero_op));
 }
@@ -135,7 +137,7 @@ Status LogCache::AppendOperations(const vector<ReplicateRefPtr>& msgs,
     // Now remove the overwritten operations.
     for (int64_t i = first_idx_in_batch; i < next_sequential_op_index_; ++i) {
       ReplicateRefPtr msg = EraseKeyReturnValuePtr(&cache_, i);
-      if (msg != NULL) {
+      if (msg != nullptr) {
         AccountForMessageRemovalUnlocked(msg);
       }
     }
@@ -143,8 +145,8 @@ Status LogCache::AppendOperations(const vector<ReplicateRefPtr>& msgs,
 
 
   int64_t mem_required = 0;
-  for (int i = 0; i < msgs.size(); i++) {
-    mem_required += msgs[i]->get()->SpaceUsed();
+  for (const auto& msg : msgs) {
+    mem_required += msg->get()->SpaceUsed();
   }
 
   // Try to consume the memory. If it can't be consumed, we may need to evict.
@@ -171,8 +173,8 @@ Status LogCache::AppendOperations(const vector<ReplicateRefPtr>& msgs,
     borrowed_memory = parent_tracker_->LimitExceeded();
   }
 
-  for (int i = 0; i < msgs.size(); i++) {
-    InsertOrDie(&cache_,  msgs[i]->get()->id().index(), msgs[i]);
+  for (const auto& msg : msgs) {
+    InsertOrDie(&cache_,  msg->get()->id().index(), msg);
   }
 
   // We drop the lock during the AsyncAppendReplicates call, since it may block
@@ -243,7 +245,7 @@ Status LogCache::LookupOpId(int64_t op_index, OpId* op_id) const {
                                            "(next sequential op: $1)",
                                            op_index, next_sequential_op_index_));
     }
-    MessageCache::const_iterator iter = cache_.find(op_index);
+    auto iter = cache_.find(op_index);
     if (iter != cache_.end()) {
       *op_id = iter->second->get()->id();
       return Status::OK();
@@ -251,7 +253,7 @@ Status LogCache::LookupOpId(int64_t op_index, OpId* op_id) const {
   }
 
   // If it misses, read from the log.
-  return log_->GetLogReader()->LookupOpId(op_index, op_id);
+  return log_->reader()->LookupOpId(op_index, op_id);
 }
 
 namespace {
@@ -297,14 +299,14 @@ Status LogCache::ReadOps(int64_t after_op_index,
 
       vector<ReplicateMsg*> raw_replicate_ptrs;
       RETURN_NOT_OK_PREPEND(
-        log_->GetLogReader()->ReadReplicatesInRange(
+        log_->reader()->ReadReplicatesInRange(
           next_index, up_to, remaining_space, &raw_replicate_ptrs),
         Substitute("Failed to read ops $0..$1", next_index, up_to));
       l.lock();
       LOG_WITH_PREFIX_UNLOCKED(INFO) << "Successfully read " << raw_replicate_ptrs.size() << " ops "
                             << "from disk.";
 
-      BOOST_FOREACH(ReplicateMsg* msg, raw_replicate_ptrs) {
+      for (ReplicateMsg* msg : raw_replicate_ptrs) {
         CHECK_EQ(next_index, msg->id().index());
 
         remaining_space -= TotalByteSizeForMessage(*msg);
@@ -353,8 +355,7 @@ void LogCache::EvictSomeUnlocked(int64_t stop_after_index, int64_t bytes_to_evic
                       << ": before state: " << ToStringUnlocked();
 
   int64_t bytes_evicted = 0;
-  for (MessageCache::iterator iter = cache_.begin();
-       iter != cache_.end();) {
+  for (auto iter = cache_.begin(); iter != cache_.end();) {
     const ReplicateRefPtr& msg = (*iter).second;
     VLOG_WITH_PREFIX_UNLOCKED(2) << "considering for eviction: " << msg->get()->id();
     int64_t msg_index = msg->get()->id().index();
@@ -428,7 +429,7 @@ std::string LogCache::LogPrefixUnlocked() const {
 void LogCache::DumpToLog() const {
   vector<string> strings;
   DumpToStrings(&strings);
-  BOOST_FOREACH(const string& s, strings) {
+  for (const string& s : strings) {
     LOG_WITH_PREFIX_UNLOCKED(INFO) << s;
   }
 }
@@ -438,7 +439,7 @@ void LogCache::DumpToStrings(vector<string>* lines) const {
   int counter = 0;
   lines->push_back(ToStringUnlocked());
   lines->push_back("Messages:");
-  BOOST_FOREACH(const MessageCache::value_type& entry, cache_) {
+  for (const MessageCache::value_type& entry : cache_) {
     const ReplicateMsg* msg = entry.second->get();
     lines->push_back(
       Substitute("Message[$0] $1.$2 : REPLICATE. Type: $3, Size: $4",
@@ -457,7 +458,7 @@ void LogCache::DumpToHtml(std::ostream& out) const {
   out << "<tr><th>Entry</th><th>OpId</th><th>Type</th><th>Size</th><th>Status</th></tr>" << endl;
 
   int counter = 0;
-  BOOST_FOREACH(const MessageCache::value_type& entry, cache_) {
+  for (const MessageCache::value_type& entry : cache_) {
     const ReplicateMsg* msg = entry.second->get();
     out << Substitute("<tr><th>$0</th><th>$1.$2</th><td>REPLICATE $3</td>"
                       "<td>$4</td><td>$5</td></tr>",

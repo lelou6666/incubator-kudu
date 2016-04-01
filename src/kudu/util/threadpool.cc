@@ -1,18 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
+#include "kudu/util/threadpool.h"
+
 #include <boost/function.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -25,7 +29,6 @@
 #include "kudu/gutil/sysinfo.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/thread.h"
-#include "kudu/util/threadpool.h"
 #include "kudu/util/trace.h"
 
 namespace kudu {
@@ -38,9 +41,7 @@ using strings::Substitute;
 
 class FunctionRunnable : public Runnable {
  public:
-  FunctionRunnable(const boost::function<void()>& func)
-    : func_(func) {
-  }
+  explicit FunctionRunnable(boost::function<void()> func) : func_(std::move(func)) {}
 
   void Run() OVERRIDE {
     func_();
@@ -54,13 +55,12 @@ class FunctionRunnable : public Runnable {
 // ThreadPoolBuilder
 ////////////////////////////////////////////////////////
 
-ThreadPoolBuilder::ThreadPoolBuilder(const std::string& name)
-  : name_(name),
-    min_threads_(0),
-    max_threads_(base::NumCPUs()),
-    max_queue_size_(std::numeric_limits<int>::max()),
-    idle_timeout_(MonoDelta::FromMilliseconds(500)) {
-}
+ThreadPoolBuilder::ThreadPoolBuilder(std::string name)
+    : name_(std::move(name)),
+      min_threads_(0),
+      max_threads_(base::NumCPUs()),
+      max_queue_size_(std::numeric_limits<int>::max()),
+      idle_timeout_(MonoDelta::FromMilliseconds(500)) {}
 
 ThreadPoolBuilder& ThreadPoolBuilder::set_min_threads(int min_threads) {
   CHECK_GE(min_threads, 0);
@@ -131,7 +131,7 @@ Status ThreadPool::Init() {
 }
 
 void ThreadPool::ClearQueue() {
-  BOOST_FOREACH(QueueEntry& e, queue_) {
+  for (QueueEntry& e : queue_) {
     if (e.trace) {
       e.trace->Release();
     }
@@ -142,6 +142,8 @@ void ThreadPool::ClearQueue() {
 
 void ThreadPool::Shutdown() {
   MutexLock unique_lock(lock_);
+  CheckNotPoolThreadUnlocked();
+
   pool_status_ = Status::ServiceUnavailable("The pool has been shut down.");
   ClearQueue();
   not_empty_.Broadcast();
@@ -160,10 +162,10 @@ Status ThreadPool::SubmitClosure(const Closure& task) {
 }
 
 Status ThreadPool::SubmitFunc(const boost::function<void()>& func) {
-  return Submit(std::tr1::shared_ptr<Runnable>(new FunctionRunnable(func)));
+  return Submit(std::shared_ptr<Runnable>(new FunctionRunnable(func)));
 }
 
-Status ThreadPool::Submit(const std::tr1::shared_ptr<Runnable>& task) {
+Status ThreadPool::Submit(const std::shared_ptr<Runnable>& task) {
   MonoTime submit_time = MonoTime::Now(MonoTime::FINE);
 
   MutexLock guard(lock_);
@@ -228,6 +230,7 @@ Status ThreadPool::Submit(const std::tr1::shared_ptr<Runnable>& task) {
 
 void ThreadPool::Wait() {
   MutexLock unique_lock(lock_);
+  CheckNotPoolThreadUnlocked();
   while ((!queue_.empty()) || (active_threads_ > 0)) {
     idle_cond_.Wait();
   }
@@ -240,6 +243,7 @@ bool ThreadPool::WaitUntil(const MonoTime& until) {
 
 bool ThreadPool::WaitFor(const MonoDelta& delta) {
   MutexLock unique_lock(lock_);
+  CheckNotPoolThreadUnlocked();
   while ((!queue_.empty()) || (active_threads_ > 0)) {
     if (!idle_cond_.TimedWait(delta)) {
       return false;
@@ -328,6 +332,7 @@ void ThreadPool::DispatchThread(bool permanent) {
   // and add a new task just as the last running thread is about to exit.
   CHECK(unique_lock.OwnsLock());
 
+  CHECK_EQ(threads_.erase(Thread::current_thread()), 1);
   if (--num_threads_ == 0) {
     no_threads_cond_.Broadcast();
 
@@ -341,12 +346,23 @@ void ThreadPool::DispatchThread(bool permanent) {
 Status ThreadPool::CreateThreadUnlocked() {
   // The first few threads are permanent, and do not time out.
   bool permanent = (num_threads_ < min_threads_);
+  scoped_refptr<Thread> t;
   Status s = kudu::Thread::Create("thread pool", strings::Substitute("$0 [worker]", name_),
-                                  &ThreadPool::DispatchThread, this, permanent, NULL);
+                                  &ThreadPool::DispatchThread, this, permanent, &t);
   if (s.ok()) {
+    InsertOrDie(&threads_, t.get());
     num_threads_++;
   }
   return s;
+}
+
+void ThreadPool::CheckNotPoolThreadUnlocked() {
+  Thread* current = Thread::current_thread();
+  if (ContainsKey(threads_, current)) {
+    LOG(FATAL) << Substitute("Thread belonging to thread pool '$0' with "
+        "name '$1' called pool function that would result in deadlock",
+        name_, current->name());
+  }
 }
 
 } // namespace kudu

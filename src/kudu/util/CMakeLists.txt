@@ -1,16 +1,19 @@
-# Copyright 2014 Cloudera, Inc.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
 #######################################
 # histogram_proto
@@ -57,8 +60,11 @@ ADD_EXPORTABLE_LIBRARY(version_info_proto
 ############################################################
 # Version stamp
 ############################################################
-include_directories(${BUILD_OUTPUT_ROOT_DIRECTORY})
-set(VERSION_STAMP_FILE ${BUILD_OUTPUT_ROOT_DIRECTORY}kudu/generated/version_defines.h)
+
+# Unlike CMAKE_CURRENT_BINARY_DIR, CMAKE_BINARY_DIR is always the root of
+# the build directory.
+set(VERSION_STAMP_FILE ${CMAKE_BINARY_DIR}/src/kudu/generated/version_defines.h)
+
 list(APPEND GEN_VERSION_INFO_COMMAND "${BUILD_SUPPORT_DIR}/gen_version_info.py")
 list(APPEND GEN_VERSION_INFO_COMMAND "--version=${KUDU_VERSION_NUMBER}")
 list(APPEND GEN_VERSION_INFO_COMMAND "--build-type=${CMAKE_BUILD_TYPE}")
@@ -114,7 +120,9 @@ set(UTIL_SRCS
   logging.cc
   malloc.cc
   memcmpable_varint.cc
-  memory/arena.cc memory/memory.cc
+  memory/arena.cc
+  memory/memory.cc
+  memory/overwrite.cc
   memenv/memenv.cc
   mem_tracker.cc
   metrics.cc
@@ -148,11 +156,17 @@ set(UTIL_SRCS
   threadlocal.cc
   threadpool.cc
   thread_restrictions.cc
+  throttler.cc
   trace.cc
   user.cc
   url-coding.cc
   version_info.cc
 )
+
+# overwrite.cc contains a single function which would be a hot spot in
+# debug builds. It's separated into a separate file so it can be
+# optimized regardless of the default optimization options.
+set_source_files_properties(memory/overwrite.cc PROPERTIES COMPILE_FLAGS "-O3")
 
 if(NOT APPLE)
   set(UTIL_SRCS
@@ -180,8 +194,7 @@ if(NOT APPLE)
     vmem)
 endif()
 
-# We use MallocExtension and HeapChecker, but not in the exported version of
-# the library.
+# We use MallocExtension, but not in the exported version of the library.
 set(EXPORTED_UTIL_LIBS ${UTIL_LIBS})
 if(${KUDU_TCMALLOC_AVAILABLE})
   list(APPEND UTIL_LIBS tcmalloc)
@@ -255,6 +268,7 @@ ADD_KUDU_TEST(countdown_latch-test)
 ADD_KUDU_TEST(crc-test RUN_SERIAL true) # has a benchmark
 ADD_KUDU_TEST(debug-util-test)
 ADD_KUDU_TEST(env-test LABELS no_tsan)
+ADD_KUDU_TEST(errno-test)
 ADD_KUDU_TEST(failure_detector-test)
 ADD_KUDU_TEST(flag_tags-test)
 ADD_KUDU_TEST(group_varint-test)
@@ -266,10 +280,10 @@ ADD_KUDU_TEST(jsonreader-test)
 ADD_KUDU_TEST(knapsack_solver-test)
 ADD_KUDU_TEST(logging-test)
 ADD_KUDU_TEST(map-util-test)
+ADD_KUDU_TEST(mem_tracker-test)
 ADD_KUDU_TEST(memcmpable_varint-test LABELS no_tsan)
 ADD_KUDU_TEST(memenv/memenv-test)
 ADD_KUDU_TEST(memory/arena-test)
-ADD_KUDU_TEST(mem_tracker-test)
 ADD_KUDU_TEST(metrics-test)
 ADD_KUDU_TEST(monotime-test)
 ADD_KUDU_TEST(mt-hdr_histogram-test RUN_SERIAL true)
@@ -290,6 +304,7 @@ ADD_KUDU_TEST(rolling_log-test)
 ADD_KUDU_TEST(rw_semaphore-test)
 ADD_KUDU_TEST(rwc_lock-test)
 ADD_KUDU_TEST(safe_math-test)
+ADD_KUDU_TEST(scoped_cleanup-test)
 ADD_KUDU_TEST(slice-test)
 ADD_KUDU_TEST(spinlock_profiling-test)
 ADD_KUDU_TEST(stack_watchdog-test)
@@ -300,6 +315,7 @@ ADD_KUDU_TEST(subprocess-test)
 ADD_KUDU_TEST(sync_point-test)
 ADD_KUDU_TEST(thread-test)
 ADD_KUDU_TEST(threadpool-test)
+ADD_KUDU_TEST(throttler-test)
 ADD_KUDU_TEST(trace-test)
 ADD_KUDU_TEST(url-coding-test)
 ADD_KUDU_TEST(user-test)

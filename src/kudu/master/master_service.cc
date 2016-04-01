@@ -1,23 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/master/master_service.h"
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/common/wire_protocol.h"
@@ -42,7 +44,7 @@ namespace master {
 using consensus::RaftPeerPB;
 using std::string;
 using std::vector;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace {
 
@@ -184,6 +186,7 @@ void MasterServiceImpl::TSHeartbeat(const TSHeartbeatRequestPB* req,
   }
 
   ts_desc->UpdateHeartbeatTime();
+  ts_desc->set_num_live_replicas(req->num_live_tablets());
 
   if (req->has_tablet_report()) {
     s = server_->catalog_manager()->ProcessTabletReport(
@@ -214,7 +217,7 @@ void MasterServiceImpl::GetTabletLocations(const GetTabletLocationsRequestPB* re
 
   TSRegistrationPB reg;
   vector<TSDescriptor*> locs;
-  BOOST_FOREACH(const string& tablet_id, req->tablet_ids()) {
+  for (const string& tablet_id : req->tablet_ids()) {
     // TODO: once we have catalog data. ACL checks would also go here, probably.
     TabletLocationsPB* locs_pb = resp->add_tablet_locations();
     Status s = server_->catalog_manager()->GetTabletLocations(tablet_id, locs_pb);
@@ -335,9 +338,9 @@ void MasterServiceImpl::ListTabletServers(const ListTabletServersRequestPB* req,
     return;
   }
 
-  vector<std::tr1::shared_ptr<TSDescriptor> > descs;
+  vector<std::shared_ptr<TSDescriptor> > descs;
   server_->ts_manager()->GetAllDescriptors(&descs);
-  BOOST_FOREACH(const std::tr1::shared_ptr<TSDescriptor>& desc, descs) {
+  for (const std::shared_ptr<TSDescriptor>& desc : descs) {
     ListTabletServersResponsePB::Entry* entry = resp->add_servers();
     desc->GetNodeInstancePB(entry->mutable_instance_id());
     desc->GetRegistration(entry->mutable_registration());
@@ -355,7 +358,7 @@ void MasterServiceImpl::ListMasters(const ListMastersRequestPB* req,
     StatusToPB(s, resp->mutable_error());
     resp->mutable_error()->set_code(AppStatusPB::UNKNOWN_ERROR);
   } else {
-    BOOST_FOREACH(const ServerEntryPB& master, masters) {
+    for (const ServerEntryPB& master : masters) {
       resp->add_masters()->CopyFrom(master);
     }
   }

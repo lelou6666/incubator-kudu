@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_CFILE_PLAIN_BITMAP_BLOCK_H_
 #define KUDU_CFILE_PLAIN_BITMAP_BLOCK_H_
@@ -39,8 +42,8 @@ struct WriterOptions;
 //
 class PlainBitMapBlockBuilder : public BlockBuilder {
  public:
-  explicit PlainBitMapBlockBuilder()
-  : writer_(&buf_) {
+  PlainBitMapBlockBuilder()
+      : writer_(&buf_) {
     Reset();
   }
 
@@ -96,12 +99,12 @@ class PlainBitMapBlockBuilder : public BlockBuilder {
 //
 class PlainBitMapBlockDecoder : public BlockDecoder {
  public:
-  explicit PlainBitMapBlockDecoder(const Slice& slice)
-  : data_(slice),
-    parsed_(false),
-    num_elems_(0),
-    ordinal_pos_base_(0),
-    cur_idx_(0)  {
+  explicit PlainBitMapBlockDecoder(Slice slice)
+      : data_(std::move(slice)),
+        parsed_(false),
+        num_elems_(0),
+        ordinal_pos_base_(0),
+        cur_idx_(0) {
   }
 
   virtual Status ParseHeader() OVERRIDE {

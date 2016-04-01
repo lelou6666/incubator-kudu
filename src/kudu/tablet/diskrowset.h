@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // A DiskRowSet is a horizontal slice of a Kudu tablet.
 // Each DiskRowSet contains data for a a disjoint set of keys.
@@ -21,8 +24,8 @@
 
 #include <boost/thread/mutex.hpp>
 #include <gtest/gtest_prod.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/common/row.h"
@@ -65,9 +68,8 @@ class OperationResultPB;
 class DiskRowSetWriter {
  public:
   // TODO: document ownership of rowset_metadata
-  DiskRowSetWriter(RowSetMetadata *rowset_metadata,
-                   const Schema* schema,
-                   const BloomFilterSizing &bloom_sizing);
+  DiskRowSetWriter(RowSetMetadata* rowset_metadata, const Schema* schema,
+                   BloomFilterSizing bloom_sizing);
 
   ~DiskRowSetWriter();
 
@@ -141,9 +143,8 @@ class RollingDiskRowSetWriter {
   // Create a new rolling writer. The given 'tablet_metadata' must stay valid
   // for the lifetime of this writer, and is used to construct the new rowsets
   // that this RollingDiskRowSetWriter creates.
-  RollingDiskRowSetWriter(TabletMetadata* tablet_metadata,
-                          const Schema &schema,
-                          const BloomFilterSizing &bloom_sizing,
+  RollingDiskRowSetWriter(TabletMetadata* tablet_metadata, const Schema& schema,
+                          BloomFilterSizing bloom_sizing,
                           size_t target_rowset_size);
   ~RollingDiskRowSetWriter();
 
@@ -217,7 +218,7 @@ class RollingDiskRowSetWriter {
 
   TabletMetadata* tablet_metadata_;
   const Schema schema_;
-  std::tr1::shared_ptr<RowSetMetadata> cur_drs_metadata_;
+  std::shared_ptr<RowSetMetadata> cur_drs_metadata_;
   const BloomFilterSizing bloom_sizing_;
   const size_t target_rowset_size_;
 
@@ -266,11 +267,11 @@ class DiskRowSet : public RowSet {
 
   // Open a rowset from disk.
   // If successful, sets *rowset to the newly open rowset
-  static Status Open(const std::tr1::shared_ptr<RowSetMetadata>& rowset_metadata,
+  static Status Open(const std::shared_ptr<RowSetMetadata>& rowset_metadata,
                      log::LogAnchorRegistry* log_anchor_registry,
-                     std::tr1::shared_ptr<DiskRowSet> *rowset,
-                     const std::tr1::shared_ptr<MemTracker>& parent_tracker =
-                     std::tr1::shared_ptr<MemTracker>());
+                     std::shared_ptr<DiskRowSet> *rowset,
+                     const std::shared_ptr<MemTracker>& parent_tracker =
+                     std::shared_ptr<MemTracker>());
 
   ////////////////////////////////////////////////////////////
   // "Management" functions
@@ -355,7 +356,7 @@ class DiskRowSet : public RowSet {
     return DCHECK_NOTNULL(delta_tracker_.get());
   }
 
-  std::tr1::shared_ptr<RowSetMetadata> metadata() OVERRIDE {
+  std::shared_ptr<RowSetMetadata> metadata() OVERRIDE {
     return rowset_metadata_;
   }
 
@@ -373,9 +374,9 @@ class DiskRowSet : public RowSet {
   friend class CompactionInput;
   friend class Tablet;
 
-  DiskRowSet(const std::tr1::shared_ptr<RowSetMetadata>& rowset_metadata,
+  DiskRowSet(std::shared_ptr<RowSetMetadata> rowset_metadata,
              log::LogAnchorRegistry* log_anchor_registry,
-             const std::tr1::shared_ptr<MemTracker>& parent_tracker);
+             std::shared_ptr<MemTracker> parent_tracker);
 
   Status Open();
 
@@ -386,17 +387,17 @@ class DiskRowSet : public RowSet {
   // Major compacts all the delta files for the specified columns.
   Status MajorCompactDeltaStoresWithColumnIds(const std::vector<ColumnId>& col_ids);
 
-  std::tr1::shared_ptr<RowSetMetadata> rowset_metadata_;
+  std::shared_ptr<RowSetMetadata> rowset_metadata_;
 
   bool open_;
 
   log::LogAnchorRegistry* log_anchor_registry_;
 
-  std::tr1::shared_ptr<MemTracker> parent_tracker_;
+  std::shared_ptr<MemTracker> parent_tracker_;
 
   // Base data for this rowset.
   mutable percpu_rwlock component_lock_;
-  std::tr1::shared_ptr<CFileSet> base_data_;
+  std::shared_ptr<CFileSet> base_data_;
   gscoped_ptr<DeltaTracker> delta_tracker_;
 
   // Lock governing this rowset's inclusion in a compact/flush. If locked,

@@ -1,23 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <boost/bind.hpp>
 #include <boost/thread/thread.hpp>
 #include <glog/stl_logging.h>
 #include <gtest/gtest.h>
-#include <tr1/memory>
+#include <memory>
 
 #include "kudu/client/client.h"
 #include "kudu/common/schema.h"
@@ -33,8 +35,6 @@
 #include "kudu/tserver/tablet_server.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
-
-using std::tr1::shared_ptr;
 
 using kudu::client::KuduClient;
 using kudu::client::KuduClientBuilder;
@@ -111,10 +111,10 @@ class CreateTableStressTest : public KuduTest {
   void CreateBigTable(const string& table_name, int num_tablets);
 
  protected:
-  shared_ptr<KuduClient> client_;
+  client::sp::shared_ptr<KuduClient> client_;
   gscoped_ptr<MiniCluster> cluster_;
   KuduSchema schema_;
-  shared_ptr<Messenger> messenger_;
+  std::shared_ptr<Messenger> messenger_;
   gscoped_ptr<MasterServiceProxy> master_proxy_;
   TabletServerMap ts_map_;
 };
@@ -275,11 +275,11 @@ TEST_F(CreateTableStressTest, TestGetTableLocationsOptions) {
   LOG(INFO) << "========================================================";
   std::vector<scoped_refptr<master::TableInfo> > tables;
   cluster_->mini_master()->master()->catalog_manager()->GetAllTables(&tables);
-  BOOST_FOREACH(const scoped_refptr<master::TableInfo>& table_info, tables) {
+  for (const scoped_refptr<master::TableInfo>& table_info : tables) {
     LOG(INFO) << "Table: " << table_info->ToString();
     std::vector<scoped_refptr<master::TabletInfo> > tablets;
     table_info->GetAllTablets(&tablets);
-    BOOST_FOREACH(const scoped_refptr<master::TabletInfo>& tablet_info, tablets) {
+    for (const scoped_refptr<master::TabletInfo>& tablet_info : tablets) {
       master::TabletMetadataLock l_tablet(tablet_info.get(), master::TabletMetadataLock::READ);
       const master::SysTabletsEntryPB& metadata = tablet_info->metadata().state().pb;
       LOG(INFO) << "  Tablet: " << tablet_info->ToString()

@@ -1,23 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_RPC_SASL_SERVER_H
 #define KUDU_RPC_SASL_SERVER_H
 
-#include <string>
-#include <tr1/memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include <sasl/sasl.h>
@@ -44,35 +46,41 @@ class AuthStore;
 class SaslServer {
  public:
   // Does not take ownership of the socket indicated by the fd.
-  SaslServer(const string& app_name, int fd);
+  SaslServer(string app_name, int fd);
   ~SaslServer();
 
   // Enable ANONYMOUS authentication.
-  // Call after Init().
+  // Must be called after Init().
   Status EnableAnonymous();
 
   // Enable PLAIN authentication. TODO: Support impersonation.
-  // Call after Init().
+  // Must be called after Init().
   Status EnablePlain(gscoped_ptr<AuthStore> authstore);
 
   // Returns mechanism negotiated by this connection.
-  // Call after Negotiate().
+  // Must be called after Negotiate().
   SaslMechanism::Type negotiated_mechanism() const;
 
+  // Returns the set of RPC system features supported by the remote client.
+  // Must be called after Negotiate().
+  const std::set<RpcFeatureFlag>& client_features() const {
+    return client_features_;
+  }
+
   // Name of the user that authenticated using plain auth.
-  // Call after Negotiate() and only if the negotiated mechanism was PLAIN.
+  // Must be called after Negotiate() only if the negotiated mechanism was PLAIN.
   const std::string& plain_auth_user() const;
 
   // Specify IP:port of local side of connection.
-  // Call before Init(). Required for some mechanisms.
+  // Must be called before Init(). Required for some mechanisms.
   void set_local_addr(const Sockaddr& addr);
 
   // Specify IP:port of remote side of connection.
-  // Call before Init(). Required for some mechanisms.
+  // Must be called before Init(). Required for some mechanisms.
   void set_remote_addr(const Sockaddr& addr);
 
   // Specify the fully-qualified domain name of the remote server.
-  // Call before Init(). Required for some mechanisms.
+  // Must be called before Init(). Required for some mechanisms.
   void set_server_fqdn(const string& domain_name);
 
   // Set deadline for connection negotiation.
@@ -141,6 +149,10 @@ class SaslServer {
 
   // Authentication store used for PLAIN authentication.
   gscoped_ptr<AuthStore> authstore_;
+
+  // The set of features that the client supports. Filled in
+  // after we receive the NEGOTIATE request from the client.
+  std::set<RpcFeatureFlag> client_features_;
 
   // The successfully-authenticated user, if applicable.
   string plain_auth_user_;

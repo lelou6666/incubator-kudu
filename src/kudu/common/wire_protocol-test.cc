@@ -1,18 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <gtest/gtest.h>
 #include "kudu/common/row.h"
 #include "kudu/common/rowblock.h"
@@ -28,26 +30,36 @@ namespace kudu {
 class WireProtocolTest : public KuduTest {
  public:
   WireProtocolTest()
-    : schema_(boost::assign::list_of
-              (ColumnSchema("col1", STRING))
-              (ColumnSchema("col2", STRING))
-              (ColumnSchema("col3", UINT32, true /* nullable */)),
-              1) {
+      : schema_({ ColumnSchema("col1", STRING),
+              ColumnSchema("col2", STRING),
+              ColumnSchema("col3", UINT32, true /* nullable */) },
+        1),
+        test_data_arena_(4096, 256 * 1024) {
   }
 
   void FillRowBlockWithTestRows(RowBlock* block) {
+    test_data_arena_.Reset();
     block->selection_vector()->SetAllTrue();
 
     for (int i = 0; i < block->nrows(); i++) {
       RowBlockRow row = block->row(i);
-      *reinterpret_cast<Slice*>(row.mutable_cell_ptr(0)) = Slice("hello world col1");
-      *reinterpret_cast<Slice*>(row.mutable_cell_ptr(1)) = Slice("hello world col2");
+
+      // We make new copies of these strings into the Arena for each row so that
+      // the workload is more realistic. If we just re-use the same Slice object
+      // for each row, the memory accesses fit entirely into a smaller number of
+      // cache lines and we may micro-optimize for the wrong thing.
+      Slice col1, col2;
+      CHECK(test_data_arena_.RelocateSlice("hello world col1", &col1));
+      CHECK(test_data_arena_.RelocateSlice("hello world col2", &col2));
+      *reinterpret_cast<Slice*>(row.mutable_cell_ptr(0)) = col1;
+      *reinterpret_cast<Slice*>(row.mutable_cell_ptr(1)) = col2;
       *reinterpret_cast<uint32_t*>(row.mutable_cell_ptr(2)) = i;
       row.cell(2).set_null(false);
     }
   }
  protected:
   Schema schema_;
+  Arena test_data_arena_;
 };
 
 TEST_F(WireProtocolTest, TestOKStatus) {
@@ -189,7 +201,7 @@ TEST_F(WireProtocolTest, TestColumnarRowBlockToPB) {
   // Convert to PB.
   RowwiseRowBlockPB pb;
   faststring direct, indirect;
-  SerializeRowBlock(block, &pb, NULL, &direct, &indirect);
+  SerializeRowBlock(block, &pb, nullptr, &direct, &indirect);
   SCOPED_TRACE(pb.DebugString());
   SCOPED_TRACE("Row data: " + direct.ToString());
   SCOPED_TRACE("Indirect data: " + indirect.ToString());
@@ -230,8 +242,7 @@ TEST_F(WireProtocolTest, TestColumnarRowBlockToPBBenchmark) {
 // Test that trying to extract rows from an invalid block correctly returns
 // Corruption statuses.
 TEST_F(WireProtocolTest, TestInvalidRowBlock) {
-  Schema schema(boost::assign::list_of(ColumnSchema("col1", STRING)),
-                1);
+  Schema schema({ ColumnSchema("col1", STRING) }, 1);
   RowwiseRowBlockPB pb;
   vector<const uint8_t*> row_ptrs;
 
@@ -268,7 +279,7 @@ TEST_F(WireProtocolTest, TestBlockWithNoColumns) {
   // Convert it to protobuf, ensure that the results look right.
   RowwiseRowBlockPB pb;
   faststring direct, indirect;
-  SerializeRowBlock(block, &pb, NULL, &direct, &indirect);
+  SerializeRowBlock(block, &pb, nullptr, &direct, &indirect);
   ASSERT_EQ(900, pb.num_rows());
 }
 
@@ -284,7 +295,7 @@ TEST_F(WireProtocolTest, TestColumnDefaultValue) {
   ColumnSchema col1fpb = ColumnSchemaFromPB(pb);
   ASSERT_FALSE(col1fpb.has_read_default());
   ASSERT_FALSE(col1fpb.has_write_default());
-  ASSERT_TRUE(col1fpb.read_default_value() == NULL);
+  ASSERT_TRUE(col1fpb.read_default_value() == nullptr);
 
   ColumnSchema col2("col2", STRING, false, &read_default_str);
   ColumnSchemaToPB(col2, &pb);
@@ -292,7 +303,7 @@ TEST_F(WireProtocolTest, TestColumnDefaultValue) {
   ASSERT_TRUE(col2fpb.has_read_default());
   ASSERT_FALSE(col2fpb.has_write_default());
   ASSERT_EQ(read_default_str, *static_cast<const Slice *>(col2fpb.read_default_value()));
-  ASSERT_EQ(NULL, static_cast<const Slice *>(col2fpb.write_default_value()));
+  ASSERT_EQ(nullptr, static_cast<const Slice *>(col2fpb.write_default_value()));
 
   ColumnSchema col3("col3", STRING, false, &read_default_str, &write_default_str);
   ColumnSchemaToPB(col3, &pb);
@@ -308,7 +319,7 @@ TEST_F(WireProtocolTest, TestColumnDefaultValue) {
   ASSERT_TRUE(col4fpb.has_read_default());
   ASSERT_FALSE(col4fpb.has_write_default());
   ASSERT_EQ(read_default_u32, *static_cast<const uint32_t *>(col4fpb.read_default_value()));
-  ASSERT_EQ(NULL, static_cast<const uint32_t *>(col4fpb.write_default_value()));
+  ASSERT_EQ(nullptr, static_cast<const uint32_t *>(col4fpb.write_default_value()));
 
   ColumnSchema col5("col5", UINT32, false, &read_default_u32, &write_default_u32);
   ColumnSchemaToPB(col5, &pb);

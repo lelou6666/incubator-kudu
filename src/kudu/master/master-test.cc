@@ -1,23 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include "kudu/common/partial_row.h"
@@ -35,12 +36,11 @@
 #include "kudu/util/status.h"
 #include "kudu/util/test_util.h"
 
-using boost::assign::list_of;
-using std::string;
-using std::tr1::shared_ptr;
 using kudu::rpc::Messenger;
 using kudu::rpc::MessengerBuilder;
 using kudu::rpc::RpcController;
+using std::shared_ptr;
+using std::string;
 
 DECLARE_bool(catalog_manager_check_ts_count_for_create_table);
 
@@ -209,6 +209,21 @@ TEST_F(MasterTest, TestRegisterAndHeartbeat) {
     ASSERT_EQ("my-ts-uuid", resp.servers(0).instance_id().permanent_uuid());
     ASSERT_EQ(1, resp.servers(0).instance_id().instance_seqno());
   }
+
+  // Ensure that trying to re-register with a different port fails.
+  {
+    TSHeartbeatRequestPB req;
+    TSHeartbeatResponsePB resp;
+    RpcController rpc;
+    req.mutable_common()->CopyFrom(common);
+    req.mutable_registration()->CopyFrom(fake_reg);
+    req.mutable_registration()->mutable_rpc_addresses(0)->set_port(1001);
+    Status s = proxy_->TSHeartbeat(req, &resp, &rpc);
+    ASSERT_TRUE(s.IsRemoteError());
+    ASSERT_STR_CONTAINS(s.ToString(),
+                        "Tablet server my-ts-uuid is attempting to re-register "
+                        "with a different host/port.");
+  }
 }
 
 Status MasterTest::CreateTable(const string& table_name,
@@ -219,7 +234,7 @@ Status MasterTest::CreateTable(const string& table_name,
   KuduPartialRow split2(&schema);
   RETURN_NOT_OK(split2.SetInt32("key", 20));
 
-  return CreateTable(table_name, schema, list_of(split1)(split2));
+  return CreateTable(table_name, schema, { split1, split2 });
 }
 
 Status MasterTest::CreateTable(const string& table_name,
@@ -233,7 +248,7 @@ Status MasterTest::CreateTable(const string& table_name,
   req.set_name(table_name);
   RETURN_NOT_OK(SchemaToPB(schema, req.mutable_schema()));
   RowOperationsPBEncoder encoder(req.mutable_split_rows());
-  BOOST_FOREACH(const KuduPartialRow& row, split_rows) {
+  for (const KuduPartialRow& row : split_rows) {
     encoder.Add(RowOperationsPB::SPLIT_ROW, row);
   }
 
@@ -259,9 +274,9 @@ void MasterTest::DoListAllTables(ListTablesResponsePB* resp) {
 TEST_F(MasterTest, TestCatalog) {
   const char *kTableName = "testtb";
   const char *kOtherTableName = "tbtest";
-  const Schema kTableSchema(list_of(ColumnSchema("key", INT32))
-                                   (ColumnSchema("v1", UINT64))
-                                   (ColumnSchema("v2", STRING)),
+  const Schema kTableSchema({ ColumnSchema("key", INT32),
+                              ColumnSchema("v1", UINT64),
+                              ColumnSchema("v2", STRING) },
                             1);
 
   ASSERT_OK(CreateTable(kTableName, kTableSchema));
@@ -270,7 +285,6 @@ TEST_F(MasterTest, TestCatalog) {
   ASSERT_NO_FATAL_FAILURE(DoListAllTables(&tables));
   ASSERT_EQ(1, tables.tables_size());
   ASSERT_EQ(kTableName, tables.tables(0).name());
-
 
   // Delete the table
   {
@@ -342,7 +356,7 @@ TEST_F(MasterTest, TestCatalog) {
 
 TEST_F(MasterTest, TestCreateTableCheckSplitRows) {
   const char *kTableName = "testtb";
-  const Schema kTableSchema(list_of(ColumnSchema("key", INT32))(ColumnSchema("val", INT32)), 1);
+  const Schema kTableSchema({ ColumnSchema("key", INT32), ColumnSchema("val", INT32) }, 1);
 
   // No duplicate split rows.
   {
@@ -350,7 +364,7 @@ TEST_F(MasterTest, TestCreateTableCheckSplitRows) {
     ASSERT_OK(split1.SetInt32("key", 1));
     KuduPartialRow split2(&kTableSchema);
     ASSERT_OK(split2.SetInt32("key", 2));
-    Status s = CreateTable(kTableName, kTableSchema, list_of(split1)(split1)(split2));
+    Status s = CreateTable(kTableName, kTableSchema, { split1, split1, split2 });
     ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
     ASSERT_STR_CONTAINS(s.ToString(), "Duplicate split row");
   }
@@ -360,7 +374,7 @@ TEST_F(MasterTest, TestCreateTableCheckSplitRows) {
     KuduPartialRow split1 = KuduPartialRow(&kTableSchema);
     ASSERT_OK(split1.SetInt32("key", 1));
     KuduPartialRow split2(&kTableSchema);
-    Status s = CreateTable(kTableName, kTableSchema, list_of(split1)(split2));
+    Status s = CreateTable(kTableName, kTableSchema, { split1, split2 });
     ASSERT_TRUE(s.IsInvalidArgument());
     ASSERT_STR_CONTAINS(s.ToString(),
                         "Invalid argument: Split rows must contain a value for at "
@@ -372,7 +386,7 @@ TEST_F(MasterTest, TestCreateTableCheckSplitRows) {
     KuduPartialRow split = KuduPartialRow(&kTableSchema);
     ASSERT_OK(split.SetInt32("key", 1));
     ASSERT_OK(split.SetInt32("val", 1));
-    Status s = CreateTable(kTableName, kTableSchema, list_of(split));
+    Status s = CreateTable(kTableName, kTableSchema, { split });
     ASSERT_TRUE(s.IsInvalidArgument());
     ASSERT_STR_CONTAINS(s.ToString(),
                         "Invalid argument: Split rows may only contain values "
@@ -384,7 +398,7 @@ TEST_F(MasterTest, TestCreateTableInvalidKeyType) {
   const char *kTableName = "testtb";
 
   {
-    const Schema kTableSchema(list_of(ColumnSchema("key", BOOL)), 1);
+    const Schema kTableSchema({ ColumnSchema("key", BOOL) }, 1);
     Status s = CreateTable(kTableName, kTableSchema, vector<KuduPartialRow>());
     ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
     ASSERT_STR_CONTAINS(s.ToString(),
@@ -392,7 +406,7 @@ TEST_F(MasterTest, TestCreateTableInvalidKeyType) {
   }
 
   {
-    const Schema kTableSchema(list_of(ColumnSchema("key", FLOAT)), 1);
+    const Schema kTableSchema({ ColumnSchema("key", FLOAT) }, 1);
     Status s = CreateTable(kTableName, kTableSchema, vector<KuduPartialRow>());
     ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
     ASSERT_STR_CONTAINS(s.ToString(),
@@ -400,7 +414,7 @@ TEST_F(MasterTest, TestCreateTableInvalidKeyType) {
   }
 
   {
-    const Schema kTableSchema(list_of(ColumnSchema("key", DOUBLE)), 1);
+    const Schema kTableSchema({ ColumnSchema("key", DOUBLE) }, 1);
     Status s = CreateTable(kTableName, kTableSchema, vector<KuduPartialRow>());
     ASSERT_TRUE(s.IsInvalidArgument()) << s.ToString();
     ASSERT_STR_CONTAINS(s.ToString(),
@@ -434,7 +448,7 @@ TEST_F(MasterTest, TestCreateTableInvalidSchema) {
 // invalid.
 TEST_F(MasterTest, TestInvalidGetTableLocations) {
   const string kTableName = "test";
-  Schema schema(list_of(ColumnSchema("key", INT32)), 1);
+  Schema schema({ ColumnSchema("key", INT32) }, 1);
   ASSERT_OK(CreateTable(kTableName, schema));
   {
     GetTableLocationsRequestPB req;
@@ -451,6 +465,78 @@ TEST_F(MasterTest, TestInvalidGetTableLocations) {
               "\"start partition key is greater than the end partition key\"",
               resp.error().status().ShortDebugString());
   }
+}
+
+// Tests that if the master is shutdown while a table visitor is active, the
+// shutdown waits for the visitor to finish, avoiding racing and crashing.
+TEST_F(MasterTest, TestShutdownDuringTableVisit) {
+  ASSERT_OK(master_->catalog_manager()->ElectedAsLeaderCb());
+
+  // Master will now shut down, potentially racing with
+  // CatalogManager::VisitTablesAndTabletsTask.
+}
+
+static void GetTableSchema(const char* kTableName,
+                           const Schema* kSchema,
+                           MasterServiceProxy* proxy,
+                           CountDownLatch* started,
+                           AtomicBool* done) {
+  GetTableSchemaRequestPB req;
+  GetTableSchemaResponsePB resp;
+  req.mutable_table()->set_table_name(kTableName);
+
+  started->CountDown();
+  while (!done->Load()) {
+    RpcController controller;
+
+    CHECK_OK(proxy->GetTableSchema(req, &resp, &controller));
+    SCOPED_TRACE(resp.DebugString());
+
+    // There are two possible outcomes:
+    //
+    // 1. GetTableSchema() happened before CreateTable(): we expect to see a
+    //    TABLE_NOT_FOUND error.
+    // 2. GetTableSchema() happened after CreateTable(): we expect to see the
+    //    full table schema.
+    //
+    // Any other outcome is an error.
+    if (resp.has_error()) {
+      CHECK_EQ(MasterErrorPB::TABLE_NOT_FOUND, resp.error().code());
+    } else {
+      Schema receivedSchema;
+      CHECK_OK(SchemaFromPB(resp.schema(), &receivedSchema));
+      CHECK(kSchema->Equals(receivedSchema)) <<
+          strings::Substitute("$0 not equal to $1",
+                              kSchema->ToString(), receivedSchema.ToString());
+    }
+  }
+}
+
+// The catalog manager had a bug wherein GetTableSchema() interleaved with
+// CreateTable() could expose intermediate uncommitted state to clients. This
+// test ensures that bug does not regress.
+TEST_F(MasterTest, TestGetTableSchemaIsAtomicWithCreateTable) {
+  const char* kTableName = "testtb";
+  const Schema kTableSchema({ ColumnSchema("key", INT32),
+                              ColumnSchema("v1", UINT64),
+                              ColumnSchema("v2", STRING) },
+                            1);
+
+  CountDownLatch started(1);
+  AtomicBool done(false);
+
+  // Kick off a thread that calls GetTableSchema() in a loop.
+  scoped_refptr<Thread> t;
+  ASSERT_OK(Thread::Create("test", "test",
+                           &GetTableSchema, kTableName, &kTableSchema,
+                           proxy_.get(), &started, &done, &t));
+
+  // Only create the table after the thread has started.
+  started.Wait();
+  EXPECT_OK(CreateTable(kTableName, kTableSchema));
+
+  done.Store(true);
+  t->Join();
 }
 
 } // namespace master

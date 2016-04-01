@@ -1,28 +1,29 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
+#include <algorithm>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
-#include <tr1/memory>
-#include <algorithm>
-#include <vector>
 
 #include "kudu/cfile/bloomfile.h"
 #include "kudu/cfile/cfile_util.h"
 #include "kudu/cfile/cfile_writer.h"
 #include "kudu/common/scan_spec.h"
-#include "kudu/gutil/algorithm.h"
+#include "kudu/gutil/dynamic_annotations.h"
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/strings/substitute.h"
@@ -39,7 +40,7 @@ namespace tablet {
 using cfile::ReaderOptions;
 using cfile::DefaultColumnValueIterator;
 using fs::ReadableBlock;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
 
 ////////////////////////////////////////////////////////////
@@ -56,16 +57,15 @@ static Status OpenReader(const shared_ptr<RowSetMetadata>& rowset_metadata,
 
   // TODO: somehow pass reader options in schema
   ReaderOptions opts;
-  return CFileReader::OpenNoInit(block.Pass(), opts, new_reader);
+  return CFileReader::OpenNoInit(std::move(block), opts, new_reader);
 }
 
 ////////////////////////////////////////////////////////////
 // CFile Base
 ////////////////////////////////////////////////////////////
 
-CFileSet::CFileSet(const shared_ptr<RowSetMetadata>& rowset_metadata)
-  : rowset_metadata_(rowset_metadata) {
-}
+CFileSet::CFileSet(shared_ptr<RowSetMetadata> rowset_metadata)
+    : rowset_metadata_(std::move(rowset_metadata)) {}
 
 CFileSet::~CFileSet() {
 }
@@ -77,7 +77,7 @@ Status CFileSet::Open() {
   // Lazily open the column data cfiles. Each one will be fully opened
   // later, when the first iterator seeks for the first time.
   RowSetMetadata::ColumnIdToBlockIdMap block_map = rowset_metadata_->GetColumnBlocksById();
-  BOOST_FOREACH(const RowSetMetadata::ColumnIdToBlockIdMap::value_type& e, block_map) {
+  for (const RowSetMetadata::ColumnIdToBlockIdMap::value_type& e : block_map) {
     ColumnId col_id = e.first;
     DCHECK(!ContainsKey(readers_by_col_id_, col_id)) << "already open";
 
@@ -103,7 +103,7 @@ Status CFileSet::Open() {
 }
 
 Status CFileSet::OpenAdHocIndexReader() {
-  if (ad_hoc_idx_reader_ != NULL) {
+  if (ad_hoc_idx_reader_ != nullptr) {
     return Status::OK();
   }
 
@@ -112,12 +112,12 @@ Status CFileSet::OpenAdHocIndexReader() {
   RETURN_NOT_OK(fs->OpenBlock(rowset_metadata_->adhoc_index_block(), &block));
 
   ReaderOptions opts;
-  return CFileReader::Open(block.Pass(), opts, &ad_hoc_idx_reader_);
+  return CFileReader::Open(std::move(block), opts, &ad_hoc_idx_reader_);
 }
 
 
 Status CFileSet::OpenBloomReader() {
-  if (bloom_reader_ != NULL) {
+  if (bloom_reader_ != nullptr) {
     return Status::OK();
   }
 
@@ -126,7 +126,7 @@ Status CFileSet::OpenBloomReader() {
   RETURN_NOT_OK(fs->OpenBlock(rowset_metadata_->bloom_block(), &block));
 
   ReaderOptions opts;
-  Status s = BloomFileReader::OpenNoInit(block.Pass(), opts, &bloom_reader_);
+  Status s = BloomFileReader::OpenNoInit(std::move(block), opts, &bloom_reader_);
   if (!s.ok()) {
     LOG(WARNING) << "Unable to open bloom file in " << rowset_metadata_->ToString() << ": "
                  << s.ToString();
@@ -187,7 +187,7 @@ Status CFileSet::GetBounds(Slice *min_encoded_key,
 
 uint64_t CFileSet::EstimateOnDiskSize() const {
   uint64_t ret = 0;
-  BOOST_FOREACH(const ReaderMap::value_type& e, readers_by_col_id_) {
+  for (const ReaderMap::value_type& e : readers_by_col_id_) {
     const shared_ptr<CFileReader> &reader = e.second;
     ret += reader->file_size();
   }
@@ -196,7 +196,7 @@ uint64_t CFileSet::EstimateOnDiskSize() const {
 
 Status CFileSet::FindRow(const RowSetKeyProbe &probe, rowid_t *idx,
                          ProbeStats* stats) const {
-  if (bloom_reader_ != NULL && FLAGS_consult_bloom_filters) {
+  if (bloom_reader_ != nullptr && FLAGS_consult_bloom_filters) {
     // Fully open the BloomFileReader if it was lazily opened earlier.
     //
     // If it's already initialized, this is a no-op.
@@ -210,13 +210,13 @@ Status CFileSet::FindRow(const RowSetKeyProbe &probe, rowid_t *idx,
     } else if (!s.ok()) {
       LOG(WARNING) << "Unable to query bloom: " << s.ToString()
                    << " (disabling bloom for this rowset from this point forward)";
-      const_cast<CFileSet *>(this)->bloom_reader_.reset(NULL);
+      const_cast<CFileSet *>(this)->bloom_reader_.reset(nullptr);
       // Continue with the slow path
     }
   }
 
   stats->keys_consulted++;
-  CFileIterator *key_iter = NULL;
+  CFileIterator *key_iter = nullptr;
   RETURN_NOT_OK(NewKeyIterator(&key_iter));
 
   gscoped_ptr<CFileIterator> key_iter_scoped(key_iter); // free on return
@@ -327,7 +327,7 @@ Status CFileSet::Iterator::PushdownRangeScanPredicate(ScanSpec *spec) {
   lower_bound_idx_ = 0;
   upper_bound_idx_ = row_count_;
 
-  if (spec == NULL) {
+  if (spec == nullptr) {
     // No predicate.
     return Status::OK();
   }
@@ -474,8 +474,10 @@ Status CFileSet::Iterator::FinishBatch() {
 void CFileSet::Iterator::GetIteratorStats(vector<IteratorStats>* stats) const {
   stats->clear();
   stats->reserve(col_iters_.size());
-  BOOST_FOREACH(const ColumnIterator* iter, col_iters_) {
+  for (const ColumnIterator* iter : col_iters_) {
+    ANNOTATE_IGNORE_READS_BEGIN();
     stats->push_back(iter->io_statistics());
+    ANNOTATE_IGNORE_READS_END();
   }
 }
 

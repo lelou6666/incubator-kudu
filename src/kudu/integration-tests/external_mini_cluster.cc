@@ -1,24 +1,27 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/integration-tests/external_mini_cluster.h"
 
-#include <boost/foreach.hpp>
+#include <algorithm>
 #include <gtest/gtest.h>
+#include <memory>
 #include <rapidjson/document.h>
 #include <string>
-#include <tr1/memory>
 
 #include "kudu/client/client.h"
 #include "kudu/common/wire_protocol.h"
@@ -44,16 +47,16 @@
 #include "kudu/util/subprocess.h"
 #include "kudu/util/test_util.h"
 
-using rapidjson::Value;
-using std::string;
-using std::tr1::shared_ptr;
-using strings::Substitute;
 using kudu::master::GetLeaderMasterRpc;
 using kudu::master::MasterServiceProxy;
 using kudu::server::ServerStatusPB;
-using kudu::tserver::TabletServerServiceProxy;
 using kudu::tserver::ListTabletsRequestPB;
 using kudu::tserver::ListTabletsResponsePB;
+using kudu::tserver::TabletServerServiceProxy;
+using rapidjson::Value;
+using std::string;
+using strings::Substitute;
+
 typedef ListTabletsResponsePB::StatusAndSchemaPB StatusAndSchemaPB;
 
 namespace kudu {
@@ -61,7 +64,7 @@ namespace kudu {
 static const char* const kMasterBinaryName = "kudu-master";
 static const char* const kTabletServerBinaryName = "kudu-tserver";
 static double kProcessStartTimeoutSeconds = 30.0;
-static double kTabletServerRegistrationTimeoutSeconds = 10.0;
+static double kTabletServerRegistrationTimeoutSeconds = 15.0;
 
 #if defined(__APPLE__)
 static bool kBindToUniqueLoopbackAddress = false;
@@ -148,27 +151,27 @@ Status ExternalMiniCluster::Start() {
 
 void ExternalMiniCluster::Shutdown(NodeSelectionMode mode) {
   if (mode == ALL) {
-    BOOST_FOREACH(const scoped_refptr<ExternalMaster>& master, masters_) {
+    for (const scoped_refptr<ExternalMaster>& master : masters_) {
       if (master) {
         master->Shutdown();
       }
     }
   }
 
-  BOOST_FOREACH(const scoped_refptr<ExternalTabletServer>& ts, tablet_servers_) {
+  for (const scoped_refptr<ExternalTabletServer>& ts : tablet_servers_) {
     ts->Shutdown();
   }
 }
 
 Status ExternalMiniCluster::Restart() {
-  BOOST_FOREACH(const scoped_refptr<ExternalMaster>& master, masters_) {
+  for (const scoped_refptr<ExternalMaster>& master : masters_) {
     if (master && master->IsShutdown()) {
       RETURN_NOT_OK_PREPEND(master->Restart(), "Cannot restart master bound at: " +
                                                master->bound_rpc_hostport().ToString());
     }
   }
 
-  BOOST_FOREACH(const scoped_refptr<ExternalTabletServer>& ts, tablet_servers_) {
+  for (const scoped_refptr<ExternalTabletServer>& ts : tablet_servers_) {
     if (ts->IsShutdown()) {
       RETURN_NOT_OK_PREPEND(ts->Restart(), "Cannot restart tablet server bound at: " +
                                            ts->bound_rpc_hostport().ToString());
@@ -197,7 +200,7 @@ vector<string> SubstituteInFlags(const vector<string>& orig_flags,
                                  int index) {
   string str_index = strings::Substitute("$0", index);
   vector<string> ret;
-  BOOST_FOREACH(const string& orig, orig_flags) {
+  for (const string& orig : orig_flags) {
     ret.push_back(StringReplace(orig, "${index}", str_index, true));
   }
   return ret;
@@ -261,7 +264,7 @@ string ExternalMiniCluster::GetBindIpForTabletServer(int index) const {
 }
 
 Status ExternalMiniCluster::AddTabletServer() {
-  CHECK(leader_master() != NULL)
+  CHECK(leader_master() != nullptr)
       << "Must have started at least 1 master before adding tablet servers";
 
   int idx = tablet_servers_.size();
@@ -303,8 +306,8 @@ Status ExternalMiniCluster::WaitForTabletServerCount(int count, const MonoDelta&
       // Do a second step of verification to verify that the descs that we got
       // are aligned (same uuid/seqno) with the TSs that we have in the cluster.
       int match_count = 0;
-      BOOST_FOREACH(const master::ListTabletServersResponsePB_Entry& e, resp.servers()) {
-        BOOST_FOREACH(const scoped_refptr<ExternalTabletServer>& ets, tablet_servers_) {
+      for (const master::ListTabletServersResponsePB_Entry& e : resp.servers()) {
+        for (const scoped_refptr<ExternalTabletServer>& ets : tablet_servers_) {
           if (ets->instance_id().permanent_uuid() == e.instance_id().permanent_uuid() &&
               ets->instance_id().instance_seqno() == e.instance_id().instance_seqno()) {
             match_count++;
@@ -323,7 +326,7 @@ Status ExternalMiniCluster::WaitForTabletServerCount(int count, const MonoDelta&
 
 void ExternalMiniCluster::AssertNoCrashes() {
   vector<ExternalDaemon*> daemons = this->daemons();
-  BOOST_FOREACH(ExternalDaemon* d, daemons) {
+  for (ExternalDaemon* d : daemons) {
     if (d->IsShutdown()) continue;
     EXPECT_TRUE(d->IsProcessAlive()) << "At least one process crashed";
   }
@@ -346,7 +349,7 @@ Status ExternalMiniCluster::WaitForTabletsRunning(ExternalTabletServer* ts,
     }
 
     int num_not_running = 0;
-    BOOST_FOREACH(const StatusAndSchemaPB& status, resp.status_and_schema()) {
+    for (const StatusAndSchemaPB& status : resp.status_and_schema()) {
       if (status.tablet_status().state() != tablet::RUNNING) {
         num_not_running++;
       }
@@ -382,7 +385,7 @@ Status ExternalMiniCluster::GetLeaderMasterIndex(int* idx) {
   MonoTime deadline = MonoTime::Now(MonoTime::FINE);
   deadline.AddDelta(MonoDelta::FromSeconds(5));
 
-  BOOST_FOREACH(const scoped_refptr<ExternalMaster>& master, masters_) {
+  for (const scoped_refptr<ExternalMaster>& master : masters_) {
     addrs.push_back(master->bound_rpc_addr());
   }
   rpc.reset(new GetLeaderMasterRpc(Bind(&LeaderMasterCallback,
@@ -411,12 +414,12 @@ Status ExternalMiniCluster::GetLeaderMasterIndex(int* idx) {
 }
 
 ExternalTabletServer* ExternalMiniCluster::tablet_server_by_uuid(const std::string& uuid) const {
-  BOOST_FOREACH(const scoped_refptr<ExternalTabletServer>& ts, tablet_servers_) {
+  for (const scoped_refptr<ExternalTabletServer>& ts : tablet_servers_) {
     if (ts->instance_id().permanent_uuid() == uuid) {
       return ts.get();
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 int ExternalMiniCluster::tablet_server_index_by_uuid(const std::string& uuid) const {
@@ -430,35 +433,35 @@ int ExternalMiniCluster::tablet_server_index_by_uuid(const std::string& uuid) co
 
 vector<ExternalDaemon*> ExternalMiniCluster::daemons() const {
   vector<ExternalDaemon*> results;
-  BOOST_FOREACH(const scoped_refptr<ExternalTabletServer>& ts, tablet_servers_) {
+  for (const scoped_refptr<ExternalTabletServer>& ts : tablet_servers_) {
     results.push_back(ts.get());
   }
-  BOOST_FOREACH(const scoped_refptr<ExternalMaster>& master, masters_) {
+  for (const scoped_refptr<ExternalMaster>& master : masters_) {
     results.push_back(master.get());
   }
   return results;
 }
 
-shared_ptr<rpc::Messenger> ExternalMiniCluster::messenger() {
+std::shared_ptr<rpc::Messenger> ExternalMiniCluster::messenger() {
   return messenger_;
 }
 
-shared_ptr<MasterServiceProxy> ExternalMiniCluster::master_proxy() {
+std::shared_ptr<MasterServiceProxy> ExternalMiniCluster::master_proxy() {
   CHECK_EQ(masters_.size(), 1);
   return master_proxy(0);
 }
 
-shared_ptr<MasterServiceProxy> ExternalMiniCluster::master_proxy(int idx) {
+std::shared_ptr<MasterServiceProxy> ExternalMiniCluster::master_proxy(int idx) {
   CHECK_LT(idx, masters_.size());
-  return shared_ptr<MasterServiceProxy>(
+  return std::shared_ptr<MasterServiceProxy>(
       new MasterServiceProxy(messenger_, CHECK_NOTNULL(master(idx))->bound_rpc_addr()));
 }
 
 Status ExternalMiniCluster::CreateClient(client::KuduClientBuilder& builder,
-                                         shared_ptr<client::KuduClient>* client) {
+                                         client::sp::shared_ptr<client::KuduClient>* client) {
   CHECK(!masters_.empty());
   builder.clear_master_server_addrs();
-  BOOST_FOREACH(const scoped_refptr<ExternalMaster>& master, masters_) {
+  for (const scoped_refptr<ExternalMaster>& master : masters_) {
     builder.add_master_server_addr(master->bound_rpc_hostport().ToString());
   }
   return builder.Build(client);
@@ -489,15 +492,13 @@ Status ExternalMiniCluster::SetFlag(ExternalDaemon* daemon,
 // ExternalDaemon
 //------------------------------------------------------------
 
-ExternalDaemon::ExternalDaemon(const shared_ptr<rpc::Messenger>& messenger,
-                               const string& exe,
-                               const string& data_dir,
-                               const vector<string>& extra_flags) :
-  messenger_(messenger),
-  exe_(exe),
-  data_dir_(data_dir),
-  extra_flags_(extra_flags) {
-}
+ExternalDaemon::ExternalDaemon(std::shared_ptr<rpc::Messenger> messenger,
+                               string exe, string data_dir,
+                               vector<string> extra_flags)
+    : messenger_(std::move(messenger)),
+      exe_(std::move(exe)),
+      data_dir_(std::move(data_dir)),
+      extra_flags_(std::move(extra_flags)) {}
 
 ExternalDaemon::~ExternalDaemon() {
 }
@@ -599,7 +600,7 @@ Status ExternalDaemon::Resume() {
 }
 
 bool ExternalDaemon::IsShutdown() const {
-  return process_.get() == NULL;
+  return process_.get() == nullptr;
 }
 
 bool ExternalDaemon::IsProcessAlive() const {
@@ -612,6 +613,19 @@ bool ExternalDaemon::IsProcessAlive() const {
   // If the non-blocking Wait "times out", that means the process
   // is running.
   return s.IsTimedOut();
+}
+
+Status ExternalDaemon::WaitForCrash(const MonoDelta& timeout) const {
+  MonoTime deadline = MonoTime::Now(MonoTime::FINE);
+  deadline.AddDelta(timeout);
+
+  int i = 1;
+  while (MonoTime::Now(MonoTime::FINE).ComesBefore(deadline)) {
+    if (!IsProcessAlive()) return Status::OK();
+    int sleep_ms = std::min(i++ * 10, 200);
+    SleepFor(MonoDelta::FromMilliseconds(sleep_ms));
+  }
+  return Status::TimedOut(Substitute("Process did not crash within $0", timeout.ToString()));
 }
 
 pid_t ExternalDaemon::pid() const {
@@ -715,7 +729,7 @@ Status ExternalDaemon::GetInt64Metric(const MetricEntityPrototype* entity_proto,
   RETURN_NOT_OK(r.Init());
   vector<const Value*> entities;
   RETURN_NOT_OK(r.ExtractObjectArray(r.root(), NULL, &entities));
-  BOOST_FOREACH(const Value* entity, entities) {
+  for (const Value* entity : entities) {
     // Find the desired entity.
     string type;
     RETURN_NOT_OK(r.ExtractString(entity, "type", &type));
@@ -733,7 +747,7 @@ Status ExternalDaemon::GetInt64Metric(const MetricEntityPrototype* entity_proto,
     // Find the desired metric within the entity.
     vector<const Value*> metrics;
     RETURN_NOT_OK(r.ExtractObjectArray(entity, "metrics", &metrics));
-    BOOST_FOREACH(const Value* metric, metrics) {
+    for (const Value* metric : metrics) {
       string name;
       RETURN_NOT_OK(r.ExtractString(metric, "name", &name));
       if (name != metric_proto->name()) {
@@ -771,7 +785,7 @@ ScopedResumeExternalDaemon::~ScopedResumeExternalDaemon() {
 // ExternalMaster
 //------------------------------------------------------------
 
-ExternalMaster::ExternalMaster(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
+ExternalMaster::ExternalMaster(const std::shared_ptr<rpc::Messenger>& messenger,
                                const string& exe,
                                const string& data_dir,
                                const vector<string>& extra_flags)
@@ -779,14 +793,12 @@ ExternalMaster::ExternalMaster(const std::tr1::shared_ptr<rpc::Messenger>& messe
       rpc_bind_address_("127.0.0.1:0") {
 }
 
-ExternalMaster::ExternalMaster(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
-                               const string& exe,
-                               const string& data_dir,
-                               const string& rpc_bind_address,
+ExternalMaster::ExternalMaster(const std::shared_ptr<rpc::Messenger>& messenger,
+                               const string& exe, const string& data_dir,
+                               string rpc_bind_address,
                                const std::vector<string>& extra_flags)
     : ExternalDaemon(messenger, exe, data_dir, extra_flags),
-      rpc_bind_address_(rpc_bind_address) {
-}
+      rpc_bind_address_(std::move(rpc_bind_address)) {}
 
 ExternalMaster::~ExternalMaster() {
 }
@@ -822,16 +834,13 @@ Status ExternalMaster::Restart() {
 // ExternalTabletServer
 //------------------------------------------------------------
 
-ExternalTabletServer::ExternalTabletServer(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
-                                           const string& exe,
-                                           const string& data_dir,
-                                           const string& bind_host,
-                                           const vector<HostPort>& master_addrs,
-                                           const vector<string>& extra_flags)
-  : ExternalDaemon(messenger, exe, data_dir, extra_flags),
-    master_addrs_(HostPort::ToCommaSeparatedString(master_addrs)),
-    bind_host_(bind_host) {
-}
+ExternalTabletServer::ExternalTabletServer(
+    const std::shared_ptr<rpc::Messenger>& messenger, const string& exe,
+    const string& data_dir, string bind_host,
+    const vector<HostPort>& master_addrs, const vector<string>& extra_flags)
+    : ExternalDaemon(messenger, exe, data_dir, extra_flags),
+      master_addrs_(HostPort::ToCommaSeparatedString(master_addrs)),
+      bind_host_(std::move(bind_host)) {}
 
 ExternalTabletServer::~ExternalTabletServer() {
 }

@@ -1,25 +1,27 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tool to administer a cluster from the CLI.
 
-#include <boost/foreach.hpp>
 #include <boost/optional.hpp>
-#include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <tr1/memory>
+#include <glog/logging.h>
 #include <iostream>
+#include <memory>
 #include <strstream>
 
 #include "kudu/client/client.h"
@@ -60,7 +62,6 @@ namespace tools {
 
 using std::ostringstream;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 
 using google::protobuf::RepeatedPtrField;
@@ -84,13 +85,17 @@ using strings::Substitute;
 const char* const kChangeConfigOp = "change_config";
 const char* const kListTablesOp = "list_tables";
 const char* const kDeleteTableOp = "delete_table";
+<<<<<<< HEAD
 static const char* g_progname = NULL;
+=======
+static const char* g_progname = nullptr;
+>>>>>>> refs/remotes/apache/master
 
 class ClusterAdminClient {
  public:
   // Creates an admin client for host/port combination e.g.,
   // "localhost" or "127.0.0.1:7050".
-  ClusterAdminClient(const std::string& addrs, int64_t timeout_millis);
+  ClusterAdminClient(std::string addrs, int64_t timeout_millis);
 
   // Initialized the client and connects to the specified tablet
   // server.
@@ -126,18 +131,21 @@ class ClusterAdminClient {
   const MonoDelta timeout_;
 
   bool initted_;
-  shared_ptr<rpc::Messenger> messenger_;
+  std::shared_ptr<rpc::Messenger> messenger_;
   gscoped_ptr<MasterServiceProxy> master_proxy_;
+<<<<<<< HEAD
   shared_ptr<KuduClient> kudu_client_;
+=======
+  client::sp::shared_ptr<KuduClient> kudu_client_;
+>>>>>>> refs/remotes/apache/master
 
   DISALLOW_COPY_AND_ASSIGN(ClusterAdminClient);
 };
 
-ClusterAdminClient::ClusterAdminClient(const string& addrs, int64_t timeout_millis)
-    : master_addr_list_(addrs),
+ClusterAdminClient::ClusterAdminClient(string addrs, int64_t timeout_millis)
+    : master_addr_list_(std::move(addrs)),
       timeout_(MonoDelta::FromMilliseconds(timeout_millis)),
-      initted_(false) {
-}
+      initted_(false) {}
 
 Status ClusterAdminClient::Init() {
   CHECK(!initted_);
@@ -276,7 +284,7 @@ Status ClusterAdminClient::GetTabletLeader(const string& tablet_id,
   RETURN_NOT_OK(GetTabletLocations(tablet_id, &locations));
   CHECK_EQ(tablet_id, locations.tablet_id()) << locations.ShortDebugString();
   bool found = false;
-  BOOST_FOREACH(const TabletLocationsPB::ReplicaPB& replica, locations.replicas()) {
+  for (const TabletLocationsPB::ReplicaPB& replica : locations.replicas()) {
     if (replica.role() == RaftPeerPB::LEADER) {
       *ts_info = replica.ts_info();
       found = true;
@@ -309,7 +317,7 @@ Status ClusterAdminClient::ListTabletServers(
 Status ClusterAdminClient::GetFirstRpcAddressForTS(const std::string& uuid, HostPort* hp) {
   RepeatedPtrField<ListTabletServersResponsePB::Entry> servers;
   RETURN_NOT_OK(ListTabletServers(&servers));
-  BOOST_FOREACH(const ListTabletServersResponsePB::Entry& server, servers) {
+  for (const ListTabletServersResponsePB::Entry& server : servers) {
     if (server.instance_id().permanent_uuid() == uuid) {
       if (!server.has_registration() || server.registration().rpc_addresses_size() == 0) {
         break;
@@ -326,7 +334,11 @@ Status ClusterAdminClient::GetFirstRpcAddressForTS(const std::string& uuid, Host
 Status ClusterAdminClient::ListTables() {
   vector<string> tables;
   RETURN_NOT_OK(kudu_client_->ListTables(&tables));
+<<<<<<< HEAD
   BOOST_FOREACH(const string& table, tables) {
+=======
+  for (const string& table : tables) {
+>>>>>>> refs/remotes/apache/master
     std::cout << table << std::endl;
   }
   return Status::OK();

@@ -1,21 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_TABLET_WRITE_TRANSACTION_H_
 #define KUDU_TABLET_WRITE_TRANSACTION_H_
 
-#include <boost/thread/shared_mutex.hpp>
 #include <string>
 #include <vector>
 
@@ -25,6 +27,7 @@
 #include "kudu/tablet/mvcc.h"
 #include "kudu/tablet/tablet.pb.h"
 #include "kudu/tablet/transactions/transaction.h"
+#include "kudu/util/locks.h"
 
 namespace kudu {
 struct DecodedRowOperation;
@@ -136,15 +139,16 @@ class WriteTransactionState : public TransactionState {
   // blocked on it).
   void StartApplying();
 
-  // Commits the Mvcc transaction and releases the component lock. After
-  // this method is called all the inserts and mutations will become
-  // visible to other transactions.
+  // Commits or aborts the MVCC transaction and releases all locks held.
   //
-  // Only one of Commit() or Abort() should be called.
+  // In the case of COMMITTED, this method makes the inserts and mutations performed
+  // by this transaction visible to other transactions.
+  //
+  // Must be called exactly once.
   // REQUIRES: StartApplying() was called.
   //
   // Note: request_ and response_ are set to NULL after this method returns.
-  void Commit();
+  void CommitOrAbort(Transaction::TransactionResult result);
 
   // Aborts the mvcc transaction and releases the component lock.
   // Only one of Commit() or Abort() should be called.
@@ -165,9 +169,6 @@ class WriteTransactionState : public TransactionState {
 
   void UpdateMetricsForOp(const RowOp& op);
 
-  // Releases all the row locks acquired by this transaction.
-  void release_row_locks();
-
   // Resets this TransactionState, releasing all locks, destroying all prepared
   // writes, clearing the transaction result _and_ committing the current Mvcc
   // transaction.
@@ -176,6 +177,9 @@ class WriteTransactionState : public TransactionState {
   virtual std::string ToString() const OVERRIDE;
 
  private:
+  // Releases all the row locks acquired by this transaction.
+  void ReleaseRowLocks();
+
   // Reset the RPC request, response, and row_ops_ (which refers to data
   // from the request).
   void ResetRpcFields();
@@ -198,7 +202,7 @@ class WriteTransactionState : public TransactionState {
 
   // A lock held on the tablet's schema. Prevents concurrent schema change
   // from racing with a write.
-  boost::shared_lock<rw_semaphore> schema_lock_;
+  shared_lock<rw_semaphore> schema_lock_;
 
   // The Schema of the tablet when the transaction was first decoded.
   // This is verified at APPLY time to ensure we don't have races against
@@ -248,9 +252,6 @@ class WriteTransaction : public Transaction {
   // original requests) which is already a requirement of the consensus
   // algorithm.
   virtual Status Apply(gscoped_ptr<consensus::CommitMsg>* commit_msg) OVERRIDE;
-
-  // Releases the row locks (Early Lock Release).
-  virtual void PreCommit() OVERRIDE;
 
   // If result == COMMITTED, commits the mvcc transaction and updates
   // the metrics, if result == ABORTED aborts the mvcc transaction.

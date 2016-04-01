@@ -1,25 +1,28 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/mem_tracker.h"
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <deque>
 #include <gperftools/malloc_extension.h>
 #include <limits>
 #include <list>
+#include <memory>
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/once.h"
@@ -27,6 +30,7 @@
 #include "kudu/gutil/strings/human_readable.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/debug-util.h"
+#include "kudu/util/debug/trace_event.h"
 #include "kudu/util/env.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/mutex.h"
@@ -52,6 +56,13 @@ DEFINE_int32(memory_limit_warn_threshold_percentage, 98,
              "consume before WARNING level messages are periodically logged.");
 TAG_FLAG(memory_limit_warn_threshold_percentage, advanced);
 
+#ifdef TCMALLOC_ENABLED
+DEFINE_int32(tcmalloc_max_free_bytes_percentage, 10,
+             "Maximum percentage of the RSS that tcmalloc is allowed to use for "
+             "reserved but unallocated memory.");
+TAG_FLAG(tcmalloc_max_free_bytes_percentage, advanced);
+#endif
+
 namespace kudu {
 
 // NOTE: this class has been adapted from Impala, so the code style varies
@@ -61,8 +72,9 @@ using std::deque;
 using std::list;
 using std::string;
 using std::stringstream;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
+using std::weak_ptr;
 
 using strings::Substitute;
 
@@ -74,8 +86,8 @@ static GoogleOnceType root_tracker_once = GOOGLE_ONCE_INIT;
 // is greater than GC_RELEASE_SIZE, this will trigger a tcmalloc gc.
 static Atomic64 released_memory_since_gc;
 
-// Validate that soft limit is a percentage.
-static bool ValidateSoftLimit(const char* flagname, int value) {
+// Validate that various flags are percentages.
+static bool ValidatePercentage(const char* flagname, int value) {
   if (value >= 0 && value <= 100) {
     return true;
   }
@@ -83,17 +95,25 @@ static bool ValidateSoftLimit(const char* flagname, int value) {
                            flagname, value);
   return false;
 }
-static bool dummy = google::RegisterFlagValidator(
-    &FLAGS_memory_limit_soft_percentage, &ValidateSoftLimit);
+static bool dummy[] = {
+  google::RegisterFlagValidator(&FLAGS_memory_limit_soft_percentage, &ValidatePercentage),
+  google::RegisterFlagValidator(&FLAGS_memory_limit_warn_threshold_percentage, &ValidatePercentage)
+#ifdef TCMALLOC_ENABLED
+  ,google::RegisterFlagValidator(&FLAGS_tcmalloc_max_free_bytes_percentage, &ValidatePercentage)
+#endif
+};
 
 #ifdef TCMALLOC_ENABLED
-static uint64_t GetTCMallocCurrentAllocatedBytes() {
+static int64_t GetTCMallocProperty(const char* prop) {
   size_t value;
-  if (!MallocExtension::instance()->GetNumericProperty(
-      "generic.current_allocated_bytes", &value)) {
-    LOG(DFATAL) << "Failed to get tcmalloc current allocated bytes";
+  if (!MallocExtension::instance()->GetNumericProperty(prop, &value)) {
+    LOG(DFATAL) << "Failed to get tcmalloc property " << prop;
   }
   return value;
+}
+
+static int64_t GetTCMallocCurrentAllocatedBytes() {
+  return GetTCMallocProperty("generic.current_allocated_bytes");
 }
 #endif
 
@@ -134,22 +154,20 @@ shared_ptr<MemTracker> MemTracker::CreateTrackerUnlocked(int64_t byte_limit,
                                                          const shared_ptr<MemTracker>& parent) {
   DCHECK(parent);
   shared_ptr<MemTracker> tracker(new MemTracker(ConsumptionFunction(), byte_limit, id, parent));
-  parent->AddChildTrackerUnlocked(tracker.get());
+  parent->AddChildTrackerUnlocked(tracker);
   tracker->Init();
 
   return tracker;
 }
 
-MemTracker::MemTracker(const ConsumptionFunction& consumption_func,
-                       int64_t byte_limit,
-                       const string& id,
-                       const shared_ptr<MemTracker>& parent)
+MemTracker::MemTracker(ConsumptionFunction consumption_func, int64_t byte_limit,
+                       const string& id, shared_ptr<MemTracker> parent)
     : limit_(byte_limit),
       id_(id),
       descr_(Substitute("memory consumption for $0", id)),
-      parent_(parent),
+      parent_(std::move(parent)),
       consumption_(0),
-      consumption_func_(consumption_func),
+      consumption_func_(std::move(consumption_func)),
       rand_(GetRandomSeed32()),
       enable_logging_(false),
       log_stack_(false) {
@@ -206,9 +224,10 @@ bool MemTracker::FindTrackerUnlocked(const string& id,
                                      const shared_ptr<MemTracker>& parent) {
   DCHECK(parent != NULL);
   parent->child_trackers_lock_.AssertAcquired();
-  BOOST_FOREACH(MemTracker* child, parent->child_trackers_) {
-    if (child->id() == id) {
-      *tracker = child->shared_from_this();
+  for (const auto& child_weak : parent->child_trackers_) {
+    shared_ptr<MemTracker> child = child_weak.lock();
+    if (child && child->id() == id) {
+      *tracker = std::move(child);
       return true;
     }
   }
@@ -227,7 +246,7 @@ shared_ptr<MemTracker> MemTracker::FindOrCreateTracker(int64_t byte_limit,
   return CreateTrackerUnlocked(byte_limit, id, real_parent);
 }
 
-void MemTracker::ListTrackers(vector<shared_ptr<MemTracker> >* trackers) {
+void MemTracker::ListTrackers(vector<shared_ptr<MemTracker>>* trackers) {
   trackers->clear();
   deque<shared_ptr<MemTracker> > to_process;
   to_process.push_front(GetRootTracker());
@@ -238,8 +257,11 @@ void MemTracker::ListTrackers(vector<shared_ptr<MemTracker> >* trackers) {
     trackers->push_back(t);
     {
       MutexLock l(t->child_trackers_lock_);
-      BOOST_FOREACH(MemTracker* child, t->child_trackers_) {
-        to_process.push_back(child->shared_from_this());
+      for (const auto& child_weak : t->child_trackers_) {
+        shared_ptr<MemTracker> child = child_weak.lock();
+        if (child) {
+          to_process.emplace_back(std::move(child));
+        }
       }
     }
   }
@@ -267,11 +289,10 @@ void MemTracker::Consume(int64_t bytes) {
   if (PREDICT_FALSE(enable_logging_)) {
     LogUpdate(true, bytes);
   }
-  for (vector<MemTracker*>::iterator tracker = all_trackers_.begin();
-       tracker != all_trackers_.end(); ++tracker) {
-    (*tracker)->consumption_.IncrementBy(bytes);
-    if (!(*tracker)->consumption_func_.empty()) {
-      DCHECK_GE((*tracker)->consumption_.current_value(), 0);
+  for (auto& tracker : all_trackers_) {
+    tracker->consumption_.IncrementBy(bytes);
+    if (!tracker->consumption_func_.empty()) {
+      DCHECK_GE(tracker->consumption_.current_value(), 0);
     }
   }
 }
@@ -353,25 +374,23 @@ void MemTracker::Release(int64_t bytes) {
     LogUpdate(false, bytes);
   }
 
-  for (vector<MemTracker*>::iterator tracker = all_trackers_.begin();
-       tracker != all_trackers_.end(); ++tracker) {
-    (*tracker)->consumption_.IncrementBy(-bytes);
+  for (auto& tracker : all_trackers_) {
+    tracker->consumption_.IncrementBy(-bytes);
     // If a UDF calls FunctionContext::TrackAllocation() but allocates less than the
     // reported amount, the subsequent call to FunctionContext::Free() may cause the
     // process mem tracker to go negative until it is synced back to the tcmalloc
     // metric. Don't blow up in this case. (Note that this doesn't affect non-process
     // trackers since we can enforce that the reported memory usage is internally
     // consistent.)
-    if (!(*tracker)->consumption_func_.empty()) {
-      DCHECK_GE((*tracker)->consumption_.current_value(), 0);
+    if (!tracker->consumption_func_.empty()) {
+      DCHECK_GE(tracker->consumption_.current_value(), 0);
     }
   }
 }
 
 bool MemTracker::AnyLimitExceeded() {
-  for (vector<MemTracker*>::iterator tracker = limit_trackers_.begin();
-       tracker != limit_trackers_.end(); ++tracker) {
-    if ((*tracker)->LimitExceeded()) {
+  for (const auto& tracker : limit_trackers_) {
+    if (tracker->LimitExceeded()) {
       return true;
     }
   }
@@ -419,7 +438,7 @@ bool MemTracker::SoftLimitExceeded(double* current_capacity_pct) {
 }
 
 bool MemTracker::AnySoftLimitExceeded(double* current_capacity_pct) {
-  BOOST_FOREACH(MemTracker* t, limit_trackers_) {
+  for (MemTracker* t : limit_trackers_) {
     if (t->SoftLimitExceeded(current_capacity_pct)) {
       return true;
     }
@@ -429,9 +448,8 @@ bool MemTracker::AnySoftLimitExceeded(double* current_capacity_pct) {
 
 int64_t MemTracker::SpareCapacity() const {
   int64_t result = std::numeric_limits<int64_t>::max();
-  for (vector<MemTracker*>::const_iterator tracker = limit_trackers_.begin();
-       tracker != limit_trackers_.end(); ++tracker) {
-    int64_t mem_left = (*tracker)->limit() - (*tracker)->consumption();
+  for (const auto& tracker : limit_trackers_) {
+    int64_t mem_left = tracker->limit() - tracker->consumption();
     result = std::min(result, mem_left);
   }
   return result;
@@ -454,8 +472,8 @@ bool MemTracker::GcMemory(int64_t max_consumption) {
   }
 
   // Try to free up some memory
-  for (int i = 0; i < gc_functions_.size(); ++i) {
-    gc_functions_[i]();
+  for (const auto& gc_function : gc_functions_) {
+    gc_function();
     if (!consumption_func_.empty()) {
       UpdateConsumption();
     }
@@ -470,7 +488,26 @@ bool MemTracker::GcMemory(int64_t max_consumption) {
 void MemTracker::GcTcmalloc() {
 #ifdef TCMALLOC_ENABLED
   released_memory_since_gc = 0;
-  MallocExtension::instance()->ReleaseFreeMemory();
+  TRACE_EVENT0("process", "MemTracker::GcTcmalloc");
+
+  // Number of bytes in the 'NORMAL' free list (i.e reserved by tcmalloc but
+  // not in use).
+  int64_t bytes_overhead = GetTCMallocProperty("tcmalloc.pageheap_free_bytes");
+  // Bytes allocated by the application.
+  int64_t bytes_used = GetTCMallocCurrentAllocatedBytes();
+
+  int64_t max_overhead = bytes_used * FLAGS_tcmalloc_max_free_bytes_percentage / 100.0;
+  if (bytes_overhead > max_overhead) {
+    int64_t extra = bytes_overhead - max_overhead;
+    while (extra > 0) {
+      // Release 1MB at a time, so that tcmalloc releases its page heap lock
+      // allowing other threads to make progress. This still disrupts the current
+      // thread, but is better than disrupting all.
+      MallocExtension::instance()->ReleaseToSystem(1024 * 1024);
+      extra -= 1024 * 1024;
+    }
+  }
+
 #else
   // Nothing to do if not using tcmalloc.
 #endif
@@ -509,7 +546,7 @@ void MemTracker::Init() {
   DCHECK_EQ(all_trackers_[0], this);
 }
 
-void MemTracker::AddChildTrackerUnlocked(MemTracker* tracker) {
+void MemTracker::AddChildTrackerUnlocked(const shared_ptr<MemTracker>& tracker) {
   child_trackers_lock_.AssertAcquired();
 #ifndef NDEBUG
   shared_ptr<MemTracker> found;
@@ -531,10 +568,13 @@ void MemTracker::LogUpdate(bool is_consume, int64_t bytes) const {
 }
 
 string MemTracker::LogUsage(const string& prefix,
-                            const list<MemTracker*>& trackers) {
+                            const list<weak_ptr<MemTracker>>& trackers) {
   vector<string> usage_strings;
-  BOOST_FOREACH(const MemTracker* child, trackers) {
-    usage_strings.push_back(child->LogUsage(prefix));
+  for (const auto& child_weak : trackers) {
+    shared_ptr<MemTracker> child = child_weak.lock();
+    if (child) {
+      usage_strings.push_back(child->LogUsage(prefix));
+    }
   }
   return JoinStrings(usage_strings, "\n");
 }

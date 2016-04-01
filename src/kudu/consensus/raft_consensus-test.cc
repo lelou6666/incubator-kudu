@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -34,8 +37,8 @@ DECLARE_bool(enable_leader_failure_detection);
 
 METRIC_DECLARE_entity(tablet);
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 
 namespace kudu {
 namespace consensus {
@@ -87,7 +90,7 @@ class MockQueue : public PeerMessageQueue {
 
 class MockPeerManager : public PeerManager {
  public:
-  MockPeerManager() : PeerManager("", "", NULL, NULL, NULL, NULL) {}
+  MockPeerManager() : PeerManager("", "", nullptr, nullptr, nullptr, nullptr) {}
   MOCK_METHOD1(UpdateRaftConfig, Status(const consensus::RaftConfigPB& config));
   MOCK_METHOD1(SignalRequest, void(bool force_if_queue_empty));
   MOCK_METHOD0(Close, void());
@@ -111,11 +114,11 @@ class RaftConsensusSpy : public RaftConsensus {
                    const shared_ptr<MemTracker>& parent_mem_tracker,
                    const Callback<void(const std::string& reason)>& mark_dirty_clbk)
     : RaftConsensus(options,
-                    cmeta.Pass(),
-                    proxy_factory.Pass(),
-                    queue.Pass(),
-                    peer_manager.Pass(),
-                    thread_pool.Pass(),
+                    std::move(cmeta),
+                    std::move(proxy_factory),
+                    std::move(queue),
+                    std::move(peer_manager),
+                    std::move(thread_pool),
                     metric_entity,
                     peer_uuid,
                     clock,
@@ -198,7 +201,7 @@ class RaftConsensusTest : public KuduTest {
     config_ = BuildRaftConfigPBForTests(num_peers);
     config_.set_opid_index(kInvalidOpIdIndex);
 
-    gscoped_ptr<PeerProxyFactory> proxy_factory(new LocalTestPeerProxyFactory(NULL));
+    gscoped_ptr<PeerProxyFactory> proxy_factory(new LocalTestPeerProxyFactory(nullptr));
 
     string peer_uuid = config_.peers(num_peers - 1).permanent_uuid();
 
@@ -210,11 +213,11 @@ class RaftConsensusTest : public KuduTest {
     CHECK_OK(ThreadPoolBuilder("raft-pool") .Build(&thread_pool));
 
     consensus_.reset(new RaftConsensusSpy(options_,
-                                          cmeta.Pass(),
-                                          proxy_factory.Pass(),
+                                          std::move(cmeta),
+                                          std::move(proxy_factory),
                                           gscoped_ptr<PeerMessageQueue>(queue_),
                                           gscoped_ptr<PeerManager>(peer_manager_),
-                                          thread_pool.Pass(),
+                                          std::move(thread_pool),
                                           metric_entity_,
                                           peer_uuid,
                                           clock_,
@@ -282,7 +285,7 @@ class RaftConsensusTest : public KuduTest {
 
   void DumpRounds() {
     LOG(INFO) << "Dumping rounds...";
-    BOOST_FOREACH(const scoped_refptr<ConsensusRound>& round, rounds_) {
+    for (const scoped_refptr<ConsensusRound>& round : rounds_) {
       LOG(INFO) << "Round: OpId " << round->id() << ", ReplicateMsg: "
                 << round->replicate_msg()->ShortDebugString();
     }
@@ -436,7 +439,7 @@ TEST_F(RaftConsensusTest, TestPendingTransactions) {
   ConsensusBootstrapInfo info;
   info.last_id.set_term(10);
   for (int i = 0; i < 10; i++) {
-    ReplicateMsg* replicate = new ReplicateMsg();
+    auto replicate = new ReplicateMsg();
     replicate->set_op_type(NO_OP);
     info.last_id.set_index(100 + i);
     replicate->mutable_id()->CopyFrom(info.last_id);
@@ -639,7 +642,7 @@ TEST_F(RaftConsensusTest, TestAbortOperations) {
 TEST_F(RaftConsensusTest, TestReceivedIdIsInittedBeforeStart) {
   SetUpConsensus();
   OpId opid;
-  ASSERT_OK(consensus_->GetLastReceivedOpId(&opid));
+  ASSERT_OK(consensus_->GetLastOpId(RECEIVED_OPID, &opid));
   ASSERT_TRUE(opid.IsInitialized());
   ASSERT_OPID_EQ(opid, MinimumOpId());
 }

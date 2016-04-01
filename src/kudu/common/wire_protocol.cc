@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/common/wire_protocol.h"
 
@@ -161,7 +164,7 @@ Status HostPortFromPB(const HostPortPB& host_port_pb, HostPort* host_port) {
 
 Status AddHostPortPBs(const vector<Sockaddr>& addrs,
                       RepeatedPtrField<HostPortPB>* pbs) {
-  BOOST_FOREACH(const Sockaddr& addr, addrs) {
+  for (const Sockaddr& addr : addrs) {
     HostPortPB* pb = pbs->Add();
     if (addr.IsWildcard()) {
       RETURN_NOT_OK(GetFQDN(pb->mutable_host()));
@@ -218,8 +221,8 @@ void ColumnSchemaToPB(const ColumnSchema& col_schema, ColumnSchemaPB *pb, int fl
 }
 
 ColumnSchema ColumnSchemaFromPB(const ColumnSchemaPB& pb) {
-  const void *write_default_ptr = NULL;
-  const void *read_default_ptr = NULL;
+  const void *write_default_ptr = nullptr;
+  const void *read_default_ptr = nullptr;
   Slice write_default;
   Slice read_default;
   const TypeInfo* typeinfo = GetTypeInfo(pb.type());
@@ -263,7 +266,7 @@ Status ColumnPBsToSchema(const RepeatedPtrField<ColumnSchemaPB>& column_pbs,
   columns.reserve(column_pbs.size());
   int num_key_columns = 0;
   bool is_handling_key = true;
-  BOOST_FOREACH(const ColumnSchemaPB& pb, column_pbs) {
+  for (const ColumnSchemaPB& pb : column_pbs) {
     columns.push_back(ColumnSchemaFromPB(pb));
     if (pb.is_key()) {
       if (!is_handling_key) {
@@ -292,7 +295,7 @@ Status SchemaToColumnPBs(const Schema& schema,
                          int flags) {
   cols->Clear();
   int idx = 0;
-  BOOST_FOREACH(const ColumnSchema& col, schema.columns()) {
+  for (const ColumnSchema& col : schema.columns()) {
     ColumnSchemaPB* col_pb = cols->Add();
     ColumnSchemaToPB(col, col_pb);
     col_pb->set_is_key(idx < schema.num_key_columns());
@@ -400,7 +403,7 @@ Status ExtractRowsFromRowBlockPB(const Schema& schema,
 
 Status FindLeaderHostPort(const RepeatedPtrField<ServerEntryPB>& entries,
                           HostPort* leader_hostport) {
-  BOOST_FOREACH(const ServerEntryPB& entry, entries) {
+  for (const ServerEntryPB& entry : entries) {
     if (entry.has_error()) {
       LOG(WARNING) << "Error encountered for server entry " << entry.ShortDebugString()
                    << ": " << StatusFromPB(entry.error()).ToString();
@@ -511,7 +514,7 @@ void SerializeRowBlock(const RowBlock& block, RowwiseRowBlockPB* rowblock_pb,
   DCHECK_GT(block.nrows(), 0);
   const Schema& tablet_schema = block.schema();
 
-  if (projection_schema == NULL) {
+  if (projection_schema == nullptr) {
     projection_schema = &tablet_schema;
   }
 

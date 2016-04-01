@@ -1,21 +1,28 @@
 // Copyright 2010 Google Inc.  All Rights Reserved
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
+
+#include "kudu/util/memory/memory.h"
 
 #include "kudu/util/alignment.h"
 #include "kudu/util/flag_tags.h"
-#include "kudu/util/memory/memory.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/mem_tracker.h"
 
 #include <gflags/gflags.h>
@@ -37,32 +44,6 @@ namespace {
 static char dummy_buffer[0] = {};
 }
 
-// This function is micro-optimized a bit, since it helps debug
-// mode tests run much faster.
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC push_options
-#pragma GCC optimize("-O3")
-#endif
-void OverwriteWithPattern(char* p, size_t len, StringPiece pattern) {
-  size_t pat_len = pattern.size();
-  CHECK_LT(0, pat_len);
-  size_t rem = len;
-  const char *pat_ptr = pattern.data();
-
-  while (rem >= pat_len) {
-    memcpy(p, pat_ptr, pat_len);
-    p += pat_len;
-    rem -= pat_len;
-  }
-
-  while (rem-- > 0) {
-    *p++ = *pat_ptr++;
-  }
-}
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC pop_options
-#endif
-
 Buffer::~Buffer() {
 #if !defined(NDEBUG) && !defined(ADDRESS_SANITIZER)
   // "unrolling" the string "BAD" makes for a much more efficient
@@ -76,13 +57,13 @@ Buffer::~Buffer() {
                        "BADBADBADBADBADBADBADBADBADBADBAD"
                        "BADBADBADBADBADBADBADBADBADBADBAD");
 #endif
-  if (allocator_ != NULL) allocator_->FreeInternal(this);
+  if (allocator_ != nullptr) allocator_->FreeInternal(this);
 }
 
 void BufferAllocator::LogAllocation(size_t requested,
                                     size_t minimal,
                                     Buffer* buffer) {
-  if (buffer == NULL) {
+  if (buffer == nullptr) {
     LOG(WARNING) << "Memory allocation failed. "
                  << "Number of bytes requested: " << requested
                  << ", minimal: " << minimal;
@@ -117,10 +98,10 @@ Buffer* HeapBufferAllocator::AllocateInternal(
   size_t attempted = requested;
   while (true) {
     data = (attempted == 0) ? &dummy_buffer[0] : Malloc(attempted);
-    if (data != NULL) {
+    if (data != nullptr) {
       return CreateBuffer(data, attempted, originator);
     }
-    if (attempted == minimal) return NULL;
+    if (attempted == minimal) return nullptr;
     attempted = minimal + (attempted - minimal - 1) / 2;
   }
 }
@@ -144,7 +125,7 @@ bool HeapBufferAllocator::ReallocateInternal(
         data = Malloc(attempted);
       }
     }
-    if (data != NULL) {
+    if (data != nullptr) {
       UpdateBuffer(data, attempted, buffer);
       return true;
     }
@@ -161,7 +142,7 @@ void* HeapBufferAllocator::Malloc(size_t size) {
   if (aligned_mode_) {
     void* data;
     if (posix_memalign(&data, 16, KUDU_ALIGN_UP(size, 16))) {
-       return NULL;
+       return nullptr;
     }
     return data;
   } else {
@@ -182,7 +163,7 @@ void* HeapBufferAllocator::Realloc(void* previousData, size_t previousSize,
       free(previousData);
       return data;
     } else {
-      return NULL;
+      return nullptr;
     }
   } else {
     return realloc(previousData, newSize);
@@ -194,7 +175,7 @@ Buffer* ClearingBufferAllocator::AllocateInternal(size_t requested,
                                                   BufferAllocator* originator) {
   Buffer* buffer = DelegateAllocate(delegate_, requested, minimal,
                                     originator);
-  if (buffer != NULL) memset(buffer->data(), 0, buffer->size());
+  if (buffer != nullptr) memset(buffer->data(), 0, buffer->size());
   return buffer;
 }
 
@@ -202,7 +183,7 @@ bool ClearingBufferAllocator::ReallocateInternal(size_t requested,
                                                  size_t minimal,
                                                  Buffer* buffer,
                                                  BufferAllocator* originator) {
-  size_t offset = (buffer != NULL ? buffer->size() : 0);
+  size_t offset = (buffer != nullptr ? buffer->size() : 0);
   bool success = DelegateReallocate(delegate_, requested, minimal, buffer,
                                     originator);
   if (success && buffer->size() > offset) {
@@ -224,12 +205,12 @@ Buffer* MediatingBufferAllocator::AllocateInternal(
   size_t granted;
   if (requested > 0) {
     granted = mediator_->Allocate(requested, minimal);
-    if (granted < minimal) return NULL;
+    if (granted < minimal) return nullptr;
   } else {
     granted = 0;
   }
   Buffer* buffer = DelegateAllocate(delegate_, granted, minimal, originator);
-  if (buffer == NULL) {
+  if (buffer == nullptr) {
     mediator_->Free(granted);
   } else if (buffer->size() < granted) {
     mediator_->Free(granted - buffer->size());
@@ -271,7 +252,7 @@ Buffer* MemoryStatisticsCollectingBufferAllocator::AllocateInternal(
     const size_t minimal,
     BufferAllocator* const originator) {
   Buffer* buffer = DelegateAllocate(delegate_, requested, minimal, originator);
-  if (buffer != NULL) {
+  if (buffer != nullptr) {
     memory_stats_collector_->AllocatedMemoryBytes(buffer->size());
   } else {
     memory_stats_collector_->RefusedMemoryBytes(minimal);
@@ -325,7 +306,7 @@ Buffer* MemoryTrackingBufferAllocator::AllocateInternal(size_t requested,
                                                         BufferAllocator* originator) {
   if (TryConsume(requested)) {
     Buffer* buffer = DelegateAllocate(delegate_, requested, requested, originator);
-    if (buffer == NULL) {
+    if (buffer == nullptr) {
       mem_tracker_->Release(requested);
     } else {
       return buffer;
@@ -334,13 +315,13 @@ Buffer* MemoryTrackingBufferAllocator::AllocateInternal(size_t requested,
 
   if (TryConsume(minimal)) {
     Buffer* buffer = DelegateAllocate(delegate_, minimal, minimal, originator);
-    if (buffer == NULL) {
+    if (buffer == nullptr) {
       mem_tracker_->Release(minimal);
     }
     return buffer;
   }
 
-  return NULL;
+  return nullptr;
 }
 
 

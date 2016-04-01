@@ -1,27 +1,28 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <time.h>
-#include <tr1/memory>
 
 #include "kudu/common/row.h"
 #include "kudu/common/schema.h"
-#include "kudu/gutil/algorithm.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/tablet/delta_compaction.h"
 #include "kudu/tablet/diskrowset.h"
@@ -38,14 +39,12 @@ DECLARE_int32(cfile_default_block_size);
 DECLARE_double(tablet_delta_store_major_compact_min_ratio);
 DECLARE_int32(tablet_delta_store_minor_compact_max);
 
-using std::tr1::shared_ptr;
+using std::is_sorted;
+using std::shared_ptr;
+using std::unordered_set;
 
 namespace kudu {
 namespace tablet {
-
-using boost::assign::list_of;
-using std::tr1::unordered_set;
-using util::gtl::is_sorted;
 
 // TODO: add test which calls CopyNextRows on an iterator with no more
 // rows - i think it segfaults!
@@ -66,7 +65,7 @@ TEST_F(TestRowSet, TestRowSetRoundTrip) {
 
   // Now iterate only over the key column
   Schema proj_key;
-  ASSERT_OK(schema_.CreateProjectionByNames(list_of("key"), &proj_key));
+  ASSERT_OK(schema_.CreateProjectionByNames({ "key" }, &proj_key));
 
   LOG_TIMING(INFO, "Iterating over only key column") {
     IterateProjection(*rs, proj_key, n_rows_);
@@ -75,7 +74,7 @@ TEST_F(TestRowSet, TestRowSetRoundTrip) {
 
   // Now iterate only over the non-key column
   Schema proj_val;
-  ASSERT_OK(schema_.CreateProjectionByNames(list_of("val"), &proj_val));
+  ASSERT_OK(schema_.CreateProjectionByNames({ "val" }, &proj_val));
   LOG_TIMING(INFO, "Iterating over only val column") {
     IterateProjection(*rs, proj_val, n_rows_);
   }
@@ -362,7 +361,7 @@ TEST_F(TestRowSet, TestFlushedUpdatesRespectMVCC) {
     SCOPED_TRACE(i);
     gscoped_ptr<RowwiseIterator> iter;
     ASSERT_OK(rs->NewRowIterator(&schema_, snaps[i], &iter));
-    string data = InitAndDumpIterator(iter.Pass());
+    string data = InitAndDumpIterator(std::move(iter));
     EXPECT_EQ(StringPrintf("(string key=row, uint32 val=%d)", i + 1), data);
   }
 
@@ -374,7 +373,7 @@ TEST_F(TestRowSet, TestFlushedUpdatesRespectMVCC) {
     SCOPED_TRACE(i);
     gscoped_ptr<RowwiseIterator> iter;
     ASSERT_OK(rs->NewRowIterator(&schema_, snaps[i], &iter));
-    string data = InitAndDumpIterator(iter.Pass());
+    string data = InitAndDumpIterator(std::move(iter));
     EXPECT_EQ(StringPrintf("(string key=row, uint32 val=%d)", i + 1), data);
   }
 
@@ -400,7 +399,7 @@ TEST_F(TestRowSet, TestDeltaApplicationPerformance) {
       StringPrintf("Reading %zd rows prior to updates %d times",
                    n_rows_, FLAGS_n_read_passes));
 
-    UpdateExistingRows(rs.get(), FLAGS_update_fraction, NULL);
+    UpdateExistingRows(rs.get(), FLAGS_update_fraction, nullptr);
 
     BenchmarkIterationPerformance(*rs.get(),
       StringPrintf("Reading %zd rows with %.2f%% updates %d times (updates in DMS)",
@@ -430,7 +429,7 @@ TEST_F(TestRowSet, TestRollingDiskRowSetWriter) {
   vector<shared_ptr<RowSetMetadata> > metas;
   writer.GetWrittenRowSetMetadata(&metas);
   EXPECT_EQ(4, metas.size());
-  BOOST_FOREACH(const shared_ptr<RowSetMetadata>& meta, metas) {
+  for (const shared_ptr<RowSetMetadata>& meta : metas) {
     ASSERT_TRUE(meta->HasDataForColumnIdForTests(schema_.column_id(0)));
   }
 }
@@ -441,7 +440,7 @@ TEST_F(TestRowSet, TestMakeDeltaIteratorMergerUnlocked) {
   // Now open the DiskRowSet for read
   shared_ptr<DiskRowSet> rs;
   ASSERT_OK(OpenTestRowSet(&rs));
-  UpdateExistingRows(rs.get(), FLAGS_update_fraction, NULL);
+  UpdateExistingRows(rs.get(), FLAGS_update_fraction, nullptr);
   ASSERT_OK(rs->FlushDeltas());
   DeltaTracker *dt = rs->delta_tracker();
   int num_stores = dt->redo_delta_stores_.size();
@@ -455,7 +454,7 @@ TEST_F(TestRowSet, TestMakeDeltaIteratorMergerUnlocked) {
   ASSERT_OK(DebugDumpDeltaIterator(REDO, merge_iter.get(), schema_,
                                           ITERATE_OVER_ALL_ROWS,
                                           &results));
-  BOOST_FOREACH(const string &str, results) {
+  for (const string &str : results) {
     VLOG(1) << str;
   }
   ASSERT_EQ(compacted_stores.size(), num_stores);
@@ -486,21 +485,21 @@ TEST_F(TestRowSet, TestCompactStores) {
   ASSERT_EQ(0, rs->DeltaStoresCompactionPerfImprovementScore(RowSet::MAJOR_DELTA_COMPACTION));
 
   // Write a first delta file.
-  UpdateExistingRows(rs.get(), FLAGS_update_fraction, NULL);
+  UpdateExistingRows(rs.get(), FLAGS_update_fraction, nullptr);
   ASSERT_OK(rs->FlushDeltas());
   // One file isn't enough for minor compactions, but a major compaction can run.
   ASSERT_EQ(0, rs->DeltaStoresCompactionPerfImprovementScore(RowSet::MINOR_DELTA_COMPACTION));
   BetweenZeroAndOne(rs->DeltaStoresCompactionPerfImprovementScore(RowSet::MAJOR_DELTA_COMPACTION));
 
   // Write a second delta file.
-  UpdateExistingRows(rs.get(), FLAGS_update_fraction, NULL);
+  UpdateExistingRows(rs.get(), FLAGS_update_fraction, nullptr);
   ASSERT_OK(rs->FlushDeltas());
   // Two files is enough for all delta compactions.
   BetweenZeroAndOne(rs->DeltaStoresCompactionPerfImprovementScore(RowSet::MINOR_DELTA_COMPACTION));
   BetweenZeroAndOne(rs->DeltaStoresCompactionPerfImprovementScore(RowSet::MAJOR_DELTA_COMPACTION));
 
   // Write a third delta file.
-  UpdateExistingRows(rs.get(), FLAGS_update_fraction, NULL);
+  UpdateExistingRows(rs.get(), FLAGS_update_fraction, nullptr);
   ASSERT_OK(rs->FlushDeltas());
   // We're hitting the max for minor compactions but not for major compactions.
   ASSERT_EQ(1, rs->DeltaStoresCompactionPerfImprovementScore(RowSet::MINOR_DELTA_COMPACTION));
@@ -530,7 +529,7 @@ TEST_F(TestRowSet, TestCompactStores) {
   ASSERT_OK(DebugDumpDeltaIterator(REDO, merge_iter.get(), schema_,
                                           ITERATE_OVER_ALL_ROWS,
                                           &results));
-  BOOST_FOREACH(const string &str, results) {
+  for (const string &str : results) {
     VLOG(1) << str;
   }
   ASSERT_TRUE(is_sorted(results.begin(), results.end()));

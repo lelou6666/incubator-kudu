@@ -1,18 +1,20 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <glog/logging.h>
 #include <time.h>
 
@@ -28,8 +30,8 @@
 #include "kudu/util/slice.h"
 #include "kudu/util/test_macros.h"
 
-using std::tr1::unordered_set;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
+using std::unordered_set;
 
 namespace kudu {
 namespace tablet {
@@ -83,7 +85,7 @@ TYPED_TEST(TestTablet, TestFlush) {
   ASSERT_OK(this->fs_manager()->OpenBlock(undo_blocks[0], &block));
 
   shared_ptr<DeltaFileReader> dfr;
-  ASSERT_OK(DeltaFileReader::Open(block.Pass(), undo_blocks[0], &dfr, UNDO));
+  ASSERT_OK(DeltaFileReader::Open(std::move(block), undo_blocks[0], &dfr, UNDO));
   // Assert there were 'max_rows' deletions in the undo delta (one for each inserted row)
   ASSERT_EQ(dfr->delta_stats().delete_count(), max_rows);
 }
@@ -369,7 +371,7 @@ TYPED_TEST(TestTablet, TestRowIteratorSimple) {
   // Now iterate the tablet and make sure the rows show up
   gscoped_ptr<RowwiseIterator> iter;
   ASSERT_OK(this->tablet()->NewRowIterator(this->client_schema_, &iter));
-  ASSERT_OK(iter->Init(NULL));
+  ASSERT_OK(iter->Init(nullptr));
 
   ASSERT_TRUE(iter->HasNext());
 
@@ -419,7 +421,7 @@ TYPED_TEST(TestTablet, TestRowIteratorOrdered) {
     gscoped_ptr<RowwiseIterator> iter;
 
     ASSERT_OK(this->tablet()->NewRowIterator(this->client_schema_, snap, Tablet::ORDERED, &iter));
-    ASSERT_OK(iter->Init(NULL));
+    ASSERT_OK(iter->Init(nullptr));
 
     // Iterate the tablet collecting rows.
     vector<shared_ptr<faststring> > rows;
@@ -502,7 +504,7 @@ TYPED_TEST(TestTablet, TestRowIteratorComplex) {
   gscoped_ptr<RowwiseIterator> iter;
   const Schema& schema = this->client_schema_;
   ASSERT_OK(this->tablet()->NewRowIterator(schema, &iter));
-  ASSERT_OK(iter->Init(NULL));
+  ASSERT_OK(iter->Init(nullptr));
   LOG(INFO) << "Created iter: " << iter->ToString();
 
   vector<bool> seen(max_rows, false);
@@ -528,7 +530,7 @@ TYPED_TEST(TestTablet, TestRowIteratorComplex) {
 
       bool set_to_null = TestSetupExpectsNulls<TypeParam>(key_idx);
       bool should_update = (key_idx % 2 == 1);
-      if (val == NULL) {
+      if (val == nullptr) {
         ASSERT_TRUE(set_to_null);
       } else if (should_update) {
         ASSERT_EQ(key_idx, *val);
@@ -678,7 +680,7 @@ TYPED_TEST(TestTablet, TestCompaction) {
     ASSERT_EQ(n_rows * 3, this->TabletCount());
 
     const RowSetMetadata *rowset_meta = this->tablet()->metadata()->GetRowSetForTests(3);
-    ASSERT_TRUE(rowset_meta != NULL);
+    ASSERT_TRUE(rowset_meta != nullptr);
     ASSERT_TRUE(rowset_meta->HasDataForColumnIdForTests(this->schema_.column_id(0)));
     ASSERT_TRUE(rowset_meta->HasBloomDataBlockForTests());
   }
@@ -686,7 +688,7 @@ TYPED_TEST(TestTablet, TestCompaction) {
   // Old rowsets should not exist anymore
   for (int i = 0; i <= 2; i++) {
     const RowSetMetadata *rowset_meta = this->tablet()->metadata()->GetRowSetForTests(i);
-    ASSERT_TRUE(rowset_meta == NULL);
+    ASSERT_TRUE(rowset_meta == nullptr);
   }
 }
 
@@ -916,14 +918,10 @@ TYPED_TEST(TestTablet, TestMetricsInit) {
   MetricRegistry* registry = this->harness()->metrics_registry();
   std::stringstream out;
   JsonWriter writer(&out, JsonWriter::PRETTY);
-  ASSERT_OK(registry->WriteAsJson(&writer,
-                                  boost::assign::list_of("*"),
-                                  MetricJsonOptions()));
+  ASSERT_OK(registry->WriteAsJson(&writer, { "*" }, MetricJsonOptions()));
   // Open tablet, should still work
   this->harness()->Open();
-  ASSERT_OK(registry->WriteAsJson(&writer,
-                                  boost::assign::list_of("*"),
-                                  MetricJsonOptions()));
+  ASSERT_OK(registry->WriteAsJson(&writer, { "*" }, MetricJsonOptions()));
 }
 
 // Test that we find the correct log segment size for different indexes.

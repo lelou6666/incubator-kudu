@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/common/schema.h"
 
@@ -27,8 +30,8 @@
 namespace kudu {
 
 using std::set;
-using std::tr1::unordered_set;
-using std::tr1::unordered_map;
+using std::unordered_map;
+using std::unordered_set;
 
 // In a new schema, we typically would start assigning column IDs at 0. However, this
 // makes it likely that in many test cases, the column IDs and the column indexes are
@@ -100,7 +103,7 @@ void Schema::CopyFrom(const Schema& other) {
   // reference the other Schema's ColumnSchema objects.
   name_to_index_.clear();
   int i = 0;
-  BOOST_FOREACH(const ColumnSchema &col, cols_) {
+  for (const ColumnSchema &col : cols_) {
     // The map uses the 'name' string from within the ColumnSchema object.
     name_to_index_[col.name()] = i++;
   }
@@ -153,7 +156,7 @@ Status Schema::Reset(const vector<ColumnSchema>& cols,
   size_t off = 0;
   size_t i = 0;
   name_to_index_.clear();
-  BOOST_FOREACH(const ColumnSchema &col, cols_) {
+  for (const ColumnSchema &col : cols_) {
     // The map uses the 'name' string from within the ColumnSchema object.
     if (!InsertIfNotPresent(&name_to_index_, col.name(), i++)) {
       return Status::InvalidArgument("Duplicate column name", col.name());
@@ -180,7 +183,7 @@ Status Schema::Reset(const vector<ColumnSchema>& cols,
 
   // Determine whether any column is nullable
   has_nullables_ = false;
-  BOOST_FOREACH(const ColumnSchema& col, cols_) {
+  for (const ColumnSchema& col : cols_) {
     if (col.is_nullable()) {
       has_nullables_ = true;
       break;
@@ -194,7 +197,7 @@ Status Schema::CreateProjectionByNames(const std::vector<StringPiece>& col_names
                                        Schema* out) const {
   vector<ColumnId> ids;
   vector<ColumnSchema> cols;
-  BOOST_FOREACH(const StringPiece& name, col_names) {
+  for (const StringPiece& name : col_names) {
     int idx = find_column(name);
     if (idx == -1) {
       return Status::NotFound("column not found", name);
@@ -211,7 +214,7 @@ Status Schema::CreateProjectionByIdsIgnoreMissing(const std::vector<ColumnId>& c
                                                   Schema* out) const {
   vector<ColumnSchema> cols;
   vector<ColumnId> filtered_col_ids;
-  BOOST_FOREACH(ColumnId id, col_ids) {
+  for (ColumnId id : col_ids) {
     int idx = find_column_by_id(id);
     if (idx == -1) {
       continue;
@@ -244,7 +247,7 @@ Status Schema::VerifyProjectionCompatibility(const Schema& projection) const {
   }
 
   vector<string> missing_columns;
-  BOOST_FOREACH(const ColumnSchema& pcol, projection.columns()) {
+  for (const ColumnSchema& pcol : projection.columns()) {
     int index = find_column(pcol.name());
     if (index < 0) {
       missing_columns.push_back(pcol.name());
@@ -280,7 +283,7 @@ Status Schema::GetMappedReadProjection(const Schema& projection,
   mapped_cols.reserve(projection.num_columns());
   mapped_ids.reserve(projection.num_columns());
 
-  BOOST_FOREACH(const ColumnSchema& col, projection.columns()) {
+  for (const ColumnSchema& col : projection.columns()) {
     int index = find_column(col.name());
     DCHECK_GE(index, 0) << col.name();
     mapped_cols.push_back(cols_[index]);
@@ -298,7 +301,7 @@ string Schema::ToString() const {
       col_strs.push_back(strings::Substitute("$0:$1", col_ids_[i], cols_[i].ToString()));
     }
   } else {
-    BOOST_FOREACH(const ColumnSchema &col, cols_) {
+    for (const ColumnSchema &col : cols_) {
       col_strs.push_back(col.ToString());
     }
   }
@@ -346,13 +349,20 @@ string Schema::DebugEncodedRowKey(Slice encoded_key, StartOrEnd start_or_end) co
 }
 
 size_t Schema::memory_footprint_excluding_this() const {
-  size_t size = kudu_malloc_usable_size(cols_.data());
-  BOOST_FOREACH(const ColumnSchema& col, cols_) {
+  size_t size = 0;
+  for (const ColumnSchema& col : cols_) {
     size += col.memory_footprint_excluding_this();
   }
 
-  size += kudu_malloc_usable_size(col_ids_.data());
-  size += kudu_malloc_usable_size(col_offsets_.data());
+  if (cols_.capacity() > 0) {
+    size += kudu_malloc_usable_size(cols_.data());
+  }
+  if (col_ids_.capacity() > 0) {
+    size += kudu_malloc_usable_size(col_ids_.data());
+  }
+  if (col_offsets_.capacity() > 0) {
+    size += kudu_malloc_usable_size(col_offsets_.data());
+  }
   size += name_to_index_bytes_;
   size += id_to_index_.memory_footprint_excluding_this();
 
@@ -378,8 +388,8 @@ void SchemaBuilder::Reset(const Schema& schema) {
   cols_ = schema.cols_;
   col_ids_ = schema.col_ids_;
   num_key_columns_ = schema.num_key_columns_;
-  for (int i = 0; i < cols_.size(); ++i) {
-    col_names_.insert(cols_[i].name());
+  for (const auto& column : cols_) {
+    col_names_.insert(column.name());
   }
 
   if (col_ids_.empty()) {
@@ -444,7 +454,7 @@ Status SchemaBuilder::RenameColumn(const string& old_name, const string& new_nam
   col_names_.erase(it_names);   // TODO: Should this one stay and marked as alias?
   col_names_.insert(new_name);
 
-  BOOST_FOREACH(ColumnSchema& col_schema, cols_) {
+  for (ColumnSchema& col_schema : cols_) {
     if (old_name == col_schema.name()) {
       col_schema.set_name(new_name);
       return Status::OK();

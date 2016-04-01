@@ -1,16 +1,19 @@
-# Copyright 2014 Cloudera, Inc.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
 ################################################################################
 # This target relies on special LLVM-configured cmake functions
@@ -41,12 +44,7 @@ add_definitions(${LLVM_DEFINITIONS})
 add_definitions(-DLLVM_SUPPORT_VALGRIND_H)
 
 ## Get the required libraries to link to in llvm
-# as of llvm 3.5, there are two different functions for this
-if (${LLVM_PACKAGE_VERSION} VERSION_LESS 3.5)
-  llvm_map_components_to_libraries(llvm_LIBRARIES "${LLVM_REQ_COMPONENTS}")
-else()
-  llvm_map_components_to_libnames(llvm_LIBRARIES "${LLVM_REQ_COMPONENETS}")
-endif()
+llvm_map_components_to_libnames(llvm_LIBRARIES "${LLVM_REQ_COMPONENTS}")
 
 #######################################
 # Precompiling to LLVM bytecode
@@ -55,14 +53,24 @@ endif()
 ## Create .ll file for precompiled functions (and their dependencies)
 set(CLANG_EXEC ${THIRDPARTY_PREFIX}/bin/clang++)
 set(IR_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/precompiled.cc)
-set(IR_OUTPUT ${BUILD_OUTPUT_ROOT_DIRECTORY}/precompiled.ll)
+set(IR_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/precompiled.ll)
 set(IR_OUTPUT_CC ${IR_OUTPUT}.cc)
+
 # Retrieve all includes directories needed for precompilation
-set(IR_INCLUDES
-  -I ${CMAKE_SOURCE_DIR}/src
-  -I ${GLOG_INCLUDE_DIR}
-  -I ${GTEST_INCLUDE_DIR}
-  -I ${Boost_INCLUDE_DIR})
+get_directory_property(IR_INCLUDES
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  INCLUDE_DIRECTORIES)
+foreach(noprefix ${IR_INCLUDES})
+  set(PREFIXED_IR_INCLUDES ${PREFIXED_IR_INCLUDES} -I${noprefix})
+endforeach()
+
+if (APPLE)
+  # OS X keeps the libc++ headers in a non-standard location that the thirdparty
+  # Clang does not know about by default.
+  set(PREFIXED_IR_INCLUDES
+    ${PREFIXED_IR_INCLUDES}
+    -cxx-isystem "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1")
+endif()
 
 # Get preprocessing definitions, which enable directives for glog and gtest
 get_directory_property(IR_PP_DEFINITIONS
@@ -71,14 +79,14 @@ get_directory_property(IR_PP_DEFINITIONS
 foreach(noprefix ${IR_PP_DEFINITIONS})
     set(PREFIXED_IR_PP_DEFS ${PREFIXED_IR_PP_DEFS} -D${noprefix})
 endforeach()
+
 # Get flags related to actually compiling the source
 set(IR_FLAGS
   -S -emit-llvm
   -DIR_BUILD
   ${CMAKE_CXX_FLAGS}
   ${PREFIXED_IR_PP_DEFS}
-  -Wno-c++11-extensions # OVERRIDE macro conflicts with c++11 override
-  ${IR_INCLUDES})
+  ${PREFIXED_IR_INCLUDES})
 separate_arguments(IR_FLAGS)
 
 # Avoid enabling ASAN in the precompiled IR.

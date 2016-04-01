@@ -1,21 +1,23 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <string>
 #include <vector>
 
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 
 #include "kudu/gutil/integral_types.h"
@@ -45,11 +47,11 @@ TEST(JsonReaderTest, Empty) {
   ASSERT_OK(r2.Init());
 
   // Not found.
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", NULL).IsNotFound());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", NULL).IsNotFound());
-  ASSERT_TRUE(r.ExtractString(r.root(), "foo", NULL).IsNotFound());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "foo", NULL).IsNotFound());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "foo", NULL).IsNotFound());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", nullptr).IsNotFound());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", nullptr).IsNotFound());
+  ASSERT_TRUE(r.ExtractString(r.root(), "foo", nullptr).IsNotFound());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "foo", nullptr).IsNotFound());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "foo", nullptr).IsNotFound());
 }
 
 TEST(JsonReaderTest, Basic) {
@@ -60,10 +62,10 @@ TEST(JsonReaderTest, Basic) {
   ASSERT_EQ("bar", foo);
 
   // Bad types.
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "foo", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "foo", nullptr).IsInvalidArgument());
 }
 
 TEST(JsonReaderTest, LessBasic) {
@@ -84,31 +86,31 @@ TEST(JsonReaderTest, LessBasic) {
   ASSERT_EQ("", str);
 
   // Bad types.
-  ASSERT_TRUE(r.ExtractString(r.root(), "small", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "small", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "small", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractString(r.root(), "small", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "small", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "small", nullptr).IsInvalidArgument());
 
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "big", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractString(r.root(), "big", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "big", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "big", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "big", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractString(r.root(), "big", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "big", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "big", nullptr).IsInvalidArgument());
 
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "null", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), "null", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "null", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "null", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "null", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), "null", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "null", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "null", nullptr).IsInvalidArgument());
 
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "empty", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), "empty", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "empty", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "empty", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "empty", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), "empty", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "empty", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "empty", nullptr).IsInvalidArgument());
 }
 
 TEST(JsonReaderTest, Objects) {
   JsonReader r("{ \"foo\" : { \"1\" : 1 } }");
   ASSERT_OK(r.Init());
 
-  const Value* foo = NULL;
+  const Value* foo = nullptr;
   ASSERT_OK(r.ExtractObject(r.root(), "foo", &foo));
   ASSERT_TRUE(foo);
 
@@ -117,10 +119,10 @@ TEST(JsonReaderTest, Objects) {
   ASSERT_EQ(1, one);
 
   // Bad types.
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractString(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "foo", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractString(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObjectArray(r.root(), "foo", nullptr).IsInvalidArgument());
 }
 
 TEST(JsonReaderTest, TopLevelArray) {
@@ -128,7 +130,7 @@ TEST(JsonReaderTest, TopLevelArray) {
   ASSERT_OK(r.Init());
 
   vector<const Value*> objs;
-  ASSERT_OK(r.ExtractObjectArray(r.root(), NULL, &objs));
+  ASSERT_OK(r.ExtractObjectArray(r.root(), nullptr, &objs));
   ASSERT_EQ(2, objs.size());
   string name;
   ASSERT_OK(r.ExtractString(objs[0], "name", &name));
@@ -137,10 +139,10 @@ TEST(JsonReaderTest, TopLevelArray) {
   ASSERT_EQ("bar", name);
 
   // Bad types.
-  ASSERT_TRUE(r.ExtractInt32(r.root(), NULL, NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), NULL, NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractString(r.root(), NULL, NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), NULL, NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), nullptr, NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), nullptr, NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractString(r.root(), nullptr, NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), nullptr, NULL).IsInvalidArgument());
 }
 
 TEST(JsonReaderTest, NestedArray) {
@@ -151,7 +153,7 @@ TEST(JsonReaderTest, NestedArray) {
   ASSERT_OK(r.ExtractObjectArray(r.root(), "foo", &foo));
   ASSERT_EQ(3, foo.size());
   int i = 0;
-  BOOST_FOREACH(const Value* v, foo) {
+  for (const Value* v : foo) {
     int32_t number;
     ASSERT_OK(r.ExtractInt32(v, "val", &number));
     ASSERT_EQ(i, number);
@@ -159,10 +161,10 @@ TEST(JsonReaderTest, NestedArray) {
   }
 
   // Bad types.
-  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractString(r.root(), "foo", NULL).IsInvalidArgument());
-  ASSERT_TRUE(r.ExtractObject(r.root(), "foo", NULL).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt32(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractInt64(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractString(r.root(), "foo", nullptr).IsInvalidArgument());
+  ASSERT_TRUE(r.ExtractObject(r.root(), "foo", nullptr).IsInvalidArgument());
 }
 
 } // namespace kudu

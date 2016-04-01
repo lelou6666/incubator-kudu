@@ -1,3 +1,65 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+#=============================================================================
+# This file is heavily modified/rewritten from FindProtobuf.cmake from the
+# CMake project:
+#
+#   Copyright 2011 Kirill A. Korinskiy <catap@catap.ru>
+#   Copyright 2009 Kitware, Inc.
+#   Copyright 2009 Philip Lowman <philip@yhbt.com>
+#   Copyright 2008 Esben Mose Hansen, Ange Optimization ApS
+#
+#   Distributed under the OSI-approved BSD License (the "License"):
+#
+#   CMake - Cross Platform Makefile Generator
+#   Copyright 2000-2015 Kitware, Inc.
+#   Copyright 2000-2011 Insight Software Consortium
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without
+#   modification, are permitted provided that the following conditions
+#   are met:
+#
+#   * Redistributions of source code must retain the above copyright
+#     notice, this list of conditions and the following disclaimer.
+#
+#   * Redistributions in binary form must reproduce the above copyright
+#     notice, this list of conditions and the following disclaimer in the
+#     documentation and/or other materials provided with the distribution.
+#
+#   * Neither the names of Kitware, Inc., the Insight Software Consortium,
+#     nor the names of their contributors may be used to endorse or promote
+#     products derived from this software without specific prior written
+#     permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+#   HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+#   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+#   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+#   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+#   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+#   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+#   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#=============================================================================
+
 #########
 # Local rewrite of the protobuf support in cmake.
 #
@@ -8,22 +70,19 @@
 # Locate and configure the Google Protocol Buffers library.
 # Defines the following variables:
 #
-#   PROTOBUF_FOUND - Found the Google Protocol Buffers library
-#   PROTOBUF_INCLUDE_DIRS - Include directories for Google Protocol Buffers
-#   PROTOBUF_LIBRARIES - The protobuf library
-#
-# The following cache variables are also defined:
-#   PROTOBUF_LIBRARY - The protobuf library
-#   PROTOBUF_STATIC_LIBRARY - The protobuf library (static link)
-#   PROTOBUF_PROTOC_LIBRARY   - The protoc library
-#   PROTOBUF_INCLUDE_DIR - The include directory for protocol buffers
-#   PROTOBUF_PROTOC_EXECUTABLE - The protoc compiler
+#   PROTOBUF_INCLUDE_DIR - the include directory for protocol buffers
+#   PROTOBUF_SHARED_LIBRARY - path to protobuf's shared library
+#   PROTOBUF_STATIC_LIBRARY - path to protobuf's static library
+#   PROTOBUF_PROTOC_SHARED_LIBRARY - path to protoc's shared library
+#   PROTOBUF_PROTOC_STATIC_LIBRARY - path to protoc's static library
+#   PROTOBUF_PROTOC_EXECUTABLE - the protoc compiler
+#   PROTOBUF_FOUND - whether the Protocol Buffers library has been found
 #
 #  ====================================================================
 #  Example:
 #
 #   find_package(Protobuf REQUIRED)
-#   include_directories(${PROTOBUF_INCLUDE_DIRS})
+#   include_directories(${PROTOBUF_INCLUDE_DIR})
 #
 #   include_directories(${CMAKE_CURRENT_BINARY_DIR})
 #   PROTOBUF_GENERATE_CPP(PROTO_SRCS PROTO_HDRS PROTO_TGTS
@@ -31,7 +90,7 @@
 #     [BINARY_ROOT <root into which binaries are built>]
 #     PROTO_FILES foo.proto)
 #   add_executable(bar bar.cc ${PROTO_SRCS} ${PROTO_HDRS})
-#   target_link_libraries(bar ${PROTOBUF_LIBRARY})
+#   target_link_libraries(bar ${PROTOBUF_SHARED_LIBRARY})
 #
 # NOTE: You may need to link against pthreads, depending
 # on the platform.
@@ -47,23 +106,6 @@
 #          libraries, those libraries should depend on these targets
 #          in order to "serialize" the protoc invocations
 #  ====================================================================
-
-
-#=============================================================================
-# Copyright 2011 Kirill A. Korinskiy <catap@catap.ru>
-# Copyright 2009 Kitware, Inc.
-# Copyright 2009 Philip Lowman <philip@yhbt.com>
-# Copyright 2008 Esben Mose Hansen, Ange Optimization ApS
-#
-# Distributed under the OSI-approved BSD License (the "License");
-# see accompanying file Copyright.txt for details.
-#
-# This software is distributed WITHOUT ANY WARRANTY; without even the
-# implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
-# See the License for more information.
-#=============================================================================
-# (To distributed this file outside of CMake, substitute the full
-#  License text for the above reference.)
 
 function(PROTOBUF_GENERATE_CPP SRCS HDRS TGTS)
   if(NOT ARGN)
@@ -117,10 +159,6 @@ function(PROTOBUF_GENERATE_CPP SRCS HDRS TGTS)
     list(APPEND ${SRCS} "${PROTO_CC_OUT}")
     list(APPEND ${HDRS} "${PROTO_H_OUT}")
 
-    if(NOT EXISTS ${PROTO_DST_ROOT}/${FIL_PT})
-        file(MAKE_DIRECTORY ${PROTO_DST_ROOT}/${FIL_PT})
-    endif()
-
     add_custom_command(
       OUTPUT "${PROTO_CC_OUT}" "${PROTO_H_OUT}"
       COMMAND  ${PROTOBUF_PROTOC_EXECUTABLE}
@@ -154,60 +192,36 @@ endfunction()
 
 
 find_path(PROTOBUF_INCLUDE_DIR google/protobuf/service.h
-  ${THIRDPARTY_PREFIX}/include
-  NO_DEFAULT_PATH
-)
+  NO_CMAKE_SYSTEM_PATH
+  NO_SYSTEM_ENVIRONMENT_PATH)
 
-# Google's provided vcproj files generate libraries with a "lib"
-# prefix on Windows
-if(WIN32)
-    set(PROTOBUF_ORIG_FIND_LIBRARY_PREFIXES "${CMAKE_FIND_LIBRARY_PREFIXES}")
-    set(CMAKE_FIND_LIBRARY_PREFIXES "lib" "")
-endif()
-
-find_library(PROTOBUF_LIBRARY NAMES libprotobuf${CMAKE_SHARED_LIBRARY_SUFFIX}
+find_library(PROTOBUF_SHARED_LIBRARY protobuf
              DOC "The Google Protocol Buffers Library"
-             PATHS ${THIRDPARTY_PREFIX}/lib
-             NO_DEFAULT_PATH
-)
-find_file(PROTOBUF_STATIC_LIBRARY libprotobuf.a
-         DOC "Static version of the Google Protocol Buffers Library"
-         PATHS ${THIRDPARTY_PREFIX}/lib
-         NO_DEFAULT_PATH)
+             NO_CMAKE_SYSTEM_PATH
+             NO_SYSTEM_ENVIRONMENT_PATH)
 
-find_library(PROTOBUF_PROTOC_LIBRARY NAMES libprotoc${CMAKE_SHARED_LIBRARY_SUFFIX}
+find_library(PROTOBUF_STATIC_LIBRARY libprotobuf.a
+             DOC "Static version of the Google Protocol Buffers Library"
+             NO_CMAKE_SYSTEM_PATH
+             NO_SYSTEM_ENVIRONMENT_PATH)
+
+find_library(PROTOBUF_PROTOC_SHARED_LIBRARY protoc
              DOC "The Google Protocol Buffers Compiler Library"
-             PATHS ${THIRDPARTY_PREFIX}/lib
-             NO_DEFAULT_PATH
-)
-find_library(PROTOBUF_PROTOC_STATIC_LIBRARY NAMES libprotoc.a
-         DOC "Static version of the Google Protocol Buffers Compiler Library"
-         PATHS ${THIRDPARTY_PREFIX}/lib
-         NO_DEFAULT_PATH)
+             NO_CMAKE_SYSTEM_PATH
+             NO_SYSTEM_ENVIRONMENT_PATH)
 
-find_program(PROTOBUF_PROTOC_EXECUTABLE NAMES protoc
+find_library(PROTOBUF_PROTOC_STATIC_LIBRARY libprotoc.a
+             DOC "Static version of the Google Protocol Buffers Compiler Library"
+             NO_CMAKE_SYSTEM_PATH
+             NO_SYSTEM_ENVIRONMENT_PATH)
+
+find_program(PROTOBUF_PROTOC_EXECUTABLE protoc
              DOC "The Google Protocol Buffers Compiler"
-             PATHS ${THIRDPARTY_PREFIX}/bin
-             NO_DEFAULT_PATH
-)
-
-mark_as_advanced(PROTOBUF_INCLUDE_DIR
-                 PROTOBUF_LIBRARY
-                 PROTOBUF_STATIC_LIBRARY
-                 PROTOBUF_PROTOC_LIBRARY
-                 PROTOBUF_PROTOC_STATIC_LIBRARY
-                 PROTOBUF_PROTOC_EXECUTABLE)
-
-# Restore original find library prefixes
-if(WIN32)
-    set(CMAKE_FIND_LIBRARY_PREFIXES "${PROTOBUF_ORIG_FIND_LIBRARY_PREFIXES}")
-endif()
+             NO_CMAKE_SYSTEM_PATH
+             NO_SYSTEM_ENVIRONMENT_PATH)
 
 include(FindPackageHandleStandardArgs)
-FIND_PACKAGE_HANDLE_STANDARD_ARGS(PROTOBUF DEFAULT_MSG
-    PROTOBUF_LIBRARY PROTOBUF_INCLUDE_DIR)
-
-if(PROTOBUF_FOUND)
-    set(PROTOBUF_INCLUDE_DIRS ${PROTOBUF_INCLUDE_DIR})
-    set(PROTOBUF_LIBRARIES    ${PROTOBUF_LIBRARY})
-endif()
+find_package_handle_standard_args(PROTOBUF REQUIRED_VARS
+  PROTOBUF_SHARED_LIBRARY PROTOBUF_STATIC_LIBRARY
+  PROTOBUF_PROTOC_SHARED_LIBRARY PROTOBUF_PROTOC_STATIC_LIBRARY
+  PROTOBUF_INCLUDE_DIR PROTOBUF_PROTOC_EXECUTABLE)

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tool to list local files and directories
 
@@ -18,11 +21,8 @@
 
 #include <iostream>
 #include <sstream>
-#include <tr1/memory>
 #include <vector>
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
@@ -55,27 +55,24 @@ struct CommandHandler {
   string name_;
   string desc_;
 
-  CommandHandler(CommandType type, const string& name, const string& desc)
-      : type_(type),
-        name_(name),
-        desc_(desc) {
-  }
+  CommandHandler(CommandType type, string name, string desc)
+      : type_(type), name_(std::move(name)), desc_(std::move(desc)) {}
 };
 
-const vector<CommandHandler> kCommandHandlers = boost::assign::list_of
-    (CommandHandler(FS_TREE, "tree", "Print out a file system tree." ))
-    (CommandHandler(LIST_LOGS, "list_logs",
-                      "List file system logs (optionally accepts a tablet id)."))
-    (CommandHandler(LIST_TABLETS, "list_tablets", "List tablets." ))
-    (CommandHandler(LIST_BLOCKS, "list_blocks",
-                    "List block for tablet (optionally accepts a tablet id)."));
+const vector<CommandHandler> kCommandHandlers = {
+    CommandHandler(FS_TREE, "tree", "Print out a file system tree." ),
+    CommandHandler(LIST_LOGS, "list_logs",
+                   "List file system logs (optionally accepts a tablet id)."),
+    CommandHandler(LIST_TABLETS, "list_tablets", "List tablets." ),
+    CommandHandler(LIST_BLOCKS, "list_blocks",
+                   "List block for tablet (optionally accepts a tablet id).") };
 
 void PrintUsageToStream(const string& prog_name, std::ostream* out) {
   *out << "Usage: " << prog_name << " [-verbose] "
        << "-fs_wal_dir <dir> -fs_data_dirs <dirs> <command> [option] "
        << std::endl << std::endl
        << "Commands: " << std::endl;
-  BOOST_FOREACH(const CommandHandler& handler, kCommandHandlers) {
+  for (const CommandHandler& handler : kCommandHandlers) {
     *out << handler.name_ << ": " << handler.desc_ << std::endl;
   }
 }
@@ -91,7 +88,7 @@ bool ValidateCommand(int argc, char** argv, CommandType* out) {
     Usage(argv[0], "At least one command must be specified!");
     return false;
   }
-  BOOST_FOREACH(const CommandHandler& handler, kCommandHandlers) {
+  for (const CommandHandler& handler : kCommandHandlers) {
     if (argv[1] == handler.name_) {
       *out = handler.type_;
       return true;

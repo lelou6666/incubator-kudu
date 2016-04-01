@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Copied from Impala and adapted to Kudu.
 
@@ -262,15 +265,14 @@ class Thread : public RefCountedThreadSafe<Thread> {
   // Function object that wraps the user-supplied function to run in a separate thread.
   typedef boost::function<void ()> ThreadFunctor;
 
-  Thread(const std::string& category, const std::string& name, const ThreadFunctor& functor)
-    : thread_(0),
-      category_(category),
-      name_(name),
-      tid_(CHILD_WAITING_TID),
-      functor_(functor),
-      done_(1),
-      joinable_(false) {
-  }
+  Thread(std::string category, std::string name, ThreadFunctor functor)
+      : thread_(0),
+        category_(std::move(category)),
+        name_(std::move(name)),
+        tid_(CHILD_WAITING_TID),
+        functor_(std::move(functor)),
+        done_(1),
+        joinable_(false) {}
 
   // Library-specific thread ID.
   pthread_t thread_;

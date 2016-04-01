@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log_reader.h"
 
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <algorithm>
 
@@ -59,50 +61,51 @@ struct LogSegmentSeqnoComparator {
 using consensus::OpId;
 using consensus::ReplicateMsg;
 using env_util::ReadFully;
+using std::shared_ptr;
 using strings::Substitute;
 
 const int LogReader::kNoSizeLimit = -1;
 
-Status LogReader::Open(FsManager *fs_manager,
+Status LogReader::Open(FsManager* fs_manager,
                        const scoped_refptr<LogIndex>& index,
-                       const string& tablet_oid,
+                       const string& tablet_id,
                        const scoped_refptr<MetricEntity>& metric_entity,
-                       gscoped_ptr<LogReader> *reader) {
-  gscoped_ptr<LogReader> log_reader(new LogReader(fs_manager, index, tablet_oid,
-                                                  metric_entity));
+                       shared_ptr<LogReader>* reader) {
+  auto log_reader = std::make_shared<LogReader>(
+      fs_manager, index, tablet_id, metric_entity);
 
-  string tablet_wal_path = fs_manager->GetTabletWalDir(tablet_oid);
+  string tablet_wal_path = fs_manager->GetTabletWalDir(tablet_id);
 
   RETURN_NOT_OK(log_reader->Init(tablet_wal_path))
-  reader->reset(log_reader.release());
+  *reader = log_reader;
   return Status::OK();
 }
 
-Status LogReader::OpenFromRecoveryDir(FsManager *fs_manager,
-                                      const string& tablet_oid,
+Status LogReader::OpenFromRecoveryDir(FsManager* fs_manager,
+                                      const string& tablet_id,
                                       const scoped_refptr<MetricEntity>& metric_entity,
-                                      gscoped_ptr<LogReader>* reader) {
-  string recovery_path = fs_manager->GetTabletWalRecoveryDir(tablet_oid);
+                                      shared_ptr<LogReader>* reader) {
+  string recovery_path = fs_manager->GetTabletWalRecoveryDir(tablet_id);
 
   // When recovering, we don't want to have any log index -- since it isn't fsynced()
   // during writing, its contents are useless to us.
-  scoped_refptr<LogIndex> index(NULL);
-  gscoped_ptr<LogReader> log_reader(new LogReader(fs_manager, index, tablet_oid,
-                                                  metric_entity));
+  scoped_refptr<LogIndex> index(nullptr);
+  auto log_reader = std::make_shared<LogReader>(
+      fs_manager, index, tablet_id, metric_entity);
   RETURN_NOT_OK_PREPEND(log_reader->Init(recovery_path),
                         "Unable to initialize log reader");
-  reader->reset(log_reader.release());
+  *reader = log_reader;
   return Status::OK();
 }
 
-LogReader::LogReader(FsManager *fs_manager,
+LogReader::LogReader(FsManager* fs_manager,
                      const scoped_refptr<LogIndex>& index,
-                     const string& tablet_oid,
+                     string tablet_id,
                      const scoped_refptr<MetricEntity>& metric_entity)
-  : fs_manager_(fs_manager),
-    log_index_(index),
-    tablet_oid_(tablet_oid),
-    state_(kLogReaderInitialized) {
+    : fs_manager_(fs_manager),
+      log_index_(index),
+      tablet_id_(std::move(tablet_id)),
+      state_(kLogReaderInitialized) {
   if (metric_entity) {
     bytes_read_ = METRIC_log_reader_bytes_read.Instantiate(metric_entity);
     entries_read_ = METRIC_log_reader_entries_read.Instantiate(metric_entity);
@@ -136,7 +139,7 @@ Status LogReader::Init(const string& tablet_wal_path) {
   SegmentSequence read_segments;
 
   // build a log segment from each file
-  BOOST_FOREACH(const string &log_file, log_files) {
+  for (const string &log_file : log_files) {
     if (HasPrefixString(log_file, FsManager::kWalFileNamePrefix)) {
       string fqp = JoinPathSegments(tablet_wal_path, log_file);
       scoped_refptr<ReadableLogSegment> segment;
@@ -146,7 +149,7 @@ Status LogReader::Init(const string& tablet_wal_path) {
       CHECK(segment->IsInitialized()) << "Uninitialized segment at: " << segment->path();
 
       if (!segment->HasFooter()) {
-        LOG(WARNING) << "Log segment " << fqp << " was likely left in-progress "
+        LOG(INFO) << "Log segment " << fqp << " was likely left in-progress "
             "after a previous crash. Will try to rebuild footer by scanning data.";
         RETURN_NOT_OK(segment->RebuildFooterByScanning());
       }
@@ -164,7 +167,7 @@ Status LogReader::Init(const string& tablet_wal_path) {
 
     string previous_seg_path;
     int64_t previous_seg_seqno = -1;
-    BOOST_FOREACH(const SegmentSequence::value_type& entry, read_segments) {
+    for (const SegmentSequence::value_type& entry : read_segments) {
       VLOG(1) << " Log Reader Indexed: " << entry->footer().ShortDebugString();
       // Check that the log segments are in sequence.
       if (previous_seg_seqno != -1 && entry->header().sequence_number() != previous_seg_seqno + 1) {
@@ -200,7 +203,7 @@ Status LogReader::GetSegmentPrefixNotIncluding(int64_t index,
   boost::lock_guard<simple_spinlock> lock(lock_);
   CHECK_EQ(state_, kLogReaderReading);
 
-  BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments_) {
+  for (const scoped_refptr<ReadableLogSegment>& segment : segments_) {
     // The last segment doesn't have a footer. Never include that one.
     if (!segment->HasFooter()) {
       break;
@@ -219,7 +222,7 @@ int64_t LogReader::GetMinReplicateIndex() const {
   boost::lock_guard<simple_spinlock> lock(lock_);
   int64_t min_remaining_op_idx = -1;
 
-  BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments_) {
+  for (const scoped_refptr<ReadableLogSegment>& segment : segments_) {
     if (!segment->HasFooter()) continue;
     if (!segment->footer().has_min_replicate_index()) continue;
     if (min_remaining_op_idx == -1 ||
@@ -236,7 +239,7 @@ void LogReader::GetMaxIndexesToSegmentSizeMap(int64_t min_op_idx, int32_t segmen
                                               max_idx_to_segment_size) const {
   boost::lock_guard<simple_spinlock> lock(lock_);
   DCHECK_GE(segments_count, 0);
-  BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments_) {
+  for (const scoped_refptr<ReadableLogSegment>& segment : segments_) {
     if (max_idx_to_segment_size->size() == segments_count) {
       break;
     }
@@ -260,7 +263,7 @@ void LogReader::GetMaxIndexesToSegmentSizeMap(int64_t min_op_idx, int32_t segmen
 scoped_refptr<ReadableLogSegment> LogReader::GetSegmentBySequenceNumber(int64_t seq) const {
   boost::lock_guard<simple_spinlock> lock(lock_);
   if (segments_.empty()) {
-    return NULL;
+    return nullptr;
   }
 
   // We always have a contiguous set of log segments, so we can find the requested
@@ -268,7 +271,7 @@ scoped_refptr<ReadableLogSegment> LogReader::GetSegmentBySequenceNumber(int64_t 
   int64_t first_seqno = segments_[0]->header().sequence_number();
   int64_t relative = seq - first_seqno;
   if (relative < 0 || relative >= segments_.size()) {
-    return NULL;
+    return nullptr;
   }
 
   DCHECK_EQ(segments_[relative]->header().sequence_number(), seq);
@@ -401,7 +404,7 @@ Status LogReader::GetSegmentsSnapshot(SegmentSequence* segments) const {
 Status LogReader::TrimSegmentsUpToAndIncluding(int64_t segment_sequence_number) {
   boost::lock_guard<simple_spinlock> lock(lock_);
   CHECK_EQ(state_, kLogReaderReading);
-  SegmentSequence::iterator iter = segments_.begin();
+  auto iter = segments_.begin();
   int num_deleted_segments = 0;
 
   while (iter != segments_.end()) {
@@ -412,7 +415,7 @@ Status LogReader::TrimSegmentsUpToAndIncluding(int64_t segment_sequence_number) 
     }
     break;
   }
-  LOG(INFO) << "T " << tablet_oid_ << ": removed " << num_deleted_segments
+  LOG(INFO) << "T " << tablet_id_ << ": removed " << num_deleted_segments
             << " log segments from log reader";
   return Status::OK();
 }
@@ -483,7 +486,7 @@ const int LogReader::num_segments() const {
 string LogReader::ToString() const {
   boost::lock_guard<simple_spinlock> lock(lock_);
   string ret = "Reader's SegmentSequence: \n";
-  BOOST_FOREACH(const SegmentSequence::value_type& entry, segments_) {
+  for (const SegmentSequence::value_type& entry : segments_) {
     ret.append(Substitute("Segment: $0 Footer: $1\n",
                           entry->header().sequence_number(),
                           !entry->HasFooter() ? "NONE" : entry->footer().ShortDebugString()));

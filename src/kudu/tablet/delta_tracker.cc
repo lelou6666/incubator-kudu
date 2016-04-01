@@ -1,60 +1,60 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
-#include <tr1/memory>
-#include <string>
+#include "kudu/tablet/delta_tracker.h"
+
+#include <set>
 
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/strip.h"
 #include "kudu/gutil/strings/substitute.h"
-#include "kudu/util/status.h"
-#include "kudu/tablet/deltafile.h"
 #include "kudu/tablet/delta_applier.h"
 #include "kudu/tablet/delta_compaction.h"
 #include "kudu/tablet/delta_iterator_merger.h"
 #include "kudu/tablet/delta_store.h"
+#include "kudu/tablet/deltafile.h"
 #include "kudu/tablet/diskrowset.h"
 #include "kudu/tablet/tablet.pb.h"
+#include "kudu/util/status.h"
 
 namespace kudu {
 namespace tablet {
 
-using boost::assign::list_of;
 using fs::ReadableBlock;
 using fs::WritableBlock;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using strings::Substitute;
 
-DeltaTracker::DeltaTracker(const shared_ptr<RowSetMetadata>& rowset_metadata,
+DeltaTracker::DeltaTracker(shared_ptr<RowSetMetadata> rowset_metadata,
                            rowid_t num_rows,
                            log::LogAnchorRegistry* log_anchor_registry,
-                           const shared_ptr<MemTracker>& parent_tracker) :
-  rowset_metadata_(rowset_metadata),
-  num_rows_(num_rows),
-  open_(false),
-  log_anchor_registry_(log_anchor_registry),
-  parent_tracker_(parent_tracker) {
-}
+                           shared_ptr<MemTracker> parent_tracker)
+    : rowset_metadata_(std::move(rowset_metadata)),
+      num_rows_(num_rows),
+      open_(false),
+      log_anchor_registry_(log_anchor_registry),
+      parent_tracker_(std::move(parent_tracker)) {}
 
 Status DeltaTracker::OpenDeltaReaders(const vector<BlockId>& blocks,
                                       vector<shared_ptr<DeltaStore> >* stores,
                                       DeltaType type) {
   FsManager* fs = rowset_metadata_->fs_manager();
-  BOOST_FOREACH(const BlockId& block_id, blocks) {
+  for (const BlockId& block_id : blocks) {
     gscoped_ptr<ReadableBlock> block;
     Status s = fs->OpenBlock(block_id, &block);
     if (!s.ok()) {
@@ -65,7 +65,7 @@ Status DeltaTracker::OpenDeltaReaders(const vector<BlockId>& blocks,
     }
 
     shared_ptr<DeltaFileReader> dfr;
-    s = DeltaFileReader::OpenNoInit(block.Pass(), block_id, &dfr, type);
+    s = DeltaFileReader::OpenNoInit(std::move(block), block_id, &dfr, type);
     if (!s.ok()) {
       LOG(ERROR) << "Failed to open " << DeltaType_Name(type)
                  << " delta file reader " << block_id.ToString() << ": "
@@ -107,7 +107,7 @@ Status DeltaTracker::MakeDeltaIteratorMergerUnlocked(size_t start_idx, size_t en
                                                      const Schema* projection,
                                                      vector<shared_ptr<DeltaStore> > *target_stores,
                                                      vector<BlockId> *target_blocks,
-                                                     std::tr1::shared_ptr<DeltaIterator> *out) {
+                                                     std::shared_ptr<DeltaIterator> *out) {
   CHECK(open_);
   CHECK_LE(start_idx, end_idx);
   CHECK_LT(end_idx, redo_delta_stores_.size());
@@ -118,7 +118,7 @@ Status DeltaTracker::MakeDeltaIteratorMergerUnlocked(size_t start_idx, size_t en
     // In DEBUG mode, the following asserts that the object is of the right type
     // (using RTTI)
     ignore_result(down_cast<DeltaFileReader*>(delta_store.get()));
-    shared_ptr<DeltaFileReader> dfr = std::tr1::static_pointer_cast<DeltaFileReader>(delta_store);
+    shared_ptr<DeltaFileReader> dfr = std::static_pointer_cast<DeltaFileReader>(delta_store);
 
     LOG(INFO) << "Preparing to minor compact delta file: " << dfr->ToString();
 
@@ -136,7 +136,7 @@ namespace {
 
 string JoinDeltaStoreStrings(const SharedDeltaStoreVector& stores) {
   vector<string> strings;
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& store, stores) {
+  for (const shared_ptr<DeltaStore>& store : stores) {
     strings.push_back(store->ToString());
   }
   return ::JoinStrings(strings, ",");
@@ -162,8 +162,8 @@ Status DeltaTracker::AtomicUpdateStores(const SharedDeltaStoreVector& to_remove,
     start_it =
         std::find(stores_to_update->begin(), stores_to_update->end(), to_remove[0]);
 
-    SharedDeltaStoreVector::iterator end_it = start_it;
-    BOOST_FOREACH(const shared_ptr<DeltaStore>& ds, to_remove) {
+    auto end_it = start_it;
+    for (const shared_ptr<DeltaStore>& ds : to_remove) {
       if (end_it == stores_to_update->end() || *end_it != ds) {
         return Status::InvalidArgument(
             strings::Substitute("Cannot find deltastore sequence <$0> in <$1>",
@@ -217,16 +217,16 @@ Status DeltaTracker::CompactStores(int start_idx, int end_idx) {
   // Merge and compact the stores and write and output to "data_writer"
   vector<shared_ptr<DeltaStore> > compacted_stores;
   vector<BlockId> compacted_blocks;
-  RETURN_NOT_OK(DoCompactStores(start_idx, end_idx, block.Pass(),
+  RETURN_NOT_OK(DoCompactStores(start_idx, end_idx, std::move(block),
                 &compacted_stores, &compacted_blocks));
 
   // Update delta_stores_, removing the compacted delta files and inserted the new
-  RETURN_NOT_OK(AtomicUpdateStores(compacted_stores, list_of(new_block_id), REDO));
+  RETURN_NOT_OK(AtomicUpdateStores(compacted_stores, { new_block_id }, REDO));
   LOG(INFO) << "Opened delta block for read: " << new_block_id.ToString();
 
   // Update the metadata accordingly
   RowSetMetadataUpdate update;
-  update.ReplaceRedoDeltaBlocks(compacted_blocks, list_of(new_block_id));
+  update.ReplaceRedoDeltaBlocks(compacted_blocks, { new_block_id });
   // TODO: need to have some error handling here -- if we somehow can't persist the
   // metadata, do we end up losing data on recovery?
   CHECK_OK(rowset_metadata_->CommitUpdate(update));
@@ -257,7 +257,7 @@ Status DeltaTracker::DoCompactStores(size_t start_idx, size_t end_idx,
   RETURN_NOT_OK(MakeDeltaIteratorMergerUnlocked(start_idx, end_idx, &empty_schema, compacted_stores,
                                                 compacted_blocks, &inputs_merge));
   LOG(INFO) << "Compacting " << (end_idx - start_idx + 1) << " delta files.";
-  DeltaFileWriter dfw(block.Pass());
+  DeltaFileWriter dfw(std::move(block));
   RETURN_NOT_OK(dfw.Start());
   RETURN_NOT_OK(WriteDeltaIteratorToFile<REDO>(inputs_merge.get(),
                                                ITERATE_OVER_ALL_ROWS,
@@ -280,7 +280,7 @@ Status DeltaTracker::CheckSnapshotComesAfterAllUndos(const MvccSnapshot& snap) c
     lock_guard<rw_spinlock> lock(&component_lock_);
     undos = undo_delta_stores_;
   }
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& undo, undos) {
+  for (const shared_ptr<DeltaStore>& undo : undos) {
     DeltaFileReader* dfr = down_cast<DeltaFileReader*>(undo.get());
 
     // Even though IsRelevantForSnapshot() is safe to call without
@@ -328,7 +328,7 @@ Status DeltaTracker::NewDeltaFileIterator(
   // TODO: we need to somehow ensure this doesn't fail - we have to somehow coordinate
   // minor delta compaction against delta flush. Add a test case here to trigger this
   // condition.
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& store, *included_stores) {
+  for (const shared_ptr<DeltaStore>& store : *included_stores) {
     ignore_result(down_cast<DeltaFileReader*>(store.get()));
   }
 
@@ -378,9 +378,9 @@ Status DeltaTracker::CheckRowDeleted(rowid_t row_idx, bool *deleted,
   }
 
   // Then check backwards through the list of trackers.
-  BOOST_REVERSE_FOREACH(const shared_ptr<DeltaStore>& ds, redo_delta_stores_) {
+  for (auto ds = redo_delta_stores_.crbegin(); ds != redo_delta_stores_.crend(); ds++) {
     stats->deltas_consulted++;
-    RETURN_NOT_OK(ds->CheckRowDeleted(row_idx, deleted));
+    RETURN_NOT_OK((*ds)->CheckRowDeleted(row_idx, deleted));
     if (*deleted) {
       return Status::OK();
     }
@@ -399,7 +399,7 @@ Status DeltaTracker::FlushDMS(DeltaMemStore* dms,
                         "Unable to allocate new delta data writable_block");
   BlockId block_id(writable_block->id());
 
-  DeltaFileWriter dfw(writable_block.Pass());
+  DeltaFileWriter dfw(std::move(writable_block));
   RETURN_NOT_OK_PREPEND(dfw.Start(),
                         Substitute("Unable to start writing to delta block $0",
                                    block_id.ToString()));
@@ -412,7 +412,7 @@ Status DeltaTracker::FlushDMS(DeltaMemStore* dms,
   // Now re-open for read
   gscoped_ptr<ReadableBlock> readable_block;
   RETURN_NOT_OK(fs->OpenBlock(block_id, &readable_block));
-  RETURN_NOT_OK(DeltaFileReader::OpenNoInit(readable_block.Pass(), block_id, dfr, REDO));
+  RETURN_NOT_OK(DeltaFileReader::OpenNoInit(std::move(readable_block), block_id, dfr, REDO));
   LOG(INFO) << "Reopened delta block for read: " << block_id.ToString();
 
   RETURN_NOT_OK(rowset_metadata_->CommitRedoDeltaDataBlock(dms->id(), block_id));
@@ -507,7 +507,7 @@ size_t DeltaTracker::CountRedoDeltaStores() const {
 uint64_t DeltaTracker::EstimateOnDiskSize() const {
   shared_lock<rw_spinlock> lock(&component_lock_);
   uint64_t size = 0;
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& ds, redo_delta_stores_) {
+  for (const shared_ptr<DeltaStore>& ds : redo_delta_stores_) {
     size += ds->EstimateSize();
   }
   return size;
@@ -517,7 +517,7 @@ void DeltaTracker::GetColumnIdsWithUpdates(std::vector<ColumnId>* col_ids) const
   shared_lock<rw_spinlock> lock(&component_lock_);
 
   set<ColumnId> column_ids_with_updates;
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& ds, redo_delta_stores_) {
+  for (const shared_ptr<DeltaStore>& ds : redo_delta_stores_) {
     // We won't force open files just to read their stats.
     if (!ds->Initted()) {
       continue;

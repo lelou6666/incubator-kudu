@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import static org.junit.Assert.assertEquals;
@@ -72,22 +75,6 @@ public class TestKeyEncoding {
     return new PartitionSchema(
         new PartitionSchema.RangeSchema(columnIds),
         ImmutableList.<PartitionSchema.HashBucketSchema>of(), schema);
-  }
-
-  @Test
-  public void testBoolPrimaryKeys() {
-    Schema schema = buildSchema(new ColumnSchema.ColumnSchemaBuilder("key", Type.BOOL).key(true));
-
-    KuduTable table = new KuduTable(null, "one", "one", schema, defaultPartitionSchema(schema));
-    Insert oneKeyInsert = new Insert(table);
-    PartialRow row = oneKeyInsert.getRow();
-    row.addBoolean("key", true);
-    assertBytesEquals(row.encodePrimaryKey(), "\1");
-
-    oneKeyInsert = new Insert(table);
-    row = oneKeyInsert.getRow();
-    row.addBoolean("key", false);
-    assertBytesEquals(row.encodePrimaryKey(), "\0");
   }
 
   @Test
@@ -157,7 +144,6 @@ public class TestKeyEncoding {
   @Test
   public void testPrimaryKeyEncoding() {
     Schema schema = buildSchema(
-        new ColumnSchemaBuilder("bool", Type.BOOL).key(true),
         new ColumnSchemaBuilder("int8", Type.INT8).key(true),
         new ColumnSchemaBuilder("int16", Type.INT16).key(true),
         new ColumnSchemaBuilder("int32", Type.INT32).key(true),
@@ -166,7 +152,6 @@ public class TestKeyEncoding {
         new ColumnSchemaBuilder("binary", Type.BINARY).key(true));
 
     PartialRow rowA = schema.newPartialRow();
-    rowA.addBoolean("bool", false);
     rowA.addByte("int8", Byte.MIN_VALUE);
     rowA.addShort("int16", Short.MIN_VALUE);
     rowA.addInt("int32", Integer.MIN_VALUE);
@@ -176,7 +161,6 @@ public class TestKeyEncoding {
 
     assertBytesEquals(rowA.encodePrimaryKey(),
                       "\0"
-                    + "\0"
                     + "\0\0"
                     + "\0\0\0\0"
                     + "\0\0\0\0\0\0\0\0"
@@ -184,7 +168,6 @@ public class TestKeyEncoding {
                     + "");
 
     PartialRow rowB = schema.newPartialRow();
-    rowB.addBoolean("bool", true);
     rowB.addByte("int8", Byte.MAX_VALUE);
     rowB.addShort("int16", Short.MAX_VALUE);
     rowB.addInt("int32", Integer.MAX_VALUE);
@@ -194,7 +177,6 @@ public class TestKeyEncoding {
 
     assertBytesEquals(rowB.encodePrimaryKey(),
                       new byte[] {
-                          1,
                           -1,
                           -1, -1,
                           -1, -1, -1, -1,
@@ -204,7 +186,6 @@ public class TestKeyEncoding {
                       });
 
     PartialRow rowC = schema.newPartialRow();
-    rowC.addBoolean("bool", false);
     rowC.addByte("int8", (byte) 1);
     rowC.addShort("int16", (short) 2);
     rowC.addInt("int32", 3);
@@ -214,7 +195,6 @@ public class TestKeyEncoding {
 
     assertBytesEquals(rowC.encodePrimaryKey(),
                       new byte[] {
-                          0,
                           (byte) 0x81,
                           (byte) 0x80, 2,
                           (byte) 0x80, 0, 0, 3,

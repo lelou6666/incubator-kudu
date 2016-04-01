@@ -1,19 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_RPC_RPC_H
 #define KUDU_RPC_RPC_H
 
+#include <memory>
 #include <string>
 
 #include "kudu/gutil/callback.h"
@@ -33,11 +37,10 @@ class Rpc;
 // All RPCs should use HandleResponse() to retry certain generic errors.
 class RpcRetrier {
  public:
-  RpcRetrier(const MonoTime& deadline,
-             const std::tr1::shared_ptr<rpc::Messenger>& messenger)
-    : attempt_num_(1),
-      deadline_(deadline),
-      messenger_(messenger) {
+  RpcRetrier(MonoTime deadline, std::shared_ptr<rpc::Messenger> messenger)
+      : attempt_num_(1),
+        deadline_(std::move(deadline)),
+        messenger_(std::move(messenger)) {
     if (deadline_.Initialized()) {
       controller_.set_deadline(deadline_);
     }
@@ -53,21 +56,23 @@ class RpcRetrier {
   // 'out_status'.
   bool HandleResponse(Rpc* rpc, Status* out_status);
 
-  // Retries an RPC at some point in the near future.
+  // Retries an RPC at some point in the near future. If 'why_status' is not OK,
+  // records it as the most recent error causing the RPC to retry. This is
+  // reported to the caller eventually if the RPC never succeeds.
   //
   // If the RPC's deadline expires, the callback will fire with a timeout
   // error when the RPC comes up for retrying. This is true even if the
   // deadline has already expired at the time that Retry() was called.
   //
   // Callers should ensure that 'rpc' remains alive.
-  void DelayedRetry(Rpc* rpc);
+  void DelayedRetry(Rpc* rpc, const Status& why_status);
 
   RpcController* mutable_controller() { return &controller_; }
   const RpcController& controller() const { return controller_; }
 
   const MonoTime& deadline() const { return deadline_; }
 
-  const std::tr1::shared_ptr<Messenger>& messenger() const {
+  const std::shared_ptr<Messenger>& messenger() const {
     return messenger_;
   }
 
@@ -87,10 +92,14 @@ class RpcRetrier {
   MonoTime deadline_;
 
   // Messenger to use when sending the RPC.
-  std::tr1::shared_ptr<Messenger> messenger_;
+  std::shared_ptr<Messenger> messenger_;
 
   // RPC controller to use when sending the RPC.
   RpcController controller_;
+
+  // In case any retries have already happened, remembers the last error.
+  // Errors from the server take precedence over timeout errors.
+  Status last_error_;
 
   DISALLOW_COPY_AND_ASSIGN(RpcRetrier);
 };
@@ -99,7 +108,7 @@ class RpcRetrier {
 class Rpc {
  public:
   Rpc(const MonoTime& deadline,
-      const std::tr1::shared_ptr<rpc::Messenger>& messenger)
+      const std::shared_ptr<rpc::Messenger>& messenger)
   : retrier_(deadline, messenger) {
   }
 

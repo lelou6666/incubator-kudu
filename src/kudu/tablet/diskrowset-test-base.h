@@ -1,26 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_LAYER_TEST_BASE_H
 #define KUDU_TABLET_LAYER_TEST_BASE_H
 
-#include <boost/assign/list_of.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_set>
 #include <unistd.h>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/common/iterator.h"
@@ -47,8 +49,7 @@ DEFINE_int32(n_read_passes, 10,
 namespace kudu {
 namespace tablet {
 
-using boost::assign::list_of;
-using std::tr1::unordered_set;
+using std::unordered_set;
 
 class TestRowSet : public KuduRowSetTest {
  public:
@@ -73,7 +74,7 @@ class TestRowSet : public KuduRowSetTest {
                                  const vector<string>& cols) {
     vector<ColumnSchema> col_schemas;
     vector<ColumnId> col_ids;
-    BOOST_FOREACH(const string& col, cols) {
+    for (const string& col : cols) {
       int idx = schema.find_column(col);
       CHECK_GE(idx, 0);
       col_schemas.push_back(schema.column(idx));
@@ -209,7 +210,7 @@ class TestRowSet : public KuduRowSetTest {
 
   void VerifyUpdatesWithRowIter(const DiskRowSet &rs,
                                 const unordered_set<uint32_t> &updated) {
-    Schema proj_val = CreateProjection(schema_, list_of("val"));
+    Schema proj_val = CreateProjection(schema_, { "val" });
     MvccSnapshot snap = MvccSnapshot::CreateSnapshotIncludingAllTransactions();
     gscoped_ptr<RowwiseIterator> row_iter;
     CHECK_OK(rs.NewRowIterator(&proj_val, snap, &row_iter));
@@ -251,11 +252,11 @@ class TestRowSet : public KuduRowSetTest {
   void VerifyRandomRead(const DiskRowSet& rs, const Slice& row_key,
                         const string& expected_val) {
     Arena arena(256, 1024);
+    AutoReleasePool pool;
     ScanSpec spec;
-    ColumnRangePredicate pred(schema_.column(0), &row_key, &row_key);
+    auto pred = ColumnPredicate::Equality(schema_.column(0), &row_key);
     spec.AddPredicate(pred);
-    RangePredicateEncoder enc(&schema_, &arena);
-    enc.EncodeRangePredicates(&spec, true);
+    spec.OptimizeScan(schema_, &arena, &pool, true);
 
     MvccSnapshot snap = MvccSnapshot::CreateSnapshotIncludingAllTransactions();
     gscoped_ptr<RowwiseIterator> row_iter;
@@ -297,14 +298,14 @@ class TestRowSet : public KuduRowSetTest {
 
   void BenchmarkIterationPerformance(const DiskRowSet &rs,
                                      const string &log_message) {
-    Schema proj_val = CreateProjection(schema_, list_of("val"));
+    Schema proj_val = CreateProjection(schema_, { "val" });
     LOG_TIMING(INFO, log_message + " (val column only)") {
       for (int i = 0; i < FLAGS_n_read_passes; i++) {
         IterateProjection(rs, proj_val, n_rows_, false);
       }
     }
 
-    Schema proj_key = CreateProjection(schema_, list_of("key"));
+    Schema proj_key = CreateProjection(schema_, { "key" });
     LOG_TIMING(INFO, log_message + " (key string column only)") {
       for (int i = 0; i < FLAGS_n_read_passes; i++) {
         IterateProjection(rs, proj_key, n_rows_, false);
@@ -318,7 +319,7 @@ class TestRowSet : public KuduRowSetTest {
     }
   }
 
-  Status OpenTestRowSet(std::tr1::shared_ptr<DiskRowSet> *rowset) {
+  Status OpenTestRowSet(std::shared_ptr<DiskRowSet> *rowset) {
     return DiskRowSet::Open(rowset_meta_, new log::LogAnchorRegistry(), rowset);
   }
 

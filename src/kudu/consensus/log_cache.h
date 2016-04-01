@@ -1,23 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CONSENSUS_LOG_CACHE_H
 #define KUDU_CONSENSUS_LOG_CACHE_H
 
 #include <map>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_set>
 #include <vector>
 
 #include "kudu/consensus/consensus.pb.h"
@@ -191,10 +193,10 @@ class LogCache {
   // the parent tracker can be deleted if all log caches are
   // deleted (e.g., if all tablets are deleted from a server, or if
   // the server is shutdown).
-  std::tr1::shared_ptr<MemTracker> parent_tracker_;
+  std::shared_ptr<MemTracker> parent_tracker_;
 
   // A MemTracker for this instance.
-  std::tr1::shared_ptr<MemTracker> tracker_;
+  std::shared_ptr<MemTracker> tracker_;
 
   struct Metrics {
     explicit Metrics(const scoped_refptr<MetricEntity>& metric_entity);

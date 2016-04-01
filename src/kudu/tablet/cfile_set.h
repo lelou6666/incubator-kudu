@@ -1,23 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_LAYER_BASEDATA_H
 #define KUDU_TABLET_LAYER_BASEDATA_H
 
 #include <gtest/gtest_prod.h>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/cfile/bloomfile.h"
@@ -50,11 +53,11 @@ using kudu::cfile::ColumnIterator;
 //
 // All of these files have the same number of rows, and thus the positional
 // indexes can be used to seek to corresponding entries in each.
-class CFileSet : public std::tr1::enable_shared_from_this<CFileSet> {
+class CFileSet : public std::enable_shared_from_this<CFileSet> {
  public:
   class Iterator;
 
-  explicit CFileSet(const std::tr1::shared_ptr<RowSetMetadata>& rowset_metadata);
+  explicit CFileSet(std::shared_ptr<RowSetMetadata> rowset_metadata);
 
   Status Open();
 
@@ -109,13 +112,13 @@ class CFileSet : public std::tr1::enable_shared_from_this<CFileSet> {
 
   const Schema &tablet_schema() const { return rowset_metadata_->tablet_schema(); }
 
-  std::tr1::shared_ptr<RowSetMetadata> rowset_metadata_;
+  std::shared_ptr<RowSetMetadata> rowset_metadata_;
 
   std::string min_encoded_key_;
   std::string max_encoded_key_;
 
   // Map of column ID to reader. These are lazily initialized as needed.
-  typedef std::tr1::unordered_map<int, std::tr1::shared_ptr<CFileReader> > ReaderMap;
+  typedef std::unordered_map<int, std::shared_ptr<CFileReader> > ReaderMap;
   ReaderMap readers_by_col_id_;
 
   // A file reader for an ad-hoc index, i.e. an index that sits in its own file
@@ -174,13 +177,12 @@ class CFileSet::Iterator : public ColumnwiseIterator {
   friend class CFileSet;
 
   // 'projection' must remain valid for the lifetime of this object.
-  Iterator(const std::tr1::shared_ptr<CFileSet const> &base_data,
-           const Schema *projection)
-    : base_data_(base_data),
-      projection_(projection),
-      initted_(false),
-      cur_idx_(0),
-      prepared_count_(0) {
+  Iterator(std::shared_ptr<CFileSet const> base_data, const Schema *projection)
+      : base_data_(std::move(base_data)),
+        projection_(projection),
+        initted_(false),
+        cur_idx_(0),
+        prepared_count_(0) {
     CHECK_OK(base_data_->CountRows(&row_count_));
   }
 
@@ -197,7 +199,7 @@ class CFileSet::Iterator : public ColumnwiseIterator {
   // Prepare the given column if not already prepared.
   Status PrepareColumn(size_t col_idx);
 
-  const std::tr1::shared_ptr<CFileSet const> base_data_;
+  const std::shared_ptr<CFileSet const> base_data_;
   const Schema* projection_;
 
   // Iterator for the key column in the underlying data.

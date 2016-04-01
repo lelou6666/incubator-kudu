@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <utility>
 
@@ -29,7 +32,7 @@ namespace kudu {
 namespace tablet {
 
 using log::LogAnchorRegistry;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
 
 ////////////////////////////////////////////////////////////
@@ -172,19 +175,17 @@ void DeltaMemStore::DebugPrint() const {
 // DMSIterator
 ////////////////////////////////////////////////////////////
 
-DMSIterator::DMSIterator(const shared_ptr<const DeltaMemStore> &dms,
-                         const Schema *projection,
-                         const MvccSnapshot &snapshot)
-  : dms_(dms),
-    mvcc_snapshot_(snapshot),
-    iter_(dms->tree_->NewIterator()),
-    initted_(false),
-    prepared_idx_(0),
-    prepared_count_(0),
-    prepared_for_(NOT_PREPARED),
-    seeked_(false),
-    projection_(projection) {
-}
+DMSIterator::DMSIterator(const shared_ptr<const DeltaMemStore>& dms,
+                         const Schema* projection, MvccSnapshot snapshot)
+    : dms_(dms),
+      mvcc_snapshot_(std::move(snapshot)),
+      iter_(dms->tree_->NewIterator()),
+      initted_(false),
+      prepared_idx_(0),
+      prepared_count_(0),
+      prepared_for_(NOT_PREPARED),
+      seeked_(false),
+      projection_(projection) {}
 
 Status DMSIterator::Init(ScanSpec *spec) {
   initted_ = true;
@@ -225,7 +226,7 @@ Status DMSIterator::PrepareBatch(size_t nrows, PrepareFlag flag) {
   if (updates_by_col_.empty()) {
     updates_by_col_.resize(projection_->num_columns());
   }
-  BOOST_FOREACH(UpdatesForColumn& ufc, updates_by_col_) {
+  for (UpdatesForColumn& ufc : updates_by_col_) {
     ufc.clear();
   }
   deletes_and_reinserts_.clear();
@@ -277,8 +278,8 @@ Status DMSIterator::PrepareBatch(size_t nrows, PrepareFlag flag) {
 
           ColumnUpdate& cu = updates_by_col_[col_idx].back();
           cu.row_id = key.row_idx();
-          if (col_val == NULL) {
-            cu.new_val_ptr = NULL;
+          if (col_val == nullptr) {
+            cu.new_val_ptr = nullptr;
           } else {
             memcpy(cu.new_val_buf, col_val, col_size);
             // NOTE: we're constructing a pointer here to an element inside the deque.
@@ -308,7 +309,7 @@ Status DMSIterator::ApplyUpdates(size_t col_to_apply, ColumnBlock *dst) {
   DCHECK_EQ(prepared_count_, dst->nrows());
 
   const ColumnSchema* col_schema = &projection_->column(col_to_apply);
-  BOOST_FOREACH(const ColumnUpdate& cu, updates_by_col_[col_to_apply]) {
+  for (const ColumnUpdate& cu : updates_by_col_[col_to_apply]) {
     int32_t idx_in_block = cu.row_id - prepared_idx_;
     DCHECK_GE(idx_in_block, 0);
     SimpleConstCell src(col_schema, cu.new_val_ptr);
@@ -324,7 +325,7 @@ Status DMSIterator::ApplyDeletes(SelectionVector *sel_vec) {
   DCHECK_EQ(prepared_for_, PREPARED_FOR_APPLY);
   DCHECK_EQ(prepared_count_, sel_vec->nrows());
 
-  BOOST_FOREACH(const DeleteOrReinsert& dor, deletes_and_reinserts_) {
+  for (const DeleteOrReinsert& dor : deletes_and_reinserts_) {
     uint32_t idx_in_block = dor.row_id - prepared_idx_;
     if (!dor.exists) {
       sel_vec->SetRowUnselected(idx_in_block);
@@ -337,7 +338,7 @@ Status DMSIterator::ApplyDeletes(SelectionVector *sel_vec) {
 
 Status DMSIterator::CollectMutations(vector<Mutation *> *dst, Arena *arena) {
   DCHECK_EQ(prepared_for_, PREPARED_FOR_COLLECT);
-  BOOST_FOREACH(const PreparedDelta& src, prepared_deltas_) {
+  for (const PreparedDelta& src : prepared_deltas_) {
     DeltaKey key = src.key;;
     RowChangeList changelist(src.val);
     uint32_t rel_idx = key.row_idx() - prepared_idx_;

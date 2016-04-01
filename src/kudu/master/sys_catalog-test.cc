@@ -1,23 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include "kudu/common/wire_protocol.h"
@@ -34,7 +35,7 @@
 #include "kudu/rpc/messenger.h"
 
 using std::string;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using kudu::rpc::Messenger;
 using kudu::rpc::MessengerBuilder;
 using kudu::rpc::RpcController;
@@ -76,7 +77,7 @@ class TableLoader : public TableVisitor {
   ~TableLoader() { Reset(); }
 
   void Reset() {
-    BOOST_FOREACH(TableInfo* ti, tables) {
+    for (TableInfo* ti : tables) {
       ti->Release();
     }
     tables.clear();
@@ -125,7 +126,9 @@ TEST_F(SysCatalogTest, TestSysCatalogTablesOperations) {
     l.mutable_data()->pb.set_state(SysTablesEntryPB::PREPARING);
     ASSERT_OK(SchemaToPB(Schema(), l.mutable_data()->pb.mutable_schema()));
     // Add the table
-    ASSERT_OK(master_->catalog_manager()->sys_catalog()->AddTable(table.get()));
+    SysCatalogTable::Actions actions;
+    actions.table_to_add = table.get();
+    ASSERT_OK(master_->catalog_manager()->sys_catalog()->Write(actions));
     l.Commit();
   }
 
@@ -140,7 +143,9 @@ TEST_F(SysCatalogTest, TestSysCatalogTablesOperations) {
     TableMetadataLock l(table.get(), TableMetadataLock::WRITE);
     l.mutable_data()->pb.set_version(1);
     l.mutable_data()->pb.set_state(SysTablesEntryPB::REMOVED);
-    ASSERT_OK(master_->catalog_manager()->sys_catalog()->UpdateTable(table.get()));
+    SysCatalogTable::Actions actions;
+    actions.table_to_update = table.get();
+    ASSERT_OK(master_->catalog_manager()->sys_catalog()->Write(actions));
     l.Commit();
   }
 
@@ -151,7 +156,9 @@ TEST_F(SysCatalogTest, TestSysCatalogTablesOperations) {
 
   // Delete the table
   loader.Reset();
-  ASSERT_OK(master_->catalog_manager()->sys_catalog()->DeleteTable(table.get()));
+  SysCatalogTable::Actions actions;
+  actions.table_to_delete = table.get();
+  ASSERT_OK(master_->catalog_manager()->sys_catalog()->Write(actions));
   ASSERT_OK(master_->catalog_manager()->sys_catalog()->VisitTables(&loader));
   ASSERT_EQ(0, loader.tables.size());
 }
@@ -199,7 +206,7 @@ class TabletLoader : public TabletVisitor {
   ~TabletLoader() { Reset(); }
 
   void Reset() {
-    BOOST_FOREACH(TabletInfo* ti, tablets) {
+    for (TabletInfo* ti : tablets) {
       ti->Release();
     }
     tablets.clear();
@@ -209,7 +216,7 @@ class TabletLoader : public TabletVisitor {
                              const std::string& tablet_id,
                              const SysTabletsEntryPB& metadata) OVERRIDE {
     // Setup the tablet info
-    TabletInfo *tablet = new TabletInfo(NULL, tablet_id);
+    TabletInfo *tablet = new TabletInfo(nullptr, tablet_id);
     TabletMetadataLock l(tablet, TabletMetadataLock::WRITE);
     l.mutable_data()->pb.CopyFrom(metadata);
     l.Commit();
@@ -260,7 +267,9 @@ TEST_F(SysCatalogTest, TestSysCatalogTabletsOperations) {
     loader.Reset();
     TabletMetadataLock l1(tablet1.get(), TabletMetadataLock::WRITE);
     TabletMetadataLock l2(tablet2.get(), TabletMetadataLock::WRITE);
-    ASSERT_OK(sys_catalog->AddTablets(tablets));
+    SysCatalogTable::Actions actions;
+    actions.tablets_to_add = tablets;
+    ASSERT_OK(sys_catalog->Write(actions));
     l1.Commit();
     l2.Commit();
 
@@ -277,7 +286,9 @@ TEST_F(SysCatalogTest, TestSysCatalogTabletsOperations) {
 
     TabletMetadataLock l1(tablet1.get(), TabletMetadataLock::WRITE);
     l1.mutable_data()->pb.set_state(SysTabletsEntryPB::RUNNING);
-    ASSERT_OK(sys_catalog->UpdateTablets(tablets));
+    SysCatalogTable::Actions actions;
+    actions.tablets_to_update = tablets;
+    ASSERT_OK(sys_catalog->Write(actions));
     l1.Commit();
 
     loader.Reset();
@@ -303,7 +314,10 @@ TEST_F(SysCatalogTest, TestSysCatalogTabletsOperations) {
     l2.mutable_data()->pb.set_state(SysTabletsEntryPB::RUNNING);
 
     loader.Reset();
-    ASSERT_OK(sys_catalog->AddAndUpdateTablets(to_add, to_update));
+    SysCatalogTable::Actions actions;
+    actions.tablets_to_add = to_add;
+    actions.tablets_to_update = to_update;
+    ASSERT_OK(sys_catalog->Write(actions));
 
     l1.Commit();
     l2.Commit();
@@ -323,7 +337,9 @@ TEST_F(SysCatalogTest, TestSysCatalogTabletsOperations) {
     tablets.push_back(tablet3.get());
 
     loader.Reset();
-    ASSERT_OK(master_->catalog_manager()->sys_catalog()->DeleteTablets(tablets));
+    SysCatalogTable::Actions actions;
+    actions.tablets_to_delete = tablets;
+    ASSERT_OK(master_->catalog_manager()->sys_catalog()->Write(actions));
     ASSERT_OK(master_->catalog_manager()->sys_catalog()->VisitTablets(&loader));
     ASSERT_EQ(1, loader.tablets.size());
     ASSERT_TRUE(MetadatasEqual(tablet2.get(), loader.tablets[0]));
@@ -332,7 +348,7 @@ TEST_F(SysCatalogTest, TestSysCatalogTabletsOperations) {
 
 // Verify that data mutations are not available from metadata() until commit.
 TEST_F(SysCatalogTest, TestTabletInfoCommit) {
-  scoped_refptr<TabletInfo> tablet(new TabletInfo(NULL, "123"));
+  scoped_refptr<TabletInfo> tablet(new TabletInfo(nullptr, "123"));
 
   // Mutate the tablet, the changes should not be visible
   TabletMetadataLock l(tablet.get(), TabletMetadataLock::WRITE);

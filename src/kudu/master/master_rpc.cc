@@ -1,23 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This module is internal to the client and not a public API.
 
 #include "kudu/master/master_rpc.h"
 
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
 
 #include "kudu/common/wire_protocol.h"
 #include "kudu/common/wire_protocol.pb.h"
@@ -28,7 +30,7 @@
 #include "kudu/util/net/net_util.h"
 
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::string;
 using std::vector;
 
@@ -43,16 +45,13 @@ namespace master {
 // GetMasterRegistrationRpc
 ////////////////////////////////////////////////////////////
 
-GetMasterRegistrationRpc::GetMasterRegistrationRpc(const StatusCallback& user_cb,
-                                                   const Sockaddr& addr,
-                                                   const MonoTime& deadline,
-                                                   const shared_ptr<Messenger>& messenger,
-                                                   ServerEntryPB* out)
+GetMasterRegistrationRpc::GetMasterRegistrationRpc(
+    StatusCallback user_cb, Sockaddr addr, const MonoTime& deadline,
+    const shared_ptr<Messenger>& messenger, ServerEntryPB* out)
     : Rpc(deadline, messenger),
-      user_cb_(user_cb),
-      addr_(addr),
-      out_(DCHECK_NOTNULL(out)) {
-}
+      user_cb_(std::move(user_cb)),
+      addr_(std::move(addr)),
+      out_(DCHECK_NOTNULL(out)) {}
 
 GetMasterRegistrationRpc::~GetMasterRegistrationRpc() {
 }
@@ -104,13 +103,13 @@ void GetMasterRegistrationRpc::SendRpcCb(const Status& status) {
 // GetLeaderMasterRpc
 ////////////////////////////////////////////////////////////
 
-GetLeaderMasterRpc::GetLeaderMasterRpc(const LeaderCallback& user_cb,
-                                       const vector<Sockaddr>& addrs,
+GetLeaderMasterRpc::GetLeaderMasterRpc(LeaderCallback user_cb,
+                                       vector<Sockaddr> addrs,
                                        const MonoTime& deadline,
                                        const shared_ptr<Messenger>& messenger)
     : Rpc(deadline, messenger),
-      user_cb_(user_cb),
-      addrs_(addrs),
+      user_cb_(std::move(user_cb)),
+      addrs_(std::move(addrs)),
       pending_responses_(0),
       completed_(false) {
   DCHECK(deadline.Initialized());
@@ -125,7 +124,7 @@ GetLeaderMasterRpc::~GetLeaderMasterRpc() {
 
 string GetLeaderMasterRpc::ToString() const {
   vector<string> sockaddr_str;
-  BOOST_FOREACH(const Sockaddr& addr, addrs_) {
+  for (const Sockaddr& addr : addrs_) {
     sockaddr_str.push_back(addr.ToString());
   }
   return strings::Substitute("GetLeaderMasterRpc(addrs: $0, num_attempts: $1)",

@@ -1,19 +1,21 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/server/server_base.h"
 
-#include <boost/foreach.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <gflags/gflags.h>
 #include <string>
@@ -57,9 +59,9 @@ TAG_FLAG(num_reactor_threads, advanced);
 
 DECLARE_bool(use_hybrid_clock);
 
+using std::shared_ptr;
 using std::string;
 using std::stringstream;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -82,18 +84,18 @@ shared_ptr<MemTracker> CreateMemTrackerForServer() {
 
 } // anonymous namespace
 
-ServerBase::ServerBase(const string& name,
-                       const ServerBaseOptions& options,
+ServerBase::ServerBase(string name, const ServerBaseOptions& options,
                        const string& metric_namespace)
-  : name_(name),
-    mem_tracker_(CreateMemTrackerForServer()),
-    metric_registry_(new MetricRegistry()),
-    metric_entity_(METRIC_ENTITY_server.Instantiate(metric_registry_.get(), metric_namespace)),
-    rpc_server_(new RpcServer(options.rpc_opts)),
-    web_server_(new Webserver(options.webserver_opts)),
-    is_first_run_(false),
-    options_(options),
-    stop_metrics_logging_latch_(1) {
+    : name_(std::move(name)),
+      mem_tracker_(CreateMemTrackerForServer()),
+      metric_registry_(new MetricRegistry()),
+      metric_entity_(METRIC_ENTITY_server.Instantiate(metric_registry_.get(),
+                                                      metric_namespace)),
+      rpc_server_(new RpcServer(options.rpc_opts)),
+      web_server_(new Webserver(options.webserver_opts)),
+      is_first_run_(false),
+      options_(options),
+      stop_metrics_logging_latch_(1) {
   FsManagerOpts fs_opts;
   fs_opts.metric_entity = metric_entity_;
   fs_opts.parent_mem_tracker = mem_tracker_;
@@ -192,7 +194,7 @@ void ServerBase::GetStatusPB(ServerStatusPB* status) const {
   {
     vector<Sockaddr> addrs;
     CHECK_OK(rpc_server_->GetBoundAddresses(&addrs));
-    BOOST_FOREACH(const Sockaddr& addr, addrs) {
+    for (const Sockaddr& addr : addrs) {
       HostPortPB* pb = status->add_bound_rpc_addresses();
       pb->set_host(addr.host());
       pb->set_port(addr.port());
@@ -203,7 +205,7 @@ void ServerBase::GetStatusPB(ServerStatusPB* status) const {
   {
     vector<Sockaddr> addrs;
     CHECK_OK(web_server_->GetBoundAddresses(&addrs));
-    BOOST_FOREACH(const Sockaddr& addr, addrs) {
+    for (const Sockaddr& addr : addrs) {
       HostPortPB* pb = status->add_bound_http_addresses();
       pb->set_host(addr.host());
       pb->set_port(addr.port());
@@ -234,7 +236,7 @@ Status ServerBase::DumpServerInfo(const string& path,
 }
 
 Status ServerBase::RegisterService(gscoped_ptr<rpc::ServiceIf> rpc_impl) {
-  return rpc_server_->RegisterService(rpc_impl.Pass());
+  return rpc_server_->RegisterService(std::move(rpc_impl));
 }
 
 Status ServerBase::StartMetricsLogging() {

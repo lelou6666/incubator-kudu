@@ -1,22 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
-#include <tr1/memory>
-#include <algorithm>
+#include <memory>
 
 #include "kudu/common/iterator.h"
 #include "kudu/common/generic_iterators.h"
@@ -35,20 +36,18 @@ DEFINE_int32(num_iters, 1, "Number of times to run merge");
 
 namespace kudu {
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
-static const Schema kIntSchema(
-  boost::assign::list_of(ColumnSchema("val", UINT32)), 1);
-
+static const Schema kIntSchema({ ColumnSchema("val", UINT32) }, 1);
 
 // Test iterator which just yields integer rows from a provided
 // vector.
 class VectorIterator : public ColumnwiseIterator {
  public:
-  explicit VectorIterator(const vector<uint32_t> &ints) :
-    ints_(ints),
-    cur_idx_(0)
-  {}
+  explicit VectorIterator(vector<uint32_t> ints)
+      : ints_(std::move(ints)),
+        cur_idx_(0) {
+  }
 
   Status Init(ScanSpec *spec) OVERRIDE {
     return Status::OK();
@@ -113,11 +112,11 @@ TEST(TestMergeIterator, TestMergeEmpty) {
     new MaterializingIterator(
       shared_ptr<ColumnwiseIterator>(new VectorIterator(empty_vec))));
 
-  vector<shared_ptr<RowwiseIterator> > to_merge;
+  vector<shared_ptr<RowwiseIterator>> to_merge;
   to_merge.push_back(iter);
 
   MergeIterator merger(kIntSchema, to_merge);
-  ASSERT_OK(merger.Init(NULL));
+  ASSERT_OK(merger.Init(nullptr));
   ASSERT_FALSE(merger.HasNext());
 }
 
@@ -127,14 +126,14 @@ class TestIntRangePredicate {
   TestIntRangePredicate(uint32_t lower, uint32_t upper) :
     lower_(lower),
     upper_(upper),
-    pred_(kIntSchema.column(0), &lower_, &upper_) {}
+    pred_(ColumnPredicate::Range(kIntSchema.column(0), &lower_, &upper_)) {}
 
   uint32_t lower_, upper_;
-  ColumnRangePredicate pred_;
+  ColumnPredicate pred_;
 };
 
 void TestMerge(const TestIntRangePredicate &predicate) {
-  vector<shared_ptr<RowwiseIterator> > to_merge;
+  vector<shared_ptr<RowwiseIterator>> to_merge;
   vector<uint32_t> ints;
   vector<uint32_t> all_ints;
   all_ints.reserve(FLAGS_num_rows * FLAGS_num_lists);
@@ -177,7 +176,7 @@ void TestMerge(const TestIntRangePredicate &predicate) {
       MergeIterator merger(kIntSchema, to_merge);
       ASSERT_OK(merger.Init(&spec));
 
-      RowBlock dst(kIntSchema, 100, NULL);
+      RowBlock dst(kIntSchema, 100, nullptr);
       size_t total_idx = 0;
       while (merger.HasNext()) {
         ASSERT_OK(merger.NextBlock(&dst));
@@ -214,7 +213,7 @@ TEST(TestMergeIterator, TestPredicate) {
 // to single columns.
 TEST(TestMaterializingIterator, TestMaterializingPredicatePushdown) {
   ScanSpec spec;
-  TestIntRangePredicate pred1(20, 29);
+  TestIntRangePredicate pred1(20, 30);
   spec.AddPredicate(pred1.pred_);
   LOG(INFO) << "Predicate: " << pred1.pred_.ToString();
 
@@ -226,8 +225,7 @@ TEST(TestMaterializingIterator, TestMaterializingPredicatePushdown) {
   shared_ptr<VectorIterator> colwise(new VectorIterator(ints));
   MaterializingIterator materializing(colwise);
   ASSERT_OK(materializing.Init(&spec));
-  ASSERT_EQ(0, spec.predicates().size())
-    << "Iterator should have pushed down predicate";
+  ASSERT_EQ(0, spec.predicates().size()) << "Iterator should have pushed down predicate";
 
   Arena arena(1024, 1024);
   RowBlock dst(kIntSchema, 100, &arena);
@@ -246,7 +244,7 @@ TEST(TestMaterializingIterator, TestMaterializingPredicatePushdown) {
 // input.
 TEST(TestPredicateEvaluatingIterator, TestPredicateEvaluation) {
   ScanSpec spec;
-  TestIntRangePredicate pred1(20, 29);
+  TestIntRangePredicate pred1(20, 30);
   spec.AddPredicate(pred1.pred_);
   LOG(INFO) << "Predicate: " << pred1.pred_.ToString();
 
@@ -274,7 +272,7 @@ TEST(TestPredicateEvaluatingIterator, TestPredicateEvaluation) {
 
   ASSERT_EQ(0, spec.predicates().size())
     << "Iterator tree should have accepted predicate";
-  ASSERT_EQ(1, pred_eval->predicates_.size())
+  ASSERT_EQ(1, pred_eval->col_idx_predicates_.size())
     << "Predicate should be evaluated by the outer iterator";
 
   Arena arena(1024, 1024);

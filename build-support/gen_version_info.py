@@ -1,17 +1,21 @@
 #!/usr/bin/env python
-# Copyright 2015 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 #
 # This script generates a header file which contains definitions
 # for the current Kudu build (eg timestamp, git hash, etc)
@@ -26,15 +30,7 @@ import sys
 import time
 from time import strftime, localtime
 
-def check_output(cmd):
-  """ Simple backport of subprocess.check_output() from python 2.7. """
-  p = subprocess.Popen(cmd,
-                       stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE, shell=True)
-  out, err = p.communicate()
-  if p.returncode != 0:
-    raise Exception("%s returned %d: %s" % (cmd, p.returncode, err))
-  return out
+from kudu_util import check_output
 
 def output_up_to_date(path, id_hash):
   """
@@ -71,7 +67,7 @@ def main():
 
   output_path = args[0]
 
-  hostname = check_output("hostname -f").strip()
+  hostname = check_output(["hostname", "-f"]).strip()
   build_time = "%s %s" % (strftime("%d %b %Y %H:%M:%S", localtime()), time.tzname[0])
   username = os.getenv("USER")
 
@@ -82,7 +78,7 @@ def main():
   else:
     try:
       # No command line git hash, find it in the local git repository.
-      git_hash = check_output("git rev-parse HEAD").strip()
+      git_hash = check_output(["git", "rev-parse", "HEAD"]).strip()
       clean_repo = subprocess.call("git diff --quiet && git diff --cached --quiet", shell=True) == 0
       clean_repo = str(clean_repo).lower()
     except Exception, e:
@@ -113,7 +109,6 @@ def main():
     os.makedirs(d)
   with file(output_path, "w") as f:
     print >>f, """
-// Copyright 2015 Cloudera, Inc.
 // THIS FILE IS AUTO-GENERATED! DO NOT EDIT!
 //
 // id_hash=%(identifying_hash)s

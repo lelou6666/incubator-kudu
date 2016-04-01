@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tserver/remote_bootstrap_session.h"
 
 #include <algorithm>
@@ -30,31 +33,29 @@
 namespace kudu {
 namespace tserver {
 
-using consensus::OpId;
 using consensus::MinimumOpId;
+using consensus::OpId;
 using fs::ReadableBlock;
 using log::LogAnchorRegistry;
 using log::ReadableLogSegment;
-using tablet::DeltaDataPB;
+using std::shared_ptr;
+using strings::Substitute;
 using tablet::ColumnDataPB;
+using tablet::DeltaDataPB;
 using tablet::RowSetDataPB;
 using tablet::TabletMetadata;
-using tablet::TabletSuperBlockPB;
-using std::tr1::shared_ptr;
-using strings::Substitute;
 using tablet::TabletPeer;
+using tablet::TabletSuperBlockPB;
 
-RemoteBootstrapSession::RemoteBootstrapSession(const scoped_refptr<TabletPeer>& tablet_peer,
-                                               const std::string& session_id,
-                                               const std::string& requestor_uuid,
-                                               FsManager* fs_manager)
-  : tablet_peer_(tablet_peer),
-    session_id_(session_id),
-    requestor_uuid_(requestor_uuid),
-    fs_manager_(fs_manager),
-    blocks_deleter_(&blocks_),
-    logs_deleter_(&logs_) {
-}
+RemoteBootstrapSession::RemoteBootstrapSession(
+    const scoped_refptr<TabletPeer>& tablet_peer, std::string session_id,
+    std::string requestor_uuid, FsManager* fs_manager)
+    : tablet_peer_(tablet_peer),
+      session_id_(std::move(session_id)),
+      requestor_uuid_(std::move(requestor_uuid)),
+      fs_manager_(fs_manager),
+      blocks_deleter_(&blocks_),
+      logs_deleter_(&logs_) {}
 
 RemoteBootstrapSession::~RemoteBootstrapSession() {
   // No lock taken in the destructor, should only be 1 thread with access now.
@@ -89,8 +90,8 @@ Status RemoteBootstrapSession::Init() {
   // All subsequent requests should reuse the opened blocks.
   vector<BlockIdPB> data_blocks;
   TabletMetadata::CollectBlockIdPBs(tablet_superblock_, &data_blocks);
-  BOOST_FOREACH(const BlockIdPB& block_id, data_blocks) {
-    LOG(INFO) << "Opening block " << block_id.DebugString();
+  for (const BlockIdPB& block_id : data_blocks) {
+    VLOG(1) << "Opening block " << block_id.DebugString();
     RETURN_NOT_OK(OpenBlockUnlocked(BlockId::FromPB(block_id)));
   }
 
@@ -101,11 +102,18 @@ Status RemoteBootstrapSession::Init() {
   // Get the current segments from the log, including the active segment.
   // The Log doesn't add the active segment to the log reader's list until
   // a header has been written to it (but it will not have a footer).
-  RETURN_NOT_OK(tablet_peer_->log()->GetLogReader()->GetSegmentsSnapshot(&log_segments_));
-  BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, log_segments_) {
+  shared_ptr<log::LogReader> reader = tablet_peer_->log()->reader();
+  if (!reader) {
+    tablet::TabletStatePB tablet_state = tablet_peer_->state();
+    return Status::IllegalState(Substitute(
+        "Unable to initialize remote bootstrap session for tablet $0. "
+        "Log reader is not available. Tablet state: $1 ($2)",
+        tablet_id, tablet::TabletStatePB_Name(tablet_state), tablet_state));
+  }
+  reader->GetSegmentsSnapshot(&log_segments_);
+  for (const scoped_refptr<ReadableLogSegment>& segment : log_segments_) {
     RETURN_NOT_OK(OpenLogSegmentUnlocked(segment->header().sequence_number()));
   }
-  LOG(INFO) << "Got snapshot of " << log_segments_.size() << " log segments";
 
   // Look up the committed consensus state.
   // We do this after snapshotting the log to avoid a scenario where the latest
@@ -114,9 +122,10 @@ Status RemoteBootstrapSession::Init() {
   scoped_refptr<consensus::Consensus> consensus = tablet_peer_->shared_consensus();
   if (!consensus) {
     tablet::TabletStatePB tablet_state = tablet_peer_->state();
-    return Status::IllegalState(Substitute("Unable to initialize remote bootstrap session "
-                                "for tablet $0. Consensus is not available. Tablet state: $1 ($2)",
-                                tablet_id, tablet::TabletStatePB_Name(tablet_state), tablet_state));
+    return Status::IllegalState(Substitute(
+        "Unable to initialize remote bootstrap session for tablet $0. "
+        "Consensus is not available. Tablet state: $1 ($2)",
+        tablet_id, tablet::TabletStatePB_Name(tablet_state), tablet_state));
   }
   initial_committed_cstate_ = consensus->ConsensusState(consensus::CONSENSUS_CONFIG_COMMITTED);
 
@@ -128,6 +137,9 @@ Status RemoteBootstrapSession::Init() {
   RETURN_NOT_OK(tablet_peer_->log_anchor_registry()->UpdateRegistration(
       last_logged_opid.index(), anchor_owner_token, &log_anchor_));
 
+  LOG(INFO) << Substitute(
+      "T $0 P $1: Remote bootstrap: opened $2 blocks and $3 log segments",
+      tablet_id, consensus->peer_uuid(), data_blocks.size(), log_segments_.size());
   return Status::OK();
 }
 

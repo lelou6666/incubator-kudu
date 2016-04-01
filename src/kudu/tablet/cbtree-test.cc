@@ -1,18 +1,20 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
 #include <boost/thread/thread.hpp>
 #include <boost/thread/barrier.hpp>
@@ -24,6 +26,7 @@
 #include "kudu/tablet/concurrent_btree.h"
 #include "kudu/util/hexdump.h"
 #include "kudu/util/memory/memory.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
@@ -66,6 +69,9 @@ class TestCBTree : public KuduTest {
     ASSERT_EQ(INSERT_SUCCESS,
               InsertInLeaf(&lnode, &arena, key, val));
   }
+
+  template<class Traits>
+  void DoTestConcurrentInsert();
 
 };
 
@@ -151,6 +157,13 @@ struct SmallFanoutTraits : public BTreeTraits {
 
   static const size_t internal_node_size = 84;
   static const size_t leaf_node_size = 92;
+};
+
+// Enables yield() calls at interesting points of the btree
+// implementation to ensure that we are still correct even
+// with adversarial scheduling.
+struct RacyTraits : public SmallFanoutTraits {
+  static const size_t debug_raciness = 100;
 };
 
 void MakeKey(char *kbuf, size_t len, int i) {
@@ -239,7 +252,7 @@ void InsertAndVerify(boost::barrier *go_barrier,
   while (true) {
     go_barrier->wait();
 
-    if (tree->get() == NULL) return;
+    if (tree->get() == nullptr) return;
 
     InsertRange(tree->get(), start_idx, end_idx);
     VerifyRange(*tree->get(), start_idx, end_idx);
@@ -313,7 +326,7 @@ TEST_F(TestCBTree, TestInsertAndVerifyRandom) {
   InsertRandomKeys(&t, n_keys, &inserted);
 
 
-  BOOST_FOREACH(int key, inserted) {
+  for (int key : inserted) {
     memcpy(kbuf, &key, sizeof(key));
 
     // Do a Get() and check that the real value is still accessible.
@@ -383,7 +396,7 @@ TEST_F(TestCBTree, TestVersionLockConcurrent) {
                         LockCycleThread, &v, split_per_thread, insert_per_thread));
   }
 
-  BOOST_FOREACH(boost::thread &thr, threads) {
+  for (boost::thread &thr : threads) {
     thr.join();
   }
 
@@ -398,7 +411,17 @@ TEST_F(TestCBTree, TestVersionLockConcurrent) {
 // Each thread inserts a number of elements and then verifies that it can
 // read them back.
 TEST_F(TestCBTree, TestConcurrentInsert) {
-  gscoped_ptr<CBTree<SmallFanoutTraits> > tree;
+  DoTestConcurrentInsert<SmallFanoutTraits>();
+}
+
+// Same, but with a tree that tries to provoke race conditions.
+TEST_F(TestCBTree, TestRacyConcurrentInsert) {
+  DoTestConcurrentInsert<RacyTraits>();
+}
+
+template<class TraitsClass>
+void TestCBTree::DoTestConcurrentInsert() {
+  gscoped_ptr<CBTree<TraitsClass> > tree;
 
   int num_threads = 16;
   int ins_per_thread = 30;
@@ -415,7 +438,7 @@ TEST_F(TestCBTree, TestConcurrentInsert) {
 
   for (int i = 0; i < num_threads; i++) {
     threads.push_back(new boost::thread(
-                        InsertAndVerify<SmallFanoutTraits>,
+                        InsertAndVerify<TraitsClass>,
                         &go_barrier,
                         &done_barrier,
                         &tree,
@@ -430,7 +453,7 @@ TEST_F(TestCBTree, TestConcurrentInsert) {
   // on areas of the key space diminishes.
 
   for (int trial = 0; trial < n_trials; trial++) {
-    tree.reset(new CBTree<SmallFanoutTraits>());
+    tree.reset(new CBTree<TraitsClass>());
     go_barrier.wait();
 
     done_barrier.wait();
@@ -441,10 +464,10 @@ TEST_F(TestCBTree, TestConcurrentInsert) {
     }
   }
 
-  tree.reset(NULL);
+  tree.reset(nullptr);
   go_barrier.wait();
 
-  BOOST_FOREACH(boost::thread &thr, threads) {
+  for (boost::thread &thr : threads) {
     thr.join();
   }
 }
@@ -621,7 +644,7 @@ static void ScanThread(boost::barrier *go_barrier,
                        gscoped_ptr<CBTree<T> > *tree) {
   while (true) {
     go_barrier->wait();
-    if (tree->get() == NULL) return;
+    if (tree->get() == nullptr) return;
 
     int prev_count = 0;
     int count = 0;
@@ -708,10 +731,10 @@ TEST_F(TestCBTree, TestConcurrentIterateAndInsert) {
     }
   }
 
-  tree.reset(NULL);
+  tree.reset(nullptr);
   go_barrier.wait();
 
-  BOOST_FOREACH(boost::thread &thr, threads) {
+  for (boost::thread &thr : threads) {
     thr.join();
   }
 }

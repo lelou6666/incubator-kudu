@@ -1,23 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/util/metrics.h"
 
 #include <iostream>
 #include <map>
 #include <set>
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 
 #include "kudu/gutil/atomicops.h"
@@ -47,7 +49,6 @@ namespace kudu {
 
 using std::string;
 using std::vector;
-using std::tr1::unordered_map;
 using strings::Substitute;
 
 //
@@ -102,6 +103,8 @@ const char* MetricUnit::Name(Type unit) {
       return "tasks";
     case kMessages:
       return "messages";
+    case kContextSwitches:
+      return "context switches";
     default:
       return "UNKNOWN UNIT";
   }
@@ -152,12 +155,10 @@ scoped_refptr<MetricEntity> MetricEntityPrototype::Instantiate(
 //
 
 MetricEntity::MetricEntity(const MetricEntityPrototype* prototype,
-                           const std::string& id,
-                           const AttributeMap& attributes)
-  : prototype_(prototype),
-    id_(id),
-    attributes_(attributes) {
-}
+                           std::string id, AttributeMap attributes)
+    : prototype_(prototype),
+      id_(std::move(id)),
+      attributes_(std::move(attributes)) {}
 
 MetricEntity::~MetricEntity() {
 }
@@ -177,7 +178,7 @@ namespace {
 
 bool MatchMetricInList(const string& metric_name,
                        const vector<string>& match_params) {
-  BOOST_FOREACH(const string& param, match_params) {
+  for (const string& param : match_params) {
     // Handle wildcard.
     if (param == "*") return true;
     // The parameter is a substring match of the metric name.
@@ -204,7 +205,7 @@ Status MetricEntity::WriteAsJson(JsonWriter* writer,
     // Snapshot the metrics in this registry (not guaranteed to be a consistent snapshot)
     lock_guard<simple_spinlock> l(&lock_);
     attrs = attributes_;
-    BOOST_FOREACH(const MetricMap::value_type& val, metric_map_) {
+    for (const MetricMap::value_type& val : metric_map_) {
       const MetricPrototype* prototype = val.first;
       const scoped_refptr<Metric>& metric = val.second;
 
@@ -230,7 +231,7 @@ Status MetricEntity::WriteAsJson(JsonWriter* writer,
 
   writer->String("attributes");
   writer->StartObject();
-  BOOST_FOREACH(const AttributeMap::value_type& val, attrs) {
+  for (const AttributeMap::value_type& val : attrs) {
     writer->String(val.first);
     writer->String(val.second);
   }
@@ -238,7 +239,7 @@ Status MetricEntity::WriteAsJson(JsonWriter* writer,
 
   writer->String("metrics");
   writer->StartArray();
-  BOOST_FOREACH(OrderedMetricMap::value_type& val, metrics) {
+  for (OrderedMetricMap::value_type& val : metrics) {
     WARN_NOT_OK(val.second->WriteAsJson(writer, opts),
                 strings::Substitute("Failed to write $0 as JSON", val.first));
 
@@ -254,8 +255,7 @@ void MetricEntity::RetireOldMetrics() {
   MonoTime now(MonoTime::Now(MonoTime::FINE));
 
   lock_guard<simple_spinlock> l(&lock_);
-  for (MetricMap::iterator it = metric_map_.begin();
-       it != metric_map_.end();) {
+  for (auto it = metric_map_.begin(); it != metric_map_.end();) {
     const scoped_refptr<Metric>& metric = it->second;
 
     if (PREDICT_TRUE(!metric->HasOneRef())) {
@@ -332,7 +332,7 @@ Status MetricRegistry::WriteAsJson(JsonWriter* writer,
   }
 
   writer->StartArray();
-  BOOST_FOREACH(const EntityMap::value_type e, entities) {
+  for (const EntityMap::value_type e : entities) {
     WARN_NOT_OK(e.second->WriteAsJson(writer, requested_metrics, opts),
                 Substitute("Failed to write entity $0 as JSON", e.second->id()));
   }
@@ -350,8 +350,7 @@ Status MetricRegistry::WriteAsJson(JsonWriter* writer,
 
 void MetricRegistry::RetireOldMetrics() {
   lock_guard<simple_spinlock> l(&lock_);
-  for (EntityMap::iterator it = entities_.begin();
-       it != entities_.end();) {
+  for (auto it = entities_.begin(); it != entities_.end();) {
     it->second->RetireOldMetrics();
 
     if (it->second->num_metrics() == 0 && it->second->HasOneRef()) {
@@ -392,7 +391,7 @@ void MetricPrototypeRegistry::WriteAsJson(JsonWriter* writer) const {
   // Dump metric prototypes.
   writer->String("metrics");
   writer->StartArray();
-  BOOST_FOREACH(const MetricPrototype* p, metrics_) {
+  for (const MetricPrototype* p : metrics_) {
     writer->StartObject();
     p->WriteFields(writer, opts);
     writer->String("entity_type");
@@ -404,7 +403,7 @@ void MetricPrototypeRegistry::WriteAsJson(JsonWriter* writer) const {
   // Dump entity prototypes.
   writer->String("entities");
   writer->StartArray();
-  BOOST_FOREACH(const MetricEntityPrototype* p, entities_) {
+  for (const MetricEntityPrototype* p : entities_) {
     writer->StartObject();
     writer->String("name");
     writer->String(p->name());
@@ -426,7 +425,7 @@ void MetricPrototypeRegistry::WriteAsJsonAndExit() const {
 //
 // MetricPrototype
 //
-MetricPrototype::MetricPrototype(const CtorArgs& args) : args_(args) {
+MetricPrototype::MetricPrototype(CtorArgs args) : args_(std::move(args)) {
   MetricPrototypeRegistry::get()->AddMetric(this);
 }
 
@@ -458,7 +457,7 @@ FunctionGaugeDetacher::FunctionGaugeDetacher() {
 }
 
 FunctionGaugeDetacher::~FunctionGaugeDetacher() {
-  BOOST_FOREACH(const Closure& c, callbacks_) {
+  for (const Closure& c : callbacks_) {
     c.Run();
   }
 }
@@ -510,10 +509,8 @@ Status Gauge::WriteAsJson(JsonWriter* writer,
 //
 
 StringGauge::StringGauge(const GaugePrototype<string>* proto,
-                         const string& initial_value)
-  : Gauge(proto),
-    value_(initial_value) {
-}
+                         string initial_value)
+    : Gauge(proto), value_(std::move(initial_value)) {}
 
 std::string StringGauge::value() const {
   lock_guard<simple_spinlock> l(&lock_);
@@ -677,7 +674,7 @@ ScopedLatencyMetric::ScopedLatencyMetric(Histogram* latency_hist)
 }
 
 ScopedLatencyMetric::~ScopedLatencyMetric() {
-  if (latency_hist_ != NULL) {
+  if (latency_hist_ != nullptr) {
     MonoTime time_now = MonoTime::Now(MonoTime::FINE);
     latency_hist_->Increment(time_now.GetDeltaSince(time_started_).ToMicroseconds());
   }

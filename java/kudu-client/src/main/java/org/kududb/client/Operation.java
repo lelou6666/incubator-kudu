@@ -1,19 +1,21 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
-import com.google.common.primitives.Longs;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Message;
 import com.google.protobuf.ZeroCopyLiteralByteString;
@@ -21,6 +23,7 @@ import com.google.protobuf.ZeroCopyLiteralByteString;
 import org.kududb.ColumnSchema;
 import org.kududb.Schema;
 import org.kududb.Type;
+import org.kududb.WireProtocol;
 import org.kududb.WireProtocol.RowOperationsPB;
 import org.kududb.annotations.InterfaceAudience;
 import org.kududb.annotations.InterfaceStability;
@@ -28,10 +31,9 @@ import org.kududb.tserver.Tserver;
 import org.kududb.util.Pair;
 import org.jboss.netty.buffer.ChannelBuffer;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -68,6 +70,9 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
 
   private final PartialRow row;
 
+  /** See {@link SessionConfiguration#setIgnoreAllDuplicateRows(boolean)} */
+  boolean ignoreAllDuplicateRows = false;
+
   /**
    * Package-private constructor. Subclasses need to be instantiated via AsyncKuduSession
    * @param table table with the schema to use for this operation
@@ -75,6 +80,11 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
   Operation(KuduTable table) {
     super(table);
     this.row = table.getSchema().newPartialRow();
+  }
+
+  /** See {@link SessionConfiguration#setIgnoreAllDuplicateRows(boolean)} */
+  void setIgnoreAllDuplicateRows(boolean ignoreAllDuplicateRows) {
+    this.ignoreAllDuplicateRows = ignoreAllDuplicateRows;
   }
 
   /**
@@ -129,6 +139,10 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
     Tserver.WriteResponsePB.PerRowErrorPB error = null;
     if (builder.getPerRowErrorsCount() != 0) {
       error = builder.getPerRowErrors(0);
+      if (ignoreAllDuplicateRows &&
+          error.getError().getCode() == WireProtocol.AppStatusPB.ErrorCode.ALREADY_PRESENT) {
+        error = null;
+      }
     }
     OperationResponse response = new OperationResponse(deadlineTracker.getElapsedMillis(), tsUUID,
         builder.getTimestamp(), this, error);
@@ -147,6 +161,14 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
    */
   public PartialRow getRow() {
     return this.row;
+  }
+
+  @Override
+  public String toString() {
+    StringBuilder sb = new StringBuilder(super.toString());
+    sb.append(" row_key=");
+    sb.append(row.stringifyRowKey());
+    return sb.toString();
   }
 
   /**
@@ -170,7 +192,10 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
   static class OperationsEncoder {
     private Schema schema;
     private ByteBuffer rows;
-    private ByteArrayOutputStream indirect;
+    // We're filling this list as we go through the operations in encodeRow() and at the same time
+    // compute the total size, which will be used to right-size the array in toPB().
+    private List<ByteBuffer> indirect;
+    private long indirectWrittenBytes;
 
     /**
      * Initializes the state of the encoder based on the schema and number of operations to encode.
@@ -195,7 +220,7 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
       // instead of a doubling buffer like BAOS.
       this.rows = ByteBuffer.allocate(sizePerRow * numOperations)
                             .order(ByteOrder.LITTLE_ENDIAN);
-      this.indirect = new ByteArrayOutputStream();
+      this.indirect = new ArrayList<>(schema.getVarLengthColumnCount() * numOperations);
     }
 
     /**
@@ -214,7 +239,14 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
       if (indirect.size() > 0) {
         // TODO: same as above, we could avoid a copy here by using an implementation that allows
         // zero-copy on a slice of an array.
-        rowOpsBuilder.setIndirectData(ZeroCopyLiteralByteString.wrap(indirect.toByteArray()));
+        byte[] indirectData = new byte[(int)indirectWrittenBytes];
+        int offset = 0;
+        for (ByteBuffer bb : indirect) {
+          int bbSize = bb.remaining();
+          bb.get(indirectData, offset, bbSize);
+          offset += bbSize;
+        }
+        rowOpsBuilder.setIndirectData(ZeroCopyLiteralByteString.wrap(indirectData));
       }
       return rowOpsBuilder.build();
     }
@@ -232,14 +264,13 @@ public abstract class Operation extends KuduRpc<OperationResponse> implements Ku
         // Keys should always be specified, maybe check?
         if (row.isSet(colIdx) && !row.isSetToNull(colIdx)) {
           if (col.getType() == Type.STRING || col.getType() == Type.BINARY) {
-            byte[] varLengthData = row.getVarLengthData().get(colIdx);
-            rows.putLong(indirect.size());
-            rows.putLong(varLengthData.length);
-            try {
-              indirect.write(varLengthData);
-            } catch (IOException e) {
-              throw new AssertionError(e); // cannot occur
-            }
+            ByteBuffer varLengthData = row.getVarLengthData().get(colIdx);
+            varLengthData.reset();
+            rows.putLong(indirectWrittenBytes);
+            int bbSize = varLengthData.remaining();
+            rows.putLong(bbSize);
+            indirect.add(varLengthData);
+            indirectWrittenBytes += bbSize;
           } else {
             // This is for cols other than strings
             rows.put(rowData, currentRowOffset, col.getType().getSize());

@@ -110,6 +110,12 @@ class KUDU_EXPORT Status {
   Status(const Status& s);
   void operator=(const Status& s);
 
+#if __cplusplus >= 201103L
+  // Move the specified status.
+  Status(Status&& s);
+  void operator=(Status&& s);
+#endif
+
   // Return a success status.
   static Status OK() { return Status(); }
 
@@ -309,6 +315,7 @@ class KUDU_EXPORT Status {
     kEndOfFile = 18,
     // NOTE: Remember to duplicate these constants into wire_protocol.proto and
     // and to add StatusTo/FromPB ser/deser cases in wire_protocol.cc !
+    // Also remember to make the same changes to the java client in Status.java.
     //
     // TODO: Move error codes into an error_code.proto or something similar.
   };
@@ -333,6 +340,20 @@ inline void Status::operator=(const Status& s) {
     state_ = (s.state_ == NULL) ? NULL : CopyState(s.state_);
   }
 }
+
+#if __cplusplus >= 201103L
+inline Status::Status(Status&& s) : state_(s.state_) {
+  s.state_ = nullptr;
+}
+
+inline void Status::operator=(Status&& s) {
+  if (state_ != s.state_) {
+    delete[] state_;
+    state_ = s.state_;
+    s.state_ = nullptr;
+  }
+}
+#endif
 
 }  // namespace kudu
 

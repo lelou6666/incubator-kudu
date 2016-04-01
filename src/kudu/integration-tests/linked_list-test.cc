@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This is an integration test similar to TestLoadAndVerify in HBase.
 // It creates a table and writes linked lists into it, where each row
@@ -49,8 +52,8 @@
 using kudu::client::KuduClient;
 using kudu::client::KuduClientBuilder;
 using kudu::client::KuduSchema;
+using kudu::client::sp::shared_ptr;
 using kudu::itest::TServerDetails;
-using std::tr1::shared_ptr;
 
 DEFINE_int32(seconds_to_run, 5, "Number of seconds for which to run the test");
 
@@ -132,12 +135,12 @@ class LinkedListTest : public tserver::TabletServerIntegrationTestBase {
       return;
     }
     vector<string> split_flags = strings::Split(flags_str, " ");
-    BOOST_FOREACH(const string& flag, split_flags) {
+    for (const string& flag : split_flags) {
       flags->push_back(flag);
     }
   }
 
-  std::tr1::shared_ptr<KuduClient> client_;
+  shared_ptr<KuduClient> client_;
   gscoped_ptr<LinkedListTester> tester_;
 };
 

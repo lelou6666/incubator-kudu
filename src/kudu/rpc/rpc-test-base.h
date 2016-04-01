@@ -1,33 +1,37 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_RPC_RPC_TEST_BASE_H
 #define KUDU_RPC_RPC_TEST_BASE_H
 
 #include <algorithm>
 #include <list>
+#include <memory>
 #include <string>
 
 #include "kudu/rpc/acceptor_pool.h"
 #include "kudu/rpc/messenger.h"
 #include "kudu/rpc/proxy.h"
 #include "kudu/rpc/reactor.h"
-#include "kudu/rpc/rtest.pb.h"
-#include "kudu/rpc/rtest.proxy.h"
-#include "kudu/rpc/rtest.service.h"
 #include "kudu/rpc/remote_method.h"
 #include "kudu/rpc/rpc_context.h"
 #include "kudu/rpc/rpc_sidecar.h"
+#include "kudu/rpc/rtest.pb.h"
+#include "kudu/rpc/rtest.proxy.h"
+#include "kudu/rpc/rtest.service.h"
 #include "kudu/rpc/service_if.h"
 #include "kudu/rpc/service_pool.h"
 #include "kudu/util/faststring.h"
@@ -43,11 +47,12 @@ namespace kudu { namespace rpc {
 using kudu::rpc_test::AddRequestPB;
 using kudu::rpc_test::AddRequestPartialPB;
 using kudu::rpc_test::AddResponsePB;
-using kudu::rpc_test::EchoRequestPB;
-using kudu::rpc_test::EchoResponsePB;
 using kudu::rpc_test::CalculatorError;
 using kudu::rpc_test::CalculatorServiceIf;
 using kudu::rpc_test::CalculatorServiceProxy;
+using kudu::rpc_test::EchoRequestPB;
+using kudu::rpc_test::EchoResponsePB;
+using kudu::rpc_test::FeatureFlags;
 using kudu::rpc_test::PanicRequestPB;
 using kudu::rpc_test::PanicResponsePB;
 using kudu::rpc_test::SendTwoStringsRequestPB;
@@ -79,7 +84,7 @@ class GenericCalculatorService : public ServiceIf {
     // this test doesn't generate metrics, so we ignore the argument.
   }
 
-  virtual void Handle(InboundCall *incoming) OVERRIDE {
+  void Handle(InboundCall *incoming) override {
     if (incoming->remote_method().method_name() == kAddMethodName) {
       DoAdd(incoming);
     } else if (incoming->remote_method().method_name() == kSleepMethodName) {
@@ -92,7 +97,7 @@ class GenericCalculatorService : public ServiceIf {
     }
   }
 
-  std::string service_name() const OVERRIDE { return kFullServiceName; }
+  std::string service_name() const override { return kFullServiceName; }
   static std::string static_service_name() { return kFullServiceName; }
 
  private:
@@ -128,9 +133,9 @@ class GenericCalculatorService : public ServiceIf {
     SendTwoStringsResponsePB resp;
     int idx1, idx2;
     CHECK_OK(incoming->AddRpcSidecar(
-        make_gscoped_ptr(new RpcSidecar(first.Pass())), &idx1));
+        make_gscoped_ptr(new RpcSidecar(std::move(first))), &idx1));
     CHECK_OK(incoming->AddRpcSidecar(
-        make_gscoped_ptr(new RpcSidecar(second.Pass())), &idx2));
+        make_gscoped_ptr(new RpcSidecar(std::move(second))), &idx2));
     resp.set_sidecar1(idx1);
     resp.set_sidecar2(idx2);
 
@@ -160,16 +165,12 @@ class CalculatorService : public CalculatorServiceIf {
     : CalculatorServiceIf(entity) {
   }
 
-  virtual void Add(const AddRequestPB *req,
-                   AddResponsePB *resp,
-                   RpcContext *context) OVERRIDE {
+  void Add(const AddRequestPB *req, AddResponsePB *resp, RpcContext *context) override {
     resp->set_result(req->x() + req->y());
     context->RespondSuccess();
   }
 
-  virtual void Sleep(const SleepRequestPB *req,
-                     SleepResponsePB *resp,
-                     RpcContext *context) OVERRIDE {
+  void Sleep(const SleepRequestPB *req, SleepResponsePB *resp, RpcContext *context) override {
     if (req->return_app_error()) {
       CalculatorError my_error;
       my_error.set_extra_error_data("some application-specific error data");
@@ -202,16 +203,12 @@ class CalculatorService : public CalculatorServiceIf {
     DoSleep(req, context);
   }
 
-  virtual void Echo(const EchoRequestPB *req,
-                    EchoResponsePB *resp,
-                    RpcContext *context) OVERRIDE {
+  void Echo(const EchoRequestPB *req, EchoResponsePB *resp, RpcContext *context) override {
     resp->set_data(req->data());
     context->RespondSuccess();
   }
 
-  virtual void WhoAmI(const WhoAmIRequestPB* req,
-                      WhoAmIResponsePB* resp,
-                      RpcContext* context) OVERRIDE {
+  void WhoAmI(const WhoAmIRequestPB* req, WhoAmIResponsePB* resp, RpcContext* context) override {
     const UserCredentials& creds = context->user_credentials();
     if (creds.has_effective_user()) {
       resp->mutable_credentials()->set_effective_user(creds.effective_user());
@@ -221,17 +218,19 @@ class CalculatorService : public CalculatorServiceIf {
     context->RespondSuccess();
   }
 
-  virtual void TestArgumentsInDiffPackage(const ReqDiffPackagePB *req,
-                                          RespDiffPackagePB *resp,
-                                          ::kudu::rpc::RpcContext *context) OVERRIDE {
+  void TestArgumentsInDiffPackage(const ReqDiffPackagePB *req,
+                                  RespDiffPackagePB *resp,
+                                  ::kudu::rpc::RpcContext *context) override {
     context->RespondSuccess();
   }
 
-  virtual void Panic(const PanicRequestPB* req,
-                     PanicResponsePB* resp,
-                     RpcContext* context) OVERRIDE {
+  void Panic(const PanicRequestPB* req, PanicResponsePB* resp, RpcContext* context) override {
     TRACE("Got panic request");
     PANIC_RPC(context, "Test method panicking!");
+  }
+
+  bool SupportsFeature(uint32_t feature) const override {
+    return feature == FeatureFlags::FOO;
   }
 
  private:
@@ -257,16 +256,17 @@ class RpcTestBase : public KuduTest {
  public:
   RpcTestBase()
     : n_worker_threads_(3),
+      service_queue_length_(100),
       n_server_reactor_threads_(3),
       keepalive_time_ms_(1000),
       metric_entity_(METRIC_ENTITY_server.Instantiate(&metric_registry_, "test.rpc_test")) {
   }
 
-  virtual void SetUp() OVERRIDE {
+  void SetUp() override {
     KuduTest::SetUp();
   }
 
-  virtual void TearDown() OVERRIDE {
+  void TearDown() override {
     if (service_pool_) {
       server_messenger_->UnregisterService(service_name_);
       service_pool_->Shutdown();
@@ -278,7 +278,7 @@ class RpcTestBase : public KuduTest {
   }
 
  protected:
-  std::tr1::shared_ptr<Messenger> CreateMessenger(const string &name,
+  std::shared_ptr<Messenger> CreateMessenger(const string &name,
                                         int n_reactors = 1) {
     MessengerBuilder bld(name);
     bld.set_num_reactors(n_reactors);
@@ -287,7 +287,7 @@ class RpcTestBase : public KuduTest {
     bld.set_coarse_timer_granularity(MonoDelta::FromMilliseconds(
                                        std::min(keepalive_time_ms_, 100)));
     bld.set_metric_entity(metric_entity_);
-    std::tr1::shared_ptr<Messenger> messenger;
+    std::shared_ptr<Messenger> messenger;
     CHECK_OK(bld.Build(&messenger));
     return messenger;
   }
@@ -392,7 +392,7 @@ class RpcTestBase : public KuduTest {
   template<class ServiceClass>
   void DoStartTestServer(Sockaddr *server_addr) {
     server_messenger_ = CreateMessenger("TestServer", n_server_reactor_threads_);
-    std::tr1::shared_ptr<AcceptorPool> pool;
+    std::shared_ptr<AcceptorPool> pool;
     ASSERT_OK(server_messenger_->AddAcceptorPool(Sockaddr(), &pool));
     ASSERT_OK(pool->Start(2));
     *server_addr = pool->bind_address();
@@ -400,23 +400,23 @@ class RpcTestBase : public KuduTest {
     gscoped_ptr<ServiceIf> service(new ServiceClass(metric_entity_));
     service_name_ = service->service_name();
     scoped_refptr<MetricEntity> metric_entity = server_messenger_->metric_entity();
-    service_pool_ = new ServicePool(service.Pass(), metric_entity, 50);
+    service_pool_ = new ServicePool(std::move(service), metric_entity, service_queue_length_);
     server_messenger_->RegisterService(service_name_, service_pool_);
     ASSERT_OK(service_pool_->Init(n_worker_threads_));
   }
 
  protected:
   string service_name_;
-  std::tr1::shared_ptr<Messenger> server_messenger_;
+  std::shared_ptr<Messenger> server_messenger_;
   scoped_refptr<ServicePool> service_pool_;
   int n_worker_threads_;
+  int service_queue_length_;
   int n_server_reactor_threads_;
   int keepalive_time_ms_;
 
   MetricRegistry metric_registry_;
   scoped_refptr<MetricEntity> metric_entity_;
 };
-
 
 } // namespace rpc
 } // namespace kudu

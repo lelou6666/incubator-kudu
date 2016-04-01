@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/rolling_log.h"
 
@@ -40,15 +43,12 @@ static const int kDefaultSizeLimitBytes = 64 * 1024 * 1024; // 64MB
 
 namespace kudu {
 
-RollingLog::RollingLog(Env* env,
-                       const string& log_dir,
-                       const string& log_name)
-  : env_(env),
-    log_dir_(log_dir),
-    log_name_(log_name),
-    size_limit_bytes_(kDefaultSizeLimitBytes),
-    compress_after_close_(true) {
-}
+RollingLog::RollingLog(Env* env, string log_dir, string log_name)
+    : env_(env),
+      log_dir_(std::move(log_dir)),
+      log_name_(std::move(log_name)),
+      size_limit_bytes_(kDefaultSizeLimitBytes),
+      compress_after_close_(true) {}
 
 RollingLog::~RollingLog() {
   WARN_NOT_OK(Close(), "Unable to close RollingLog");
@@ -123,9 +123,6 @@ Status RollingLog::Open() {
                                    GetLogFileName(sequence));
 
     WritableFileOptions opts;
-    // No need to worry about mmap IO for performance, etc, and we'd
-    // rather not SIGBUS on an IO error.
-    opts.mmap_file = false;
     // Logs aren't worth the performance cost of durability.
     opts.sync_on_close = false;
     opts.mode = Env::CREATE_NON_EXISTING;
@@ -204,7 +201,7 @@ class ScopedGzipCloser {
   }
 
   void Cancel() {
-    file_ = NULL;
+    file_ = nullptr;
   }
 
  private:

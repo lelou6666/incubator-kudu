@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tserver/remote_bootstrap-test-base.h"
 
 #include "kudu/consensus/quorum_util.h"
@@ -19,7 +22,7 @@
 #include "kudu/tserver/remote_bootstrap_client.h"
 #include "kudu/util/env_util.h"
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace tserver {
@@ -77,6 +80,8 @@ Status RemoteBootstrapClientTest::CompareFileContents(const string& path1, const
 
   Slice slice1, slice2;
   faststring scratch1, scratch2;
+  scratch1.resize(size1);
+  scratch2.resize(size2);
   RETURN_NOT_OK(env_util::ReadFully(file1.get(), 0, size1, &slice1, scratch1.data()));
   RETURN_NOT_OK(env_util::ReadFully(file2.get(), 0, size2, &slice2, scratch2.data()));
   int result = strings::fastmemcmp_inlined(slice1.data(), slice2.data(), size1);
@@ -127,7 +132,7 @@ TEST_F(RemoteBootstrapClientTest, TestDownloadWalSegment) {
   ASSERT_TRUE(fs_manager_->Exists(path));
 
   log::SegmentSequence local_segments;
-  ASSERT_OK(tablet_peer_->log()->GetLogReader()->GetSegmentsSnapshot(&local_segments));
+  ASSERT_OK(tablet_peer_->log()->reader()->GetSegmentsSnapshot(&local_segments));
   const scoped_refptr<log::ReadableLogSegment>& segment = local_segments[0];
   string server_path = segment->path();
 
@@ -141,7 +146,7 @@ TEST_F(RemoteBootstrapClientTest, TestVerifyData) {
   string bad = "This is a known bad! string";
   const int kGoodOffset = 0;
   const int kBadOffset = 1;
-  const int kDataTotalLen = std::numeric_limits<uint64_t>::max(); // Ignored.
+  const int64_t kDataTotalLen = std::numeric_limits<int64_t>::max(); // Ignored.
 
   // Create a known-good PB.
   DataChunkPB valid_chunk;
@@ -176,14 +181,14 @@ namespace {
 vector<BlockId> GetAllSortedBlocks(const tablet::TabletSuperBlockPB& sb) {
   vector<BlockId> data_blocks;
 
-  BOOST_FOREACH(const tablet::RowSetDataPB& rowset, sb.rowsets()) {
-    BOOST_FOREACH(const tablet::DeltaDataPB& redo, rowset.redo_deltas()) {
+  for (const tablet::RowSetDataPB& rowset : sb.rowsets()) {
+    for (const tablet::DeltaDataPB& redo : rowset.redo_deltas()) {
       data_blocks.push_back(BlockId::FromPB(redo.block()));
     }
-    BOOST_FOREACH(const tablet::DeltaDataPB& undo, rowset.undo_deltas()) {
+    for (const tablet::DeltaDataPB& undo : rowset.undo_deltas()) {
       data_blocks.push_back(BlockId::FromPB(undo.block()));
     }
-    BOOST_FOREACH(const tablet::ColumnDataPB& column, rowset.columns()) {
+    for (const tablet::ColumnDataPB& column : rowset.columns()) {
       data_blocks.push_back(BlockId::FromPB(column.block()));
     }
     if (rowset.has_bloom_block()) {
@@ -221,13 +226,13 @@ TEST_F(RemoteBootstrapClientTest, TestDownloadAllBlocks) {
   // Verify that the old blocks aren't found. We're using a different
   // FsManager than 'tablet_peer', so the only way an old block could end
   // up in ours is due to a remote bootstrap client bug.
-  BOOST_FOREACH(const BlockId& block_id, old_data_blocks) {
+  for (const BlockId& block_id : old_data_blocks) {
     gscoped_ptr<fs::ReadableBlock> block;
     Status s = fs_manager_->OpenBlock(block_id, &block);
     ASSERT_TRUE(s.IsNotFound()) << "Expected block not found: " << s.ToString();
   }
   // And the new blocks are all present.
-  BOOST_FOREACH(const BlockId& block_id, new_data_blocks) {
+  for (const BlockId& block_id : new_data_blocks) {
     gscoped_ptr<fs::ReadableBlock> block;
     ASSERT_OK(fs_manager_->OpenBlock(block_id, &block));
   }

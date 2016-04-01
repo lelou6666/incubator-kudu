@@ -1,22 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
-#include <string>
-#include <vector>
 #include <boost/functional/hash.hpp>
 #include <gflags/gflags.h>
+#include <set>
+#include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/walltime.h"
@@ -32,9 +37,10 @@
 namespace kudu {
 namespace rpc {
 
-using strings::Substitute;
-using google::protobuf::Message;
 using google::protobuf::io::CodedOutputStream;
+using google::protobuf::Message;
+using std::set;
+using strings::Substitute;
 
 static const double kMicrosPerSecond = 1000000.0;
 
@@ -55,14 +61,13 @@ TAG_FLAG(rpc_callback_max_cycles, runtime);
 OutboundCall::OutboundCall(const ConnectionId& conn_id,
                            const RemoteMethod& remote_method,
                            google::protobuf::Message* response_storage,
-                           RpcController* controller,
-                           const ResponseCallback& callback)
-  : state_(READY),
-    remote_method_(remote_method),
-    conn_id_(conn_id),
-    callback_(callback),
-    controller_(DCHECK_NOTNULL(controller)),
-    response_(DCHECK_NOTNULL(response_storage)) {
+                           RpcController* controller, ResponseCallback callback)
+    : state_(READY),
+      remote_method_(remote_method),
+      conn_id_(conn_id),
+      callback_(std::move(callback)),
+      controller_(DCHECK_NOTNULL(controller)),
+      response_(DCHECK_NOTNULL(response_storage)) {
   DVLOG(4) << "OutboundCall " << this << " constructed with state_: " << StateName(state_)
            << " and RPC timeout: "
            << (controller->timeout().Initialized() ? controller->timeout().ToString() : "none");
@@ -87,12 +92,24 @@ Status OutboundCall::SerializeTo(vector<Slice>* slices) {
     header_.set_timeout_millis(timeout.ToMilliseconds());
   }
 
+  for (uint32_t feature : controller_->required_server_features()) {
+    header_.add_required_feature_flags(feature);
+  }
+
   CHECK_OK(serialization::SerializeHeader(header_, param_len, &header_buf_));
 
   // Return the concatenated packet.
   slices->push_back(Slice(header_buf_));
   slices->push_back(Slice(request_buf_));
   return Status::OK();
+}
+
+set<RpcFeatureFlag> OutboundCall::RequiredRpcFeatures() const {
+  set<RpcFeatureFlag> s;
+  if (!controller_->required_server_features().empty()) {
+    s.insert(RpcFeatureFlag::APPLICATION_FEATURE_FLAGS);
+  }
+  return s;
 }
 
 Status OutboundCall::SetRequestParam(const Message& message) {
@@ -108,7 +125,6 @@ const ErrorStatusPB* OutboundCall::error_pb() const {
   lock_guard<simple_spinlock> l(&lock_);
   return error_pb_.get();
 }
-
 
 string OutboundCall::StateName(State state) {
   switch (state) {
@@ -188,7 +204,7 @@ void OutboundCall::CallCallback() {
 }
 
 void OutboundCall::SetResponse(gscoped_ptr<CallResponse> resp) {
-  call_response_ = resp.Pass();
+  call_response_ = std::move(resp);
   Slice r(call_response_->serialized_response());
 
   if (call_response_->is_success()) {
@@ -251,13 +267,16 @@ void OutboundCall::SetFailed(const Status &status,
 }
 
 void OutboundCall::SetTimedOut() {
+  // We have to fetch timeout outside the lock to avoid a lock
+  // order inversion between this class and RpcController.
+  MonoDelta timeout = controller_->timeout();
   {
     lock_guard<simple_spinlock> l(&lock_);
     status_ = Status::TimedOut(Substitute(
         "$0 RPC to $1 timed out after $2",
         remote_method_.method_name(),
         conn_id_.remote().ToString(),
-        controller_->timeout().ToString()));
+        timeout.ToString()));
     set_state_unlocked(TIMED_OUT);
   }
   CallCallback();

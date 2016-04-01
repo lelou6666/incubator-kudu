@@ -1,40 +1,39 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/server/generic_service.h"
 
 #include <gflags/gflags.h>
 #include <string>
-#include <tr1/unordered_set>
+#include <unordered_set>
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/rpc/rpc_context.h"
 #include "kudu/server/clock.h"
 #include "kudu/server/hybrid_clock.h"
 #include "kudu/server/server_base.h"
+#include "kudu/util/debug-util.h"
 #include "kudu/util/flag_tags.h"
 
 DECLARE_bool(use_mock_wall_clock);
 DECLARE_bool(use_hybrid_clock);
 
 using std::string;
-using std::tr1::unordered_set;
-
-#ifdef COVERAGE_BUILD
-extern "C" void __gcov_flush(void);
-#endif
-
+using std::unordered_set;
 
 namespace kudu {
 namespace server {
@@ -98,15 +97,15 @@ void GenericServiceImpl::SetFlag(const SetFlagRequestPB* req,
 void GenericServiceImpl::FlushCoverage(const FlushCoverageRequestPB* req,
                                        FlushCoverageResponsePB* resp,
                                        rpc::RpcContext* rpc) {
-#ifdef COVERAGE_BUILD
-  __gcov_flush();
-  LOG(INFO) << "Flushed coverage info. (request from " << rpc->requestor_string() << ")";
-  resp->set_success(true);
-#else
-  LOG(WARNING) << "Non-coverage build cannot flush coverage (request from "
-               << rpc->requestor_string() << ")";
-  resp->set_success(false);
-#endif
+  if (IsCoverageBuild()) {
+    TryFlushCoverage();
+    LOG(INFO) << "Flushed coverage info. (request from " << rpc->requestor_string() << ")";
+    resp->set_success(true);
+  } else {
+    LOG(WARNING) << "Non-coverage build cannot flush coverage (request from "
+                 << rpc->requestor_string() << ")";
+    resp->set_success(false);
+  }
   rpc->RespondSuccess();
 }
 

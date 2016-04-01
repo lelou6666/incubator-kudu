@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/tablet_server.h"
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <list>
 #include <vector>
@@ -36,10 +38,10 @@
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/status.h"
 
-using std::tr1::shared_ptr;
-using std::vector;
 using kudu::rpc::ServiceIf;
 using kudu::tablet::TabletPeer;
+using std::shared_ptr;
+using std::vector;
 
 namespace kudu {
 namespace tserver {
@@ -65,7 +67,7 @@ string TabletServer::ToString() const {
 }
 
 Status TabletServer::ValidateMasterAddressResolution() const {
-  BOOST_FOREACH(const HostPort& master_addr, opts_.master_addresses) {
+  for (const HostPort& master_addr : opts_.master_addresses) {
     RETURN_NOT_OK_PREPEND(master_addr.ResolveAddresses(NULL),
                           strings::Substitute(
                               "Couldn't resolve master service address '$0'",
@@ -114,10 +116,10 @@ Status TabletServer::Start() {
   gscoped_ptr<ServiceIf> remote_bootstrap_service(
       new RemoteBootstrapServiceImpl(fs_manager_.get(), tablet_manager_.get(), metric_entity()));
 
-  RETURN_NOT_OK(ServerBase::RegisterService(ts_service.Pass()));
-  RETURN_NOT_OK(ServerBase::RegisterService(admin_service.Pass()));
-  RETURN_NOT_OK(ServerBase::RegisterService(consensus_service.Pass()));
-  RETURN_NOT_OK(ServerBase::RegisterService(remote_bootstrap_service.Pass()));
+  RETURN_NOT_OK(ServerBase::RegisterService(std::move(ts_service)));
+  RETURN_NOT_OK(ServerBase::RegisterService(std::move(admin_service)));
+  RETURN_NOT_OK(ServerBase::RegisterService(std::move(consensus_service)));
+  RETURN_NOT_OK(ServerBase::RegisterService(std::move(remote_bootstrap_service)));
   RETURN_NOT_OK(ServerBase::Start());
 
   RETURN_NOT_OK(heartbeater_->Start());

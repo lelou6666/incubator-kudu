@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_SUBPROCESS_H
 #define KUDU_UTIL_SUBPROCESS_H
 
@@ -42,8 +45,7 @@ namespace kudu {
 // will be forcibly SIGKILLed to avoid orphaning processes.
 class Subprocess {
  public:
-  Subprocess(const std::string& program,
-             const std::vector<std::string>& argv);
+  Subprocess(std::string program, std::vector<std::string> argv);
   ~Subprocess();
 
   // Disable subprocess stream output.  Must be called before subprocess starts.
@@ -93,6 +95,18 @@ class Subprocess {
   // the return code was 0.
   static Status Call(const std::string& arg_str);
 
+<<<<<<< HEAD
+=======
+  // Same as above, but accepts a vector that includes the path to the
+  // executable as argv[0] and the arguments to the program in argv[1..n].
+  static Status Call(const std::vector<std::string>& argv);
+
+  // Same as above, but collects the output from the child process stdout into
+  // 'stdout_out'.
+  static Status Call(const std::vector<std::string>& argv,
+                     std::string* stdout_out);
+
+>>>>>>> refs/remotes/apache/master
   // Return the pipe fd to the child's standard stream.
   // Stream should not be disabled or shared.
   int to_child_stdin_fd()    const { return CheckAndOffer(STDIN_FILENO); }

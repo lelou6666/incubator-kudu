@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Some portions copyright (C) 2008, Google, inc.
 //
@@ -21,12 +24,11 @@
 #include "kudu/util/pb_util.h"
 
 #include <deque>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <vector>
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
@@ -35,8 +37,8 @@
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/io/zero_copy_stream.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
-#include <google/protobuf/message_lite.h>
 #include <google/protobuf/message.h>
+#include <google/protobuf/message_lite.h>
 
 #include "kudu/gutil/bind.h"
 #include "kudu/gutil/callback.h"
@@ -44,16 +46,16 @@
 #include "kudu/gutil/strings/escaping.h"
 #include "kudu/gutil/strings/fastmem.h"
 #include "kudu/gutil/strings/substitute.h"
-#include "kudu/util/coding.h"
 #include "kudu/util/coding-inl.h"
+#include "kudu/util/coding.h"
 #include "kudu/util/crc.h"
 #include "kudu/util/debug/sanitizer_scopes.h"
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/env.h"
 #include "kudu/util/env_util.h"
 #include "kudu/util/path_util.h"
-#include "kudu/util/pb_util.pb.h"
 #include "kudu/util/pb_util-internal.h"
+#include "kudu/util/pb_util.pb.h"
 #include "kudu/util/status.h"
 
 using google::protobuf::Descriptor;
@@ -74,9 +76,9 @@ using kudu::pb_util::internal::SequentialFileFileInputStream;
 using kudu::pb_util::internal::WritableFileOutputStream;
 using std::deque;
 using std::endl;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
+using std::unordered_set;
 using std::vector;
 using strings::Substitute;
 using strings::Utf8SafeCEscape;
@@ -225,13 +227,13 @@ void TruncateFields(Message* message, int max_len) {
   const Reflection* reflection = message->GetReflection();
   vector<const FieldDescriptor*> fields;
   reflection->ListFields(*message, &fields);
-  BOOST_FOREACH(const FieldDescriptor* field, fields) {
+  for (const FieldDescriptor* field : fields) {
     if (field->is_repeated()) {
       for (int i = 0; i < reflection->FieldSize(*message, field); i++) {
         switch (field->cpp_type()) {
           case FieldDescriptor::CPPTYPE_STRING: {
             const string& s_const = reflection->GetRepeatedStringReference(*message, field, i,
-                                                                           NULL);
+                                                                           nullptr);
             TruncateString(const_cast<string*>(&s_const), max_len);
             break;
           }
@@ -246,7 +248,7 @@ void TruncateFields(Message* message, int max_len) {
     } else {
       switch (field->cpp_type()) {
         case FieldDescriptor::CPPTYPE_STRING: {
-          const string& s_const = reflection->GetStringReference(*message, field, NULL);
+          const string& s_const = reflection->GetStringReference(*message, field, nullptr);
           TruncateString(const_cast<string*>(&s_const), max_len);
           break;
         }
@@ -263,7 +265,7 @@ void TruncateFields(Message* message, int max_len) {
 
 WritablePBContainerFile::WritablePBContainerFile(gscoped_ptr<WritableFile> writer)
   : closed_(false),
-    writer_(writer.Pass()) {
+    writer_(std::move(writer)) {
 }
 
 WritablePBContainerFile::~WritablePBContainerFile() {
@@ -410,7 +412,7 @@ void WritablePBContainerFile::PopulateDescriptorSet(
 
 ReadablePBContainerFile::ReadablePBContainerFile(gscoped_ptr<RandomAccessFile> reader)
   : offset_(0),
-    reader_(reader.Pass()) {
+    reader_(std::move(reader)) {
 }
 
 ReadablePBContainerFile::~ReadablePBContainerFile() {
@@ -584,8 +586,8 @@ Status ReadablePBContainerFile::ValidateAndRead(size_t length, EofOK eofOK,
       case EOF_NOT_OK:
         return Status::Corruption("File size not large enough to be valid",
                                   Substitute("Proto container file $0: "
-                                      "tried to read $0 bytes at offset "
-                                      "$1 but file size is only $2",
+                                      "tried to read $1 bytes at offset "
+                                      "$2 but file size is only $3",
                                       reader_->filename(), length,
                                       offset_, file_size));
       default:
@@ -616,7 +618,7 @@ Status ReadPBContainerFromPath(Env* env, const std::string& path, Message* msg) 
   gscoped_ptr<RandomAccessFile> file;
   RETURN_NOT_OK(env->NewRandomAccessFile(path, &file));
 
-  ReadablePBContainerFile pb_file(file.Pass());
+  ReadablePBContainerFile pb_file(std::move(file));
   RETURN_NOT_OK(pb_file.Init());
   RETURN_NOT_OK(pb_file.ReadNextPB(msg));
   return pb_file.Close();
@@ -641,7 +643,7 @@ Status WritePBContainerToPath(Env* env, const std::string& path,
   RETURN_NOT_OK(env->NewTempWritableFile(WritableFileOptions(), tmp_template, &tmp_path, &file));
   env_util::ScopedFileDeleter tmp_deleter(env, tmp_path);
 
-  WritablePBContainerFile pb_file(file.Pass());
+  WritablePBContainerFile pb_file(std::move(file));
   RETURN_NOT_OK(pb_file.Init(msg));
   RETURN_NOT_OK(pb_file.Append(msg));
   if (sync == pb_util::SYNC) {

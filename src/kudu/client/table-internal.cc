@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/client/table-internal.h"
 
@@ -31,20 +34,21 @@ using master::GetTableLocationsRequestPB;
 using master::GetTableLocationsResponsePB;
 using rpc::RpcController;
 using std::string;
-using std::tr1::shared_ptr;
 
 namespace client {
 
-KuduTable::Data::Data(const shared_ptr<KuduClient>& client,
-                      const string& name,
-                      const string& id,
+using sp::shared_ptr;
+
+KuduTable::Data::Data(shared_ptr<KuduClient> client,
+                      string name,
+                      string id,
                       const KuduSchema& schema,
-                      const PartitionSchema& partition_schema)
-  : client_(client),
-    name_(name),
-    id_(id),
-    schema_(schema),
-    partition_schema_(partition_schema) {
+                      PartitionSchema partition_schema)
+    : client_(std::move(client)),
+      name_(std::move(name)),
+      id_(std::move(id)),
+      schema_(schema),
+      partition_schema_(std::move(partition_schema)) {
 }
 
 KuduTable::Data::~Data() {
@@ -69,8 +73,7 @@ Status KuduTable::Data::Open() {
     // Have we already exceeded our deadline?
     MonoTime now = MonoTime::Now(MonoTime::FINE);
     if (deadline.ComesBefore(now)) {
-      const char* msg = "Timed out waiting for non-empty GetTableLocations "
-          "reply from a leader Master";
+      const char* msg = "OpenTable timed out after deadline expired";
       LOG(ERROR) << msg;
       return Status::TimedOut(msg);
     }
@@ -100,6 +103,8 @@ Status KuduTable::Data::Open() {
 
       if (s.IsTimedOut()
           && MonoTime::Now(MonoTime::FINE).ComesBefore(deadline)) {
+        // If the RPC timed out and the operation deadline expired, we'll loop
+        // again and time out for good above.
         LOG(WARNING) << "Timed out talking to the leader master ("
                      << client_->data_->leader_master_hostport().ToString() << "): "
                      << s.ToString();

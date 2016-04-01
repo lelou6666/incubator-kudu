@@ -1,26 +1,28 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Simple tool to insert "random junk" rows into an arbitrary table.
 // First column is in ascending order, the rest are random data.
 // Helps make things like availability demos a little easier.
 
-#include <boost/foreach.hpp>
-#include <glog/logging.h>
 #include <gflags/gflags.h>
+#include <glog/logging.h>
 #include <iostream>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include "kudu/client/client.h"
@@ -40,7 +42,6 @@ namespace kudu {
 namespace tools {
 
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 
 using client::KuduClient;
@@ -50,6 +51,7 @@ using client::KuduInsert;
 using client::KuduSchema;
 using client::KuduSession;
 using client::KuduTable;
+using client::sp::shared_ptr;
 
 void PrintUsage(char** argv) {
   std::cerr << "usage: " << argv[0] << " [--master_address localhost] <table_name>"
@@ -104,7 +106,7 @@ static int WriteRandomDataToTable(int argc, char** argv) {
       bool overflow;
       session->GetPendingErrors(&errors, &overflow);
       CHECK(!overflow);
-      BOOST_FOREACH(const client::KuduError* e, errors) {
+      for (const client::KuduError* e : errors) {
         if (e->status().IsAlreadyPresent()) {
           LOG(WARNING) << "Ignoring insert error: " << e->status().ToString();
         } else {

@@ -1,23 +1,26 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_TABLET_TRANSACTION_TRACKER_H_
 #define KUDU_TABLET_TRANSACTION_TRACKER_H_
 
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/gutil/gscoped_ptr.h"
@@ -64,7 +67,7 @@ class TransactionTracker {
   Status WaitForAllToFinish(const MonoDelta& timeout) const;
 
   void StartInstrumentation(const scoped_refptr<MetricEntity>& metric_entity);
-  void StartMemoryTracking(const std::tr1::shared_ptr<MemTracker>& parent_mem_tracker);
+  void StartMemoryTracking(const std::shared_ptr<MemTracker>& parent_mem_tracker);
 
  private:
   struct Metrics {
@@ -94,7 +97,7 @@ class TransactionTracker {
   };
 
   // Protected by 'lock_'.
-  typedef std::tr1::unordered_map<scoped_refptr<TransactionDriver>,
+  typedef std::unordered_map<scoped_refptr<TransactionDriver>,
       State,
       ScopedRefPtrHashFunctor<TransactionDriver>,
       ScopedRefPtrEqualToFunctor<TransactionDriver> > TxnMap;
@@ -102,7 +105,7 @@ class TransactionTracker {
 
   gscoped_ptr<Metrics> metrics_;
 
-  std::tr1::shared_ptr<MemTracker> mem_tracker_;
+  std::shared_ptr<MemTracker> mem_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(TransactionTracker);
 };

@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CONSENSUS_LOCAL_CONSENSUS_H_
 #define KUDU_CONSENSUS_LOCAL_CONSENSUS_H_
 
@@ -43,9 +46,9 @@ namespace consensus {
 // This class is not thread safe.
 class LocalConsensus : public Consensus {
  public:
-  explicit LocalConsensus(const ConsensusOptions& options,
+  explicit LocalConsensus(ConsensusOptions options,
                           gscoped_ptr<ConsensusMetadata> cmeta,
-                          const std::string& peer_uuid,
+                          std::string peer_uuid,
                           const scoped_refptr<server::Clock>& clock,
                           ReplicaTransactionFactory* txn_factory,
                           log::Log* log);

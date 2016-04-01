@@ -1,28 +1,30 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <cmath>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/fs/file_block_manager.h"
 #include "kudu/fs/log_block_manager.h"
+#include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/strings/split.h"
 #include "kudu/gutil/strings/substitute.h"
-#include "kudu/gutil/stl_util.h"
 #include "kudu/util/atomic.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/random.h"
@@ -43,8 +45,8 @@ DEFINE_string(block_manager_paths, "", "Comma-separated list of paths to "
               "use for block storage. If empty, will use the default unit "
               "test path");
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -96,7 +98,7 @@ class BlockManagerStressTest : public KuduTest {
     if (!FLAGS_block_manager_paths.empty()) {
       vector<string> paths = strings::Split(FLAGS_block_manager_paths, ",",
                                             strings::SkipEmpty());
-      BOOST_FOREACH(const string& path, paths) {
+      for (const string& path : paths) {
         WARN_NOT_OK(env_->DeleteRecursively(path),
                     Substitute("Couldn't recursively delete $0", path));
       }
@@ -152,7 +154,7 @@ class BlockManagerStressTest : public KuduTest {
   }
 
   void JoinThreads() {
-    BOOST_FOREACH(const scoped_refptr<kudu::Thread>& thr, threads_) {
+    for (const scoped_refptr<kudu::Thread>& thr : threads_) {
      CHECK_OK(ThreadJoiner(thr.get()).Join());
     }
   }
@@ -252,7 +254,7 @@ void BlockManagerStressTest<T>::WriterThread() {
     // Publish the now sync'ed blocks to readers and deleters.
     {
       lock_guard<rw_spinlock> l(&lock_);
-      BOOST_FOREACH(WritableBlock* block, dirty_blocks) {
+      for (WritableBlock* block : dirty_blocks) {
         written_blocks_.push_back(block->id());
       }
     }
@@ -349,7 +351,7 @@ void BlockManagerStressTest<T>::DeleterThread() {
     }
 
     // And delete them.
-    BOOST_FOREACH(const BlockId& block_id, to_delete) {
+    for (const BlockId& block_id : to_delete) {
       LOG(INFO) << "Deleting block " << block_id.ToString();
       CHECK_OK(bm_->DeleteBlock(block_id));
     }

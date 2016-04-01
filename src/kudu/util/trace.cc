@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/trace.h"
 
-#include <boost/foreach.hpp>
 #include <iomanip>
 #include <ios>
 #include <iostream>
@@ -34,8 +36,8 @@ __thread Trace* Trace::threadlocal_trace_;
 
 Trace::Trace()
   : arena_(new ThreadSafeArena(1024, 128*1024)),
-    entries_head_(NULL),
-    entries_tail_(NULL) {
+    entries_head_(nullptr),
+    entries_tail_(nullptr) {
 }
 
 Trace::~Trace() {
@@ -80,7 +82,7 @@ void Trace::SubstituteAndTrace(const char* file_path,
                                const SubstituteArg& arg6, const SubstituteArg& arg7,
                                const SubstituteArg& arg8, const SubstituteArg& arg9) {
   const SubstituteArg* const args_array[] = {
-    &arg0, &arg1, &arg2, &arg3, &arg4, &arg5, &arg6, &arg7, &arg8, &arg9, NULL
+    &arg0, &arg1, &arg2, &arg3, &arg4, &arg5, &arg6, &arg7, &arg8, &arg9, nullptr
   };
 
   int msg_len = strings::internal::SubstitutedSize(format, args_array);
@@ -102,12 +104,12 @@ TraceEntry* Trace::NewEntry(int msg_len, const char* file_path, int line_number)
 
 void Trace::AddEntry(TraceEntry* entry) {
   lock_guard<simple_spinlock> l(&lock_);
-  entry->next = NULL;
+  entry->next = nullptr;
 
-  if (entries_tail_ != NULL) {
+  if (entries_tail_ != nullptr) {
     entries_tail_->next = entry;
   } else {
-    DCHECK(entries_head_ == NULL);
+    DCHECK(entries_head_ == nullptr);
     entries_head_ = entry;
   }
   entries_tail_ = entry;
@@ -123,7 +125,7 @@ void Trace::Dump(std::ostream* out, bool include_time_deltas) const {
   {
     lock_guard<simple_spinlock> l(&lock_);
     for (TraceEntry* cur = entries_head_;
-         cur != NULL;
+         cur != nullptr;
          cur = cur->next) {
       entries.push_back(cur);
     }
@@ -135,7 +137,7 @@ void Trace::Dump(std::ostream* out, bool include_time_deltas) const {
   std::ios::fmtflags save_flags(out->flags());
 
   int64_t prev_usecs = 0;
-  BOOST_FOREACH(TraceEntry* e, entries) {
+  for (TraceEntry* e : entries) {
     // Log format borrowed from glog/logging.cc
     time_t secs_since_epoch = e->timestamp_micros / 1000000;
     int usecs = e->timestamp_micros % 1000000;
@@ -169,7 +171,7 @@ void Trace::Dump(std::ostream* out, bool include_time_deltas) const {
     *out << std::endl;
   }
 
-  BOOST_FOREACH(scoped_refptr<Trace> child_trace, child_traces) {
+  for (scoped_refptr<Trace> child_trace : child_traces) {
     *out << "Related trace:" << std::endl;
     *out << child_trace->DumpToString(include_time_deltas);
   }
@@ -186,7 +188,7 @@ string Trace::DumpToString(bool include_time_deltas) const {
 
 void Trace::DumpCurrentTrace() {
   Trace* t = CurrentTrace();
-  if (t == NULL) {
+  if (t == nullptr) {
     LOG(INFO) << "No trace is currently active.";
     return;
   }

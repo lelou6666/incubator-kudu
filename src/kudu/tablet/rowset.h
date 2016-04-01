@@ -1,22 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_ROWSET_H
 #define KUDU_TABLET_ROWSET_H
 
 #include <boost/thread/mutex.hpp>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/cfile/cfile_util.h"
@@ -121,7 +124,7 @@ class RowSet {
   virtual boost::mutex *compact_flush_lock() = 0;
 
   // Returns the metadata associated with this rowset.
-  virtual std::tr1::shared_ptr<RowSetMetadata> metadata() = 0;
+  virtual std::shared_ptr<RowSetMetadata> metadata() = 0;
 
   // Get the size of the delta's MemStore
   virtual size_t DeltaMemStoreSize() const = 0;
@@ -163,7 +166,7 @@ class RowSet {
 };
 
 // Used often enough, may as well typedef it.
-typedef vector<std::tr1::shared_ptr<RowSet> > RowSetVector;
+typedef vector<std::shared_ptr<RowSet> > RowSetVector;
 // Structure which caches an encoded and hashed key, suitable
 // for probing against rowsets.
 class RowSetKeyProbe {
@@ -173,8 +176,8 @@ class RowSetKeyProbe {
   //
   // NOTE: row_key is not copied and must be valid for the lifetime
   // of this object.
-  explicit RowSetKeyProbe(const ConstContiguousRow& row_key)
-      : row_key_(row_key) {
+  explicit RowSetKeyProbe(ConstContiguousRow row_key)
+      : row_key_(std::move(row_key)) {
     encoded_key_ = EncodedKey::FromContiguousRow(row_key_);
     bloom_probe_ = BloomKeyProbe(encoded_key_slice());
   }
@@ -248,8 +251,7 @@ struct ProbeStats {
 // See compaction.txt for a little more detail on how this is used.
 class DuplicatingRowSet : public RowSet {
  public:
-  DuplicatingRowSet(const RowSetVector &old_rowsets,
-                    const RowSetVector &new_rowsets);
+  DuplicatingRowSet(RowSetVector old_rowsets, RowSetVector new_rowsets);
 
   virtual Status MutateRow(Timestamp timestamp,
                            const RowSetKeyProbe &probe,
@@ -280,7 +282,7 @@ class DuplicatingRowSet : public RowSet {
 
   virtual Status DebugDump(vector<string> *lines = NULL) OVERRIDE;
 
-  std::tr1::shared_ptr<RowSetMetadata> metadata() OVERRIDE;
+  std::shared_ptr<RowSetMetadata> metadata() OVERRIDE;
 
   // A flush-in-progress rowset should never be selected for compaction.
   boost::mutex *compact_flush_lock() OVERRIDE {

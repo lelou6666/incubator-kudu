@@ -1,26 +1,30 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/tablet_service.h"
 
 #include <algorithm>
 #include <boost/optional.hpp>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/common/iterator.h"
+#include "kudu/common/scan_spec.h"
 #include "kudu/common/schema.h"
 #include "kudu/common/wire_protocol.h"
 #include "kudu/consensus/consensus.h"
@@ -32,13 +36,13 @@
 #include "kudu/rpc/rpc_context.h"
 #include "kudu/rpc/rpc_sidecar.h"
 #include "kudu/server/hybrid_clock.h"
-#include "kudu/tablet/tablet_bootstrap.h"
-#include "kudu/tserver/remote_bootstrap_service.h"
 #include "kudu/tablet/metadata.pb.h"
-#include "kudu/tablet/tablet_peer.h"
+#include "kudu/tablet/tablet_bootstrap.h"
 #include "kudu/tablet/tablet_metrics.h"
+#include "kudu/tablet/tablet_peer.h"
 #include "kudu/tablet/transactions/alter_schema_transaction.h"
 #include "kudu/tablet/transactions/write_transaction.h"
+#include "kudu/tserver/remote_bootstrap_service.h"
 #include "kudu/tserver/scanners.h"
 #include "kudu/tserver/tablet_server.h"
 #include "kudu/tserver/ts_tablet_manager.h"
@@ -90,6 +94,7 @@ using consensus::Consensus;
 using consensus::ConsensusConfigType;
 using consensus::ConsensusRequestPB;
 using consensus::ConsensusResponsePB;
+using consensus::GetLastOpIdRequestPB;
 using consensus::GetNodeInstanceRequestPB;
 using consensus::GetNodeInstanceResponsePB;
 using consensus::LeaderStepDownRequestPB;
@@ -103,7 +108,7 @@ using consensus::VoteResponsePB;
 
 using google::protobuf::RepeatedPtrField;
 using rpc::RpcContext;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
 using strings::Substitute;
 using tablet::AlterSchemaTransactionState;
@@ -237,7 +242,8 @@ static void SetupErrorAndRespond(TabletServerErrorPB* error,
                                  TabletServerErrorPB::Code code,
                                  rpc::RpcContext* context) {
   // Generic "service unavailable" errors will cause the client to retry later.
-  if (code == TabletServerErrorPB::UNKNOWN_ERROR && s.IsServiceUnavailable()) {
+  if ((code == TabletServerErrorPB::UNKNOWN_ERROR ||
+       code == TabletServerErrorPB::THROTTLED) && s.IsServiceUnavailable()) {
     context->RespondRpcFailure(rpc::ErrorStatusPB::ERROR_SERVER_TOO_BUSY, s);
     return;
   }
@@ -448,7 +454,7 @@ class ScanResultChecksummer : public ScanResultCollector {
     }
 
     uint64_t row_crc = 0;
-    crc_->Compute(tmp_buf_.data(), tmp_buf_.size(), &row_crc, NULL);
+    crc_->Compute(tmp_buf_.data(), tmp_buf_.size(), &row_crc, nullptr);
     return static_cast<uint32_t>(row_crc); // CRC32 only uses the lower 32 bits.
   }
 
@@ -552,10 +558,10 @@ void TabletServiceAdminImpl::AlterSchema(const AlterSchemaRequestPB* req,
 
   tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
       new RpcTransactionCompletionCallback<AlterSchemaResponsePB>(context,
-                                                                  resp)).Pass());
+                                                                  resp)));
 
   // Submit the alter schema op. The RPC will be responded to asynchronously.
-  Status s = tablet_peer->SubmitAlterSchema(tx_state.Pass());
+  Status s = tablet_peer->SubmitAlterSchema(std::move(tx_state));
   if (PREDICT_FALSE(!s.ok())) {
     SetupErrorAndRespond(resp->mutable_error(), s,
                          TabletServerErrorPB::UNKNOWN_ERROR,
@@ -608,7 +614,7 @@ void TabletServiceAdminImpl::CreateTablet(const CreateTabletRequestPB* req,
                                                  schema,
                                                  partition_schema,
                                                  req->config(),
-                                                 NULL);
+                                                 nullptr);
   if (PREDICT_FALSE(!s.ok())) {
     TabletServerErrorPB::Code code;
     if (s.IsAlreadyPresent()) {
@@ -679,6 +685,16 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
     return;
   }
 
+  uint64_t bytes = req->row_operations().rows().size() +
+      req->row_operations().indirect_data().size();
+  if (!tablet->ShouldThrottleAllow(bytes)) {
+    SetupErrorAndRespond(resp->mutable_error(),
+                         Status::ServiceUnavailable("Rejecting Write request: throttled"),
+                         TabletServerErrorPB::THROTTLED,
+                         context);
+    return;
+  }
+
   // Check for memory pressure; don't bother doing any additional work if we've
   // exceeded the limit.
   double capacity_pct;
@@ -707,8 +723,7 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
     return;
   }
 
-  WriteTransactionState *tx_state =
-    new WriteTransactionState(tablet_peer.get(), req, resp);
+  auto tx_state = new WriteTransactionState(tablet_peer.get(), req, resp);
 
   // If the client sent us a timestamp, decode it and update the clock so that all future
   // timestamps are greater than the passed timestamp.
@@ -725,7 +740,7 @@ void TabletServiceImpl::Write(const WriteRequestPB* req,
 
   tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
       new RpcTransactionCompletionCallback<WriteResponsePB>(context,
-                                                            resp)).Pass());
+                                                            resp)));
 
   // Submit the write. The RPC will be responded to asynchronously.
   s = tablet_peer->SubmitWrite(tx_state);
@@ -906,7 +921,12 @@ void ConsensusServiceImpl::GetLastOpId(const consensus::GetLastOpIdRequestPB *re
   }
   scoped_refptr<Consensus> consensus;
   if (!GetConsensusOrRespond(tablet_peer, resp, context, &consensus)) return;
-  Status s = consensus->GetLastReceivedOpId(resp->mutable_opid());
+  if (PREDICT_FALSE(req->opid_type() == consensus::UNKNOWN_OPID_TYPE)) {
+    HandleUnknownError(Status::InvalidArgument("Invalid opid_type specified to GetLastOpId()"),
+                       resp, context);
+    return;
+  }
+  Status s = consensus->GetLastOpId(req->opid_type(), resp->mutable_opid());
   if (PREDICT_FALSE(!s.ok())) {
     SetupErrorAndRespond(resp->mutable_error(), s,
                          TabletServerErrorPB::UNKNOWN_ERROR,
@@ -948,10 +968,11 @@ void ConsensusServiceImpl::StartRemoteBootstrap(const StartRemoteBootstrapReques
   if (!CheckUuidMatchOrRespond(tablet_manager_, "StartRemoteBootstrap", req, resp, context)) {
     return;
   }
-  Status s = tablet_manager_->StartRemoteBootstrap(*req);
+  boost::optional<TabletServerErrorPB::Code> error_code;
+  Status s = tablet_manager_->StartRemoteBootstrap(*req, &error_code);
   if (!s.ok()) {
     SetupErrorAndRespond(resp->mutable_error(), s,
-                         TabletServerErrorPB::UNKNOWN_ERROR,
+                         error_code.get_value_or(TabletServerErrorPB::UNKNOWN_ERROR),
                          context);
     return;
   }
@@ -1039,14 +1060,14 @@ void TabletServiceImpl::Scan(const ScanRequestPB* req,
     // Add sidecar data to context and record the returned indices.
     int rows_idx;
     CHECK_OK(context->AddRpcSidecar(make_gscoped_ptr(
-        new rpc::RpcSidecar(rows_data.Pass())), &rows_idx));
+        new rpc::RpcSidecar(std::move(rows_data))), &rows_idx));
     resp->mutable_data()->set_rows_sidecar(rows_idx);
 
     // Add indirect data as a sidecar, if applicable.
     if (indirect_data->size() > 0) {
       int indirect_idx;
       CHECK_OK(context->AddRpcSidecar(make_gscoped_ptr(
-          new rpc::RpcSidecar(indirect_data.Pass())), &indirect_idx));
+          new rpc::RpcSidecar(std::move(indirect_data))), &indirect_idx));
       resp->mutable_data()->set_indirect_data_sidecar(indirect_idx);
     }
 
@@ -1068,7 +1089,7 @@ void TabletServiceImpl::ListTablets(const ListTabletsRequestPB* req,
   vector<scoped_refptr<TabletPeer> > peers;
   server_->tablet_manager()->GetTabletPeers(&peers);
   RepeatedPtrField<StatusAndSchemaPB>* peer_status = resp->mutable_status_and_schema();
-  BOOST_FOREACH(const scoped_refptr<TabletPeer>& peer, peers) {
+  for (const scoped_refptr<TabletPeer>& peer : peers) {
     StatusAndSchemaPB* status = peer_status->Add();
     peer->GetTabletStatusPB(status->mutable_tablet_status());
     CHECK_OK(SchemaToPB(peer->status_listener()->schema(),
@@ -1142,6 +1163,10 @@ void TabletServiceImpl::Checksum(const ChecksumRequestPB* req,
   resp->set_has_more_results(has_more);
 
   context->RespondSuccess();
+}
+
+bool TabletServiceImpl::SupportsFeature(uint32_t feature) const {
+  return feature == TabletServerFeatures::COLUMN_PREDICATES;
 }
 
 void TabletServiceImpl::Shutdown() {
@@ -1234,46 +1259,106 @@ static Status SetupScanSpec(const NewScanRequestPB& scan_pb,
 
   unordered_set<string> missing_col_names;
 
-  // First the column range predicates.
-  BOOST_FOREACH(const ColumnRangePredicatePB& pred_pb, scan_pb.range_predicates()) {
-    if (!pred_pb.has_lower_bound() && !pred_pb.has_upper_bound()) {
+  // First the column predicates.
+  for (const ColumnPredicatePB& pred_pb : scan_pb.column_predicates()) {
+    if (!pred_pb.has_column()) {
+      return Status::InvalidArgument("Column predicate must include a column",
+                                     pred_pb.DebugString());
+    }
+
+    const string& column = pred_pb.column();
+    int32_t idx = tablet_schema.find_column(column);
+    if (idx == Schema::kColumnNotFound) {
+      return Status::InvalidArgument("Unknown column in predicate", pred_pb.DebugString());
+    }
+    const ColumnSchema& col = tablet_schema.column(idx);
+
+    if (projection.find_column(column) == Schema::kColumnNotFound &&
+        !ContainsKey(missing_col_names, column)) {
+      InsertOrDie(&missing_col_names, column);
+      missing_cols->push_back(col);
+    }
+
+    switch (pred_pb.predicate_case()) {
+      case ColumnPredicatePB::kRange: {
+        const auto& range = pred_pb.range();
+        if (!range.has_lower() && !range.has_upper()) {
+          return Status::InvalidArgument("Invalid range predicate on column: no bounds",
+                                         col.name());
+        }
+
+        const void* lower = nullptr;
+        const void* upper = nullptr;
+        if (range.has_lower()) {
+          RETURN_NOT_OK(ExtractPredicateValue(col, range.lower(), scanner->arena(), &lower));
+        }
+        if (range.has_upper()) {
+          RETURN_NOT_OK(ExtractPredicateValue(col, range.upper(), scanner->arena(), &upper));
+        }
+
+        ret->AddPredicate(ColumnPredicate::Range(col, lower, upper));
+        break;
+      };
+      case ColumnPredicatePB::kEquality: {
+        const auto& equality = pred_pb.equality();
+        if (!equality.has_value()) {
+          return Status::InvalidArgument("Invalid equality predicate on column: no value",
+                                         col.name());
+        }
+        const void* value = nullptr;
+        RETURN_NOT_OK(ExtractPredicateValue(col, equality.value(), scanner->arena(), &value));
+        ret->AddPredicate(ColumnPredicate::Equality(col, value));
+        break;
+      };
+      case ColumnPredicatePB::kIsNotNull: {
+        ret->AddPredicate(ColumnPredicate::IsNotNull(col));
+        break;
+      };
+      default: return Status::InvalidArgument("Unknown predicate type for column", col.name());
+    }
+  }
+
+  // Then the column range predicates.
+  // TODO: remove this once all clients have moved to ColumnPredicatePB and
+  // backwards compatibility can be broken.
+  for (const ColumnRangePredicatePB& pred_pb : scan_pb.deprecated_range_predicates()) {
+    if (!pred_pb.has_lower_bound() && !pred_pb.has_inclusive_upper_bound()) {
       return Status::InvalidArgument(
         string("Invalid predicate ") + pred_pb.ShortDebugString() +
         ": has no lower or upper bound.");
     }
     ColumnSchema col(ColumnSchemaFromPB(pred_pb.column()));
-    if (projection.find_column(col.name()) == -1 &&
+    if (projection.find_column(col.name()) == Schema::kColumnNotFound &&
         !ContainsKey(missing_col_names, col.name())) {
       missing_cols->push_back(col);
       InsertOrDie(&missing_col_names, col.name());
     }
 
-    const void* lower_bound = NULL;
-    const void* upper_bound = NULL;
+    const void* lower_bound = nullptr;
+    const void* upper_bound = nullptr;
     if (pred_pb.has_lower_bound()) {
       const void* val;
       RETURN_NOT_OK(ExtractPredicateValue(col, pred_pb.lower_bound(),
                                           scanner->arena(),
                                           &val));
       lower_bound = val;
-    } else {
-      lower_bound = NULL;
     }
-    if (pred_pb.has_upper_bound()) {
+    if (pred_pb.has_inclusive_upper_bound()) {
       const void* val;
-      RETURN_NOT_OK(ExtractPredicateValue(col, pred_pb.upper_bound(),
+      RETURN_NOT_OK(ExtractPredicateValue(col, pred_pb.inclusive_upper_bound(),
                                           scanner->arena(),
                                           &val));
       upper_bound = val;
-    } else {
-      upper_bound = NULL;
     }
 
-    ColumnRangePredicate pred(col, lower_bound, upper_bound);
-    if (VLOG_IS_ON(3)) {
-      VLOG(3) << "Parsed predicate " << pred.ToString() << " from " << scan_pb.ShortDebugString();
+    auto pred = ColumnPredicate::InclusiveRange(col, lower_bound, upper_bound, scanner->arena());
+    if (pred) {
+      if (VLOG_IS_ON(3)) {
+        VLOG(3) << "Parsed predicate " << pred->ToString()
+                << " from " << scan_pb.ShortDebugString();
+      }
+      ret->AddPredicate(*pred);
     }
-    ret->AddPredicate(pred);
   }
 
   // When doing an ordered scan, we need to include the key columns to be able to encode
@@ -1305,8 +1390,8 @@ Status TabletServiceImpl::HandleNewScanRequest(TabletPeer* tablet_peer,
                                                Timestamp* snap_timestamp,
                                                bool* has_more_results,
                                                TabletServerErrorPB::Code* error_code) {
-  DCHECK(result_collector != NULL);
-  DCHECK(error_code != NULL);
+  DCHECK(result_collector != nullptr);
+  DCHECK(error_code != nullptr);
   DCHECK(req->has_new_scan_request());
   const NewScanRequestPB& scan_pb = req->new_scan_request();
   TRACE_EVENT1("tserver", "TabletServiceImpl::HandleNewScanRequest",
@@ -1358,18 +1443,28 @@ Status TabletServiceImpl::HandleNewScanRequest(TabletPeer* tablet_peer,
     return s;
   }
 
+  VLOG(3) << "Before optimizing scan spec: " << spec->ToString(tablet_schema);
+  spec->OptimizeScan(tablet_schema, scanner->arena(), scanner->autorelease_pool(), true);
+  VLOG(3) << "After optimizing scan spec: " << spec->ToString(tablet_schema);
+
+  if (spec->CanShortCircuit()) {
+    VLOG(1) << "short-circuiting without creating a server-side scanner.";
+    *has_more_results = false;
+    return Status::OK();
+  }
+
   // Store the original projection.
   gscoped_ptr<Schema> orig_projection(new Schema(projection));
-  scanner->set_client_projection_schema(orig_projection.Pass());
+  scanner->set_client_projection_schema(std::move(orig_projection));
 
   // Build a new projection with the projection columns and the missing columns. Make
   // sure to set whether the column is a key column appropriately.
   SchemaBuilder projection_builder;
   vector<ColumnSchema> projection_columns = projection.columns();
-  BOOST_FOREACH(const ColumnSchema& col, missing_cols) {
+  for (const ColumnSchema& col : missing_cols) {
     projection_columns.push_back(col);
   }
-  BOOST_FOREACH(const ColumnSchema& col, projection_columns) {
+  for (const ColumnSchema& col : projection_columns) {
     CHECK_OK(projection_builder.AddColumn(col, tablet_schema.is_key_column(col.name())));
   }
   projection = projection_builder.BuildWithoutIds();
@@ -1431,7 +1526,7 @@ Status TabletServiceImpl::HandleNewScanRequest(TabletPeer* tablet_peer,
     return Status::OK();
   }
 
-  scanner->Init(iter.Pass(), spec.Pass());
+  scanner->Init(std::move(iter), std::move(spec));
   unreg_scanner.Cancel();
   *scanner_id = scanner->id();
 
@@ -1572,7 +1667,7 @@ Status TabletServiceImpl::HandleContinueScanRequest(const ScanRequestPB* req,
   vector<IteratorStats> stats_by_col;
   scanner->GetIteratorStats(&stats_by_col);
   IteratorStats total_stats;
-  BOOST_FOREACH(const IteratorStats& stats, stats_by_col) {
+  for (const IteratorStats& stats : stats_by_col) {
     total_stats.AddStats(stats);
   }
   IteratorStats delta_stats = total_stats;

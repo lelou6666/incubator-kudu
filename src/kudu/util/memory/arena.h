@@ -1,16 +1,21 @@
 // Copyright 2010 Google Inc.  All Rights Reserved
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 //
 // Memory arena for variable-length datatypes and STL collections.
@@ -20,11 +25,10 @@
 
 #include <boost/signals2/dummy_mutex.hpp>
 #include <glog/logging.h>
-#include <stddef.h>
-#include <string.h>
-#include <tr1/memory>
 #include <memory>
 #include <new>
+#include <stddef.h>
+#include <string.h>
 #include <vector>
 
 #include "kudu/gutil/dynamic_annotations.h"
@@ -66,6 +70,9 @@ template <> struct ArenaTraits<false> {
 template <bool THREADSAFE>
 class ArenaBase {
  public:
+  // Arenas are required to have a minimum size of at least this amount.
+  static const size_t kMinimumChunkSize;
+
   // Creates a new arena, with a single buffer of size up-to
   // initial_buffer_size, upper size limit for later-allocated buffers capped
   // at max_buffer_size, and maximum capacity (i.e. total sizes of all buffers)
@@ -181,7 +188,7 @@ class ArenaBase {
   }
 
   BufferAllocator* const buffer_allocator_;
-  vector<std::tr1::shared_ptr<Component> > arena_;
+  vector<std::unique_ptr<Component> > arena_;
 
   // The current component to allocate from.
   // Use AcquireLoadCurrent and ReleaseStoreCurrent to load/store.
@@ -284,7 +291,7 @@ class MemoryTrackingArena : public ArenaBase<false> {
   MemoryTrackingArena(
       size_t initial_buffer_size,
       size_t max_buffer_size,
-      const std::tr1::shared_ptr<MemoryTrackingBufferAllocator>& tracking_allocator)
+      const std::shared_ptr<MemoryTrackingBufferAllocator>& tracking_allocator)
       : ArenaBase<false>(tracking_allocator.get(), initial_buffer_size, max_buffer_size),
         tracking_allocator_(tracking_allocator) {}
 
@@ -295,7 +302,7 @@ class MemoryTrackingArena : public ArenaBase<false> {
 
   // This is required in order for the Arena to survive even after tablet is shut down,
   // e.g., in the case of Scanners running scanners (see tablet_server-test.cc)
-  std::tr1::shared_ptr<MemoryTrackingBufferAllocator> tracking_allocator_;
+  std::shared_ptr<MemoryTrackingBufferAllocator> tracking_allocator_;
 };
 
 class ThreadSafeMemoryTrackingArena : public ArenaBase<true> {
@@ -304,7 +311,7 @@ class ThreadSafeMemoryTrackingArena : public ArenaBase<true> {
   ThreadSafeMemoryTrackingArena(
       size_t initial_buffer_size,
       size_t max_buffer_size,
-      const std::tr1::shared_ptr<MemoryTrackingBufferAllocator>& tracking_allocator)
+      const std::shared_ptr<MemoryTrackingBufferAllocator>& tracking_allocator)
       : ArenaBase<true>(tracking_allocator.get(), initial_buffer_size, max_buffer_size),
         tracking_allocator_(tracking_allocator) {}
 
@@ -314,7 +321,7 @@ class ThreadSafeMemoryTrackingArena : public ArenaBase<true> {
  private:
 
   // See comment in MemoryTrackingArena above.
-  std::tr1::shared_ptr<MemoryTrackingBufferAllocator> tracking_allocator_;
+  std::shared_ptr<MemoryTrackingBufferAllocator> tracking_allocator_;
 };
 
 // Implementation of inline and template methods

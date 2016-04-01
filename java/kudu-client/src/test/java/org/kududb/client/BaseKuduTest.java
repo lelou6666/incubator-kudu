@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import static org.junit.Assert.fail;
@@ -42,9 +45,6 @@ public class BaseKuduTest {
 
   private static final Logger LOG = LoggerFactory.getLogger(BaseKuduTest.class);
 
-  private static final int DEFAULT_MASTER_RPC_PORT = 7051;
-  private static final String START_CLUSTER = "startCluster";
-
   private static final String NUM_MASTERS_PROP = "NUM_MASTERS";
   private static final int NUM_TABLET_SERVERS = 3;
   private static final int DEFAULT_NUM_MASTERS = 1;
@@ -67,7 +67,6 @@ public class BaseKuduTest {
   protected static KuduClient syncClient;
   protected static Schema basicSchema = getBasicSchema();
   protected static Schema allTypesSchema = getSchemaWithAllTypes();
-  protected static boolean startCluster;
 
   private static List<String> tableNames = new ArrayList<>();
 
@@ -75,43 +74,23 @@ public class BaseKuduTest {
   public static void setUpBeforeClass() throws Exception {
     LOG.info("Setting up before class...");
 
-    startCluster = Boolean.parseBoolean(System.getProperty(START_CLUSTER, "true"));
+    miniCluster = new MiniKuduCluster.MiniKuduClusterBuilder()
+        .numMasters(NUM_MASTERS)
+        .numTservers(NUM_TABLET_SERVERS)
+        .defaultTimeoutMs(DEFAULT_SLEEP)
+        .build();
+    masterAddresses = miniCluster.getMasterAddresses();
+    masterHostPorts = miniCluster.getMasterHostPorts();
 
-    if (startCluster) {
-      miniCluster = new MiniKuduCluster.MiniKuduClusterBuilder()
-          .numMasters(NUM_MASTERS)
-          .numTservers(NUM_TABLET_SERVERS)
-          .build();
-      masterAddresses = miniCluster.getMasterAddresses();
-      masterHostPorts = miniCluster.getMasterHostPorts();
-    } else {
-      masterAddresses = TestUtils.getMasterAddresses();
-      masterHostPorts = NetUtil.parseStrings(masterAddresses, DEFAULT_MASTER_RPC_PORT);
-    }
     LOG.info("Creating new Kudu client...");
-    client = new AsyncKuduClient.AsyncKuduClientBuilder(masterAddresses).build();
+    client = new AsyncKuduClient.AsyncKuduClientBuilder(masterAddresses)
+                                .defaultAdminOperationTimeoutMs(DEFAULT_SLEEP)
+                                .build();
     syncClient = new KuduClient(client);
     LOG.info("Waiting for tablet servers...");
-    if (!waitForTabletServers(NUM_TABLET_SERVERS)) {
+    if (!miniCluster.waitForTabletServers(NUM_TABLET_SERVERS)) {
       fail("Couldn't get " + NUM_TABLET_SERVERS + " tablet servers running, aborting");
     }
-  }
-
-  /**
-   * Wait up to DEFAULT_SLEEP for an expected count of TS to connect to the master
-   * @param expected How many TS are expected
-   * @return true if there are at least as many TS as expected, otherwise false
-   */
-  static boolean waitForTabletServers(int expected) throws Exception {
-    int count = 0;
-    Stopwatch stopwatch = new Stopwatch().start();
-    while (count < expected && stopwatch.elapsedMillis() < DEFAULT_SLEEP) {
-      Thread.sleep(200);
-      Deferred<ListTabletServersResponse> d = client.listTabletServers();
-      d.addErrback(defaultErrorCB);
-      count = d.join(DEFAULT_SLEEP).getTabletServersCount();
-    }
-    return count >= expected;
   }
 
   @AfterClass
@@ -125,9 +104,7 @@ public class BaseKuduTest {
         // shutting down the async client effectively does that.
       }
     } finally {
-      if (startCluster) {
-        miniCluster.shutdown();
-      }
+      miniCluster.shutdown();
     }
   }
 
@@ -240,7 +217,8 @@ public class BaseKuduTest {
             new ColumnSchema.ColumnSchemaBuilder("float", Type.FLOAT).build(),
             new ColumnSchema.ColumnSchemaBuilder("double", Type.DOUBLE).build(),
             new ColumnSchema.ColumnSchemaBuilder("string", Type.STRING).build(),
-            new ColumnSchema.ColumnSchemaBuilder("binary", Type.BINARY).build(),
+            new ColumnSchema.ColumnSchemaBuilder("binary-array", Type.BINARY).build(),
+            new ColumnSchema.ColumnSchemaBuilder("binary-bytebuffer", Type.BINARY).build(),
             new ColumnSchema.ColumnSchemaBuilder("null", Type.STRING).nullable(true).build(),
             new ColumnSchema.ColumnSchemaBuilder("timestamp", Type.TIMESTAMP).build());
 

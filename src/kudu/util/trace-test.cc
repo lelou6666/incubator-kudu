@@ -1,18 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 #include <string>
 #include <rapidjson/document.h>
@@ -42,7 +44,7 @@ class TraceTest : public KuduTest {
 static string XOutDigits(const string& s) {
   string ret;
   ret.reserve(s.size());
-  BOOST_FOREACH(char c, s) {
+  for (char c : s) {
     if (isdigit(c)) {
       ret.push_back('X');
     } else {
@@ -77,7 +79,7 @@ TEST_F(TraceTest, TestAttach) {
     EXPECT_EQ(traceA.get(), Trace::CurrentTrace());
     TRACE("hello from traceA");
   }
-  EXPECT_TRUE(Trace::CurrentTrace() == NULL);
+  EXPECT_TRUE(Trace::CurrentTrace() == nullptr);
   TRACE("this goes nowhere");
 
   EXPECT_EQ(XOutDigits(traceA->DumpToString(false)),
@@ -222,7 +224,7 @@ TEST_F(TraceTest, TestJsonEncodingString) {
                  TraceLog::RECORDING_MODE,
                  TraceLog::RECORD_CONTINUOUSLY);
   {
-    TRACE_EVENT1("test", "test", "arg", "this is a test with \"'\"' characters");
+    TRACE_EVENT1("test", "test", "arg", "this is a test with \"'\"' and characters\nand new lines");
   }
   tl->SetDisabled();
   string trace_json = TraceResultBuffer::FlushTraceLogToString();
@@ -311,7 +313,7 @@ class TraceEventCallbackTest : public KuduTest {
  public:
   virtual void SetUp() OVERRIDE {
     KuduTest::SetUp();
-    ASSERT_EQ(NULL, s_instance);
+    ASSERT_EQ(nullptr, s_instance);
     s_instance = this;
   }
   virtual void TearDown() OVERRIDE {
@@ -322,7 +324,7 @@ class TraceEventCallbackTest : public KuduTest {
     TraceResultBuffer::FlushTraceLogToString();
 
     ASSERT_TRUE(!!s_instance);
-    s_instance = NULL;
+    s_instance = nullptr;
     KuduTest::TearDown();
 
   }
@@ -378,15 +380,15 @@ class TraceEventCallbackTest : public KuduTest {
       for (Value::ConstMemberIterator it = value.MemberBegin();
            it != value.MemberEnd();
            ++it) {
-        if (it->name.IsString() && strstr(it->name.GetString(), string_to_match) != NULL) {
+        if (it->name.IsString() && strstr(it->name.GetString(), string_to_match) != nullptr) {
           return &value;
         }
-        if (it->value.IsString() && strstr(it->value.GetString(), string_to_match) != NULL) {
+        if (it->value.IsString() && strstr(it->value.GetString(), string_to_match) != nullptr) {
           return &value;
         }
       }
     }
-    return NULL;
+    return nullptr;
   }
 
   // For TraceEventCallbackAndRecordingX tests.

@@ -1,18 +1,20 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <iterator>
 #include <stdint.h>
 #include <vector>
@@ -21,15 +23,12 @@
 #include "kudu/common/partial_row.h"
 #include "kudu/common/partition.h"
 #include "kudu/common/row.h"
-#include "kudu/common/scan_predicate.h"
 #include "kudu/common/schema.h"
 #include "kudu/util/hash_util.h"
 #include "kudu/util/test_util.h"
 
 using std::vector;
 using std::string;
-
-using boost::assign::list_of;
 
 namespace kudu {
 
@@ -39,7 +38,7 @@ void AddHashBucketComponent(PartitionSchemaPB* partition_schema_pb,
                             uint32_t num_buckets, int32_t seed) {
   PartitionSchemaPB::HashBucketSchemaPB* hash_bucket_schema =
       partition_schema_pb->add_hash_bucket_schemas();
-  BOOST_FOREACH(const string& column, columns) {
+  for (const string& column : columns) {
     hash_bucket_schema->add_columns()->set_name(column);
   }
   hash_bucket_schema->set_num_buckets(num_buckets);
@@ -50,7 +49,7 @@ void SetRangePartitionComponent(PartitionSchemaPB* partition_schema_pb,
                                 const vector<string>& columns) {
   PartitionSchemaPB::RangeSchemaPB* range_schema = partition_schema_pb->mutable_range_schema();
   range_schema->Clear();
-  BOOST_FOREACH(const string& column, columns) {
+  for (const string& column : columns) {
     range_schema->add_columns()->set_name(column);
   }
 }
@@ -59,14 +58,14 @@ void SetRangePartitionComponent(PartitionSchemaPB* partition_schema_pb,
 TEST(PartitionTest, TestPartitionKeyEncoding) {
   // CREATE TABLE t (a INT32, b VARCHAR, c VARCHAR, PRIMARY KEY (a, b, c))
   // PARITITION BY [HASH BUCKET (a, b), HASH BUCKET (c), RANGE (a, b, c)];
-  Schema schema(list_of(ColumnSchema("a", INT32))
-                       (ColumnSchema("b", STRING))
-                       (ColumnSchema("c", STRING)),
-                list_of(0)(1)(2), 3);
+  Schema schema({ ColumnSchema("a", INT32),
+                  ColumnSchema("b", STRING),
+                  ColumnSchema("c", STRING) },
+                { ColumnId(0), ColumnId(1), ColumnId(2) }, 3);
 
   PartitionSchemaPB schema_builder;
-  AddHashBucketComponent(&schema_builder, list_of("a")("b"), 32, 0);
-  AddHashBucketComponent(&schema_builder, list_of("c"), 32, 42);
+  AddHashBucketComponent(&schema_builder, { "a", "b" }, 32, 0);
+  AddHashBucketComponent(&schema_builder, { "c" }, 32, 42);
   PartitionSchema partition_schema;
   ASSERT_OK(PartitionSchema::FromPB(schema_builder, schema, &partition_schema));
 
@@ -151,7 +150,7 @@ TEST(PartitionTest, TestPartitionKeyEncoding) {
 TEST(PartitionTest, TestCreateRangePartitions) {
   // CREATE TABLE t (a VARCHAR PRIMARY KEY),
   // PARITITION BY [RANGE (a)];
-  Schema schema(list_of(ColumnSchema("a", STRING)), list_of(0), 1);
+  Schema schema({ ColumnSchema("a", STRING) }, { ColumnId(0) }, 1);
 
   PartitionSchema partition_schema;
   ASSERT_OK(PartitionSchema::FromPB(PartitionSchemaPB(), schema, &partition_schema));
@@ -180,7 +179,7 @@ TEST(PartitionTest, TestCreateRangePartitions) {
   ASSERT_OK(partition_schema.EncodeKey(split2, &pk2));
 
   // Split keys need not be passed in sorted order.
-  vector<KuduPartialRow> split_rows = list_of(split2)(split1);
+  vector<KuduPartialRow> split_rows = { split2, split1 };
   vector<Partition> partitions;
   ASSERT_OK(partition_schema.CreatePartitions(split_rows, schema, &partitions));
   ASSERT_EQ(3, partitions.size());
@@ -213,11 +212,11 @@ TEST(PartitionTest, TestCreateRangePartitions) {
 TEST(PartitionTest, TestCreateHashBucketPartitions) {
   // CREATE TABLE t (a VARCHAR PRIMARY KEY),
   // PARITITION BY [HASH BUCKET (a)];
-  Schema schema(list_of(ColumnSchema("a", STRING)), list_of(0), 1);
+  Schema schema({ ColumnSchema("a", STRING) }, { ColumnId(0) }, 1);
 
   PartitionSchemaPB schema_builder;
   SetRangePartitionComponent(&schema_builder, vector<string>());
-  AddHashBucketComponent(&schema_builder, list_of("a"), 3, 42);
+  AddHashBucketComponent(&schema_builder, { "a" }, 3, 42);
   PartitionSchema partition_schema;
   ASSERT_OK(PartitionSchema::FromPB(schema_builder, schema, &partition_schema));
 
@@ -262,14 +261,14 @@ TEST(PartitionTest, TestCreateHashBucketPartitions) {
 TEST(PartitionTest, TestCreatePartitions) {
   // CREATE TABLE t (a VARCHAR, b VARCHAR, c VARCHAR, PRIMARY KEY (a, b, c))
   // PARITITION BY [HASH BUCKET (a), HASH BUCKET (b), RANGE (a, b, c)];
-  Schema schema(list_of(ColumnSchema("a", STRING))
-                       (ColumnSchema("b", STRING))
-                       (ColumnSchema("c", STRING)),
-                list_of(0)(1)(2), 3);
+  Schema schema({ ColumnSchema("a", STRING),
+                  ColumnSchema("b", STRING),
+                  ColumnSchema("c", STRING) },
+                { ColumnId(0), ColumnId(1), ColumnId(2) }, 3);
 
   PartitionSchemaPB schema_builder;
-  AddHashBucketComponent(&schema_builder, list_of("a"), 2, 0);
-  AddHashBucketComponent(&schema_builder, list_of("b"), 2, 0);
+  AddHashBucketComponent(&schema_builder, { "a" }, 2, 0);
+  AddHashBucketComponent(&schema_builder, { "b" }, 2, 0);
   PartitionSchema partition_schema;
   ASSERT_OK(PartitionSchema::FromPB(schema_builder, schema, &partition_schema));
 
@@ -318,7 +317,7 @@ TEST(PartitionTest, TestCreatePartitions) {
   ASSERT_OK(partition_schema.EncodeKey(split_b, &partition_key_b));
 
   // Split keys need not be passed in sorted order.
-  vector<KuduPartialRow> split_rows = list_of(split_b)(split_a);
+  vector<KuduPartialRow> split_rows = { split_b, split_a };
   vector<Partition> partitions;
   ASSERT_OK(partition_schema.CreatePartitions(split_rows, schema, &partitions));
   ASSERT_EQ(12, partitions.size());

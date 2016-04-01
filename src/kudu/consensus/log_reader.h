@@ -1,21 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_LOG_LOG_READER_H_
 #define KUDU_LOG_LOG_READER_H_
 
 #include <gtest/gtest.h>
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,6 +30,7 @@
 #include "kudu/fs/fs_manager.h"
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/gutil/spinlock.h"
+#include "kudu/util/make_shared.h"
 #include "kudu/util/locks.h"
 
 namespace kudu {
@@ -46,18 +51,18 @@ class LogReader {
   //
   // 'index' may be NULL, but if it is, ReadReplicatesInRange() may not
   // be used.
-  static Status Open(FsManager *fs_manager,
+  static Status Open(FsManager* fs_manager,
                      const scoped_refptr<LogIndex>& index,
-                     const std::string& tablet_oid,
+                     const std::string& tablet_id,
                      const scoped_refptr<MetricEntity>& metric_entity,
-                     gscoped_ptr<LogReader> *reader);
+                     std::shared_ptr<LogReader>* reader);
 
   // Opens a LogReader on a specific tablet log recovery directory, and sets
   // 'reader' to the newly created LogReader.
-  static Status OpenFromRecoveryDir(FsManager *fs_manager,
-                                    const std::string& tablet_oid,
+  static Status OpenFromRecoveryDir(FsManager* fs_manager,
+                                    const std::string& tablet_id,
                                     const scoped_refptr<MetricEntity>& metric_entity,
-                                    gscoped_ptr<LogReader> *reader);
+                                    std::shared_ptr<LogReader>* reader);
 
   // Returns the biggest prefix of segments, from the current sequence, guaranteed
   // not to include any replicate messages with indexes >= 'index'.
@@ -168,10 +173,8 @@ class LogReader {
                                   faststring* tmp_buf,
                                   gscoped_ptr<LogEntryBatchPB>* batch) const;
 
-
-  LogReader(FsManager *fs_manager,
-            const scoped_refptr<LogIndex>& index,
-            const std::string& tablet_name,
+  LogReader(FsManager* fs_manager, const scoped_refptr<LogIndex>& index,
+            std::string tablet_name,
             const scoped_refptr<MetricEntity>& metric_entity);
 
   // Reads the headers of all segments in 'path_'.
@@ -182,7 +185,7 @@ class LogReader {
 
   FsManager *fs_manager_;
   const scoped_refptr<LogIndex> log_index_;
-  const std::string tablet_oid_;
+  const std::string tablet_id_;
 
   // Metrics
   scoped_refptr<Counter> bytes_read_;
@@ -197,6 +200,7 @@ class LogReader {
 
   State state_;
 
+  ALLOW_MAKE_SHARED(LogReader);
   DISALLOW_COPY_AND_ASSIGN(LogReader);
 };
 

@@ -1,24 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/delta_compaction.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
-#include <algorithm>
-#include <tr1/unordered_map>
-#include <tr1/unordered_set>
 
 #include "kudu/common/generic_iterators.h"
 #include "kudu/gutil/stl_util.h"
@@ -34,14 +35,15 @@
 #include "kudu/tablet/multi_column_writer.h"
 #include "kudu/tablet/mvcc.h"
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 
+using cfile::CFileIterator;
 using cfile::CFileReader;
 using cfile::IndexTreeIterator;
-using cfile::CFileIterator;
 using fs::WritableBlock;
+using std::vector;
 using strings::Substitute;
 
 namespace tablet {
@@ -54,21 +56,20 @@ const size_t kRowsPerBlock = 100; // Number of rows per block of columns
 
 // TODO: can you major-delta-compact a new column after an alter table in order
 // to materialize it? should write a test for this.
-MajorDeltaCompaction::MajorDeltaCompaction(FsManager* fs_manager,
-                                           const Schema& base_schema,
-                                           CFileSet* base_data,
-                                           const shared_ptr<DeltaIterator>& delta_iter,
-                                           const vector<shared_ptr<DeltaStore> >& included_stores,
-                                           const vector<ColumnId>& col_ids)
-  : fs_manager_(fs_manager),
-    base_schema_(base_schema),
-    column_ids_(col_ids),
-    base_data_(base_data),
-    included_stores_(included_stores),
-    delta_iter_(delta_iter),
-    redo_delta_mutations_written_(0),
-    undo_delta_mutations_written_(0),
-    state_(kInitialized) {
+MajorDeltaCompaction::MajorDeltaCompaction(
+    FsManager* fs_manager, const Schema& base_schema, CFileSet* base_data,
+    shared_ptr<DeltaIterator> delta_iter,
+    vector<shared_ptr<DeltaStore> > included_stores,
+    const vector<ColumnId>& col_ids)
+    : fs_manager_(fs_manager),
+      base_schema_(base_schema),
+      column_ids_(col_ids),
+      base_data_(base_data),
+      included_stores_(std::move(included_stores)),
+      delta_iter_(std::move(delta_iter)),
+      redo_delta_mutations_written_(0),
+      undo_delta_mutations_written_(0),
+      state_(kInitialized) {
   CHECK(!col_ids.empty());
 }
 
@@ -77,7 +78,7 @@ MajorDeltaCompaction::~MajorDeltaCompaction() {
 
 string MajorDeltaCompaction::ColumnNamesToString() const {
   std::string result;
-  BOOST_FOREACH(ColumnId col_id, column_ids_) {
+  for (ColumnId col_id : column_ids_) {
     int col_idx = base_schema_.find_column_by_id(col_id);
     if (col_idx != Schema::kColumnNotFound) {
       result += base_schema_.column_by_id(col_id).ToString() + " ";
@@ -133,14 +134,14 @@ Status MajorDeltaCompaction::FlushRowSetAndDeltas() {
       CompactionInputRow &input_row = input_rows.at(i);
       input_row.row.Reset(&block, i);
       input_row.redo_head = redo_mutation_block[i];
-      input_row.undo_head = NULL;
+      input_row.undo_head = nullptr;
 
       RowBlockRow dst_row = block.row(i);
       RETURN_NOT_OK(CopyRow(input_row.row, &dst_row, reinterpret_cast<Arena*>(NULL)));
 
-      Mutation* new_undos_head = NULL;
+      Mutation* new_undos_head = nullptr;
       // We're ignoring the result from new_redos_head because we'll find them later at step 5).
-      Mutation* new_redos_head = NULL;
+      Mutation* new_redos_head = nullptr;
 
       bool is_garbage_collected;
 
@@ -159,10 +160,10 @@ Status MajorDeltaCompaction::FlushRowSetAndDeltas() {
         << " Redo Mutations: " << Mutation::StringifyMutationList(partial_schema_, new_redos_head);
 
       // We only create a new undo delta file if we need to.
-      if (new_undos_head != NULL && !new_undo_delta_writer_) {
+      if (new_undos_head != nullptr && !new_undo_delta_writer_) {
         RETURN_NOT_OK(OpenUndoDeltaFileWriter());
       }
-      for (const Mutation *mut = new_undos_head; mut != NULL; mut = mut->next()) {
+      for (const Mutation *mut = new_undos_head; mut != nullptr; mut = mut->next()) {
         DeltaKey undo_key(nrows + dst_row.row_index(), mut->timestamp());
         RETURN_NOT_OK(new_undo_delta_writer_->AppendDelta<UNDO>(undo_key, mut->changelist()));
         undo_stats.UpdateStats(mut->timestamp(), mut->changelist());
@@ -185,7 +186,7 @@ Status MajorDeltaCompaction::FlushRowSetAndDeltas() {
     }
 
     // 6) Write the deltas we're not compacting back into a delta file.
-    BOOST_FOREACH(const DeltaKeyAndUpdate& key_and_update, out) {
+    for (const DeltaKeyAndUpdate& key_and_update : out) {
       RowChangeList update(key_and_update.cell);
       RETURN_NOT_OK_PREPEND(new_redo_delta_writer_->AppendDelta<REDO>(key_and_update.key, update),
                             "Failed to append a delta");
@@ -234,7 +235,7 @@ Status MajorDeltaCompaction::OpenRedoDeltaFileWriter() {
   RETURN_NOT_OK_PREPEND(fs_manager_->CreateNewBlock(&block),
                         "Unable to create REDO delta output block");
   new_redo_delta_block_ = block->id();
-  new_redo_delta_writer_.reset(new DeltaFileWriter(block.Pass()));
+  new_redo_delta_writer_.reset(new DeltaFileWriter(std::move(block)));
   return new_redo_delta_writer_->Start();
 }
 
@@ -243,7 +244,7 @@ Status MajorDeltaCompaction::OpenUndoDeltaFileWriter() {
   RETURN_NOT_OK_PREPEND(fs_manager_->CreateNewBlock(&block),
                         "Unable to create UNDO delta output block");
   new_undo_delta_block_ = block->id();
-  new_undo_delta_writer_.reset(new DeltaFileWriter(block.Pass()));
+  new_undo_delta_writer_.reset(new DeltaFileWriter(std::move(block)));
   return new_undo_delta_writer_->Start();
 }
 
@@ -253,7 +254,7 @@ Status MajorDeltaCompaction::Compact() {
   LOG(INFO) << "Starting major delta compaction for columns " << ColumnNamesToString();
   RETURN_NOT_OK(base_schema_.CreateProjectionByIdsIgnoreMissing(column_ids_, &partial_schema_));
 
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& ds, included_stores_) {
+  for (const shared_ptr<DeltaStore>& ds : included_stores_) {
     LOG(INFO) << "Preparing to major compact delta file: " << ds->ToString();
   }
 
@@ -271,7 +272,7 @@ Status MajorDeltaCompaction::CreateMetadataUpdate(
   CHECK_EQ(state_, kFinished);
 
   vector<BlockId> compacted_delta_blocks;
-  BOOST_FOREACH(const shared_ptr<DeltaStore>& store, included_stores_) {
+  for (const shared_ptr<DeltaStore>& store : included_stores_) {
     DeltaFileReader* dfr = down_cast<DeltaFileReader*>(store.get());
     compacted_delta_blocks.push_back(dfr->block_id());
   }
@@ -297,7 +298,7 @@ Status MajorDeltaCompaction::CreateMetadataUpdate(
   // For those deleted columns, we just remove the old column data.
   CHECK_LE(new_column_blocks.size(), column_ids_.size());
 
-  BOOST_FOREACH(ColumnId col_id, column_ids_) {
+  for (ColumnId col_id : column_ids_) {
     BlockId new_block;
     if (FindCopy(new_column_blocks, col_id, &new_block)) {
       update->ReplaceColumnId(col_id, new_block);

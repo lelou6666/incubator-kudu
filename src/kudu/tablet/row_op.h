@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_ROW_OP_H
 #define KUDU_TABLET_ROW_OP_H
 
@@ -30,7 +33,7 @@ namespace tablet {
 // Structure tracking the progress of a single row operation within a WriteTransaction.
 struct RowOp {
  public:
-  explicit RowOp(const DecodedRowOperation& decoded_op);
+  explicit RowOp(DecodedRowOperation decoded_op);
   ~RowOp();
 
   // Functions to set the result of the mutation.
@@ -40,6 +43,15 @@ struct RowOp {
   void SetInsertSucceeded(int mrs_id);
   void SetMutateSucceeded(gscoped_ptr<OperationResultPB> result);
   void SetAlreadyFlushed();
+
+  // In the case that this operation is being replayed from the WAL
+  // during tablet bootstrap, we may need to look at the original result
+  // stored in the COMMIT message to know the correct RowSet to apply it to.
+  //
+  // This pointer must stay live as long as this RowOp.
+  void set_original_result_from_log(const OperationResultPB* orig_result) {
+    orig_result_from_log_ = orig_result;
+  }
 
   bool has_row_lock() const {
     return row_lock.acquired();
@@ -61,6 +73,10 @@ struct RowOp {
 
   // The result of the operation, after Apply.
   gscoped_ptr<OperationResultPB> result;
+
+  // If this operation is being replayed from the log, set to the original
+  // result. Otherwise nullptr.
+  const OperationResultPB* orig_result_from_log_;
 };
 
 

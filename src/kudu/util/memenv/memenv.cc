@@ -6,13 +6,14 @@
 // - use boost mutexes instead of port mutexes
 
 #include <string.h>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "kudu/gutil/map-util.h"
+#include "kudu/gutil/ref_counted.h"
+#include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/gutil/strings/strip.h"
 #include "kudu/gutil/strings/substitute.h"
@@ -32,39 +33,12 @@ using std::string;
 using std::vector;
 using strings::Substitute;
 
-class FileState {
+class FileState : public RefCountedThreadSafe<FileState> {
  public:
   // FileStates are reference counted. The initial reference count is zero
   // and the caller must call Ref() at least once.
-  explicit FileState(const string& filename)
-  : refs_(0),
-    size_(0),
-    filename_(filename) {
-  }
-
-  // Increase the reference count.
-  void Ref() {
-    MutexLock lock(refs_mutex_);
-    ++refs_;
-  }
-
-  // Decrease the reference count. Delete if this is the last reference.
-  void Unref() {
-    bool do_delete = false;
-
-    {
-      MutexLock lock(refs_mutex_);
-      --refs_;
-      assert(refs_ >= 0);
-      if (refs_ <= 0) {
-        do_delete = true;
-      }
-    }
-
-    if (do_delete) {
-      delete this;
-    }
-  }
+  explicit FileState(string filename)
+      : filename_(std::move(filename)), size_(0) {}
 
   uint64_t Size() const { return size_; }
 
@@ -111,7 +85,7 @@ class FileState {
   }
 
   Status PreAllocate(uint64_t size) {
-    uint8_t *padding = new uint8_t[size];
+    auto padding = new uint8_t[size];
     // TODO optimize me
     memset(&padding, 0, sizeof(uint8_t));
     Status s = AppendRaw(padding, size);
@@ -154,8 +128,10 @@ class FileState {
 
   size_t memory_footprint() const {
     size_t size = kudu_malloc_usable_size(this);
-    size += kudu_malloc_usable_size(blocks_.data());
-    BOOST_FOREACH(uint8_t* block, blocks_) {
+    if (blocks_.capacity() > 0) {
+      size += kudu_malloc_usable_size(blocks_.data());
+    }
+    for (uint8_t* block : blocks_) {
       size += kudu_malloc_usable_size(block);
     }
     size += filename_.capacity();
@@ -163,40 +139,36 @@ class FileState {
   }
 
  private:
-  // Private since only Unref() should be used to delete it.
+  friend class RefCountedThreadSafe<FileState>;
+
+  enum { kBlockSize = 8 * 1024 };
+
+  // Private since only Release() should be used to delete it.
   ~FileState() {
-    for (vector<uint8_t*>::iterator i = blocks_.begin(); i != blocks_.end();
-         ++i) {
-      delete [] *i;
+    for (uint8_t* block : blocks_) {
+      delete[] block;
     }
   }
 
-  // No copying allowed.
-  FileState(const FileState&);
-  void operator=(const FileState&);
-
-  Mutex refs_mutex_;
-  int refs_;  // Protected by refs_mutex_;
+  const string filename_;
 
   // The following fields are not protected by any mutex. They are only mutable
   // while the file is being written, and concurrent access is not allowed
   // to writable files.
-  vector<uint8_t*> blocks_;
   uint64_t size_;
+  vector<uint8_t*> blocks_;
 
-  string filename_;
-
-  enum { kBlockSize = 8 * 1024 };
+  DISALLOW_COPY_AND_ASSIGN(FileState);
 };
 
 class SequentialFileImpl : public SequentialFile {
  public:
-  explicit SequentialFileImpl(FileState* file) : file_(file), pos_(0) {
-    file_->Ref();
+  explicit SequentialFileImpl(const scoped_refptr<FileState>& file)
+    : file_(file),
+      pos_(0) {
   }
 
   ~SequentialFileImpl() {
-    file_->Unref();
   }
 
   virtual Status Read(size_t n, Slice* result, uint8_t* scratch) OVERRIDE {
@@ -224,18 +196,17 @@ class SequentialFileImpl : public SequentialFile {
   }
 
  private:
-  FileState* file_;
+  const scoped_refptr<FileState> file_;
   size_t pos_;
 };
 
 class RandomAccessFileImpl : public RandomAccessFile {
  public:
-  explicit RandomAccessFileImpl(FileState* file) : file_(file) {
-    file_->Ref();
+  explicit RandomAccessFileImpl(const scoped_refptr<FileState>& file)
+    : file_(file) {
   }
 
   ~RandomAccessFileImpl() {
-    file_->Unref();
   }
 
   virtual Status Read(uint64_t offset, size_t n, Slice* result,
@@ -259,17 +230,16 @@ class RandomAccessFileImpl : public RandomAccessFile {
   }
 
  private:
-  FileState* file_;
+  const scoped_refptr<FileState> file_;
 };
 
 class WritableFileImpl : public WritableFile {
  public:
-  explicit WritableFileImpl(FileState* file) : file_(file) {
-    file_->Ref();
+  explicit WritableFileImpl(const scoped_refptr<FileState>& file)
+    : file_(file) {
   }
 
   ~WritableFileImpl() {
-    file_->Unref();
   }
 
   virtual Status PreAllocate(uint64_t size) OVERRIDE {
@@ -283,7 +253,7 @@ class WritableFileImpl : public WritableFile {
   // This is a dummy implementation that simply serially appends all
   // slices using regular I/O.
   virtual Status AppendVector(const vector<Slice>& data_vector) OVERRIDE {
-    BOOST_FOREACH(const Slice& data, data_vector) {
+    for (const Slice& data : data_vector) {
       RETURN_NOT_OK(file_->Append(data));
     }
     return Status::OK();
@@ -302,17 +272,16 @@ class WritableFileImpl : public WritableFile {
   }
 
  private:
-  FileState* file_;
+  const scoped_refptr<FileState> file_;
 };
 
 class RWFileImpl : public RWFile {
  public:
-  explicit RWFileImpl(FileState* file) : file_(file) {
-    file_->Ref();
+  explicit RWFileImpl(const scoped_refptr<FileState>& file)
+    : file_(file) {
   }
 
   ~RWFileImpl() {
-    file_->Unref();
   }
 
   virtual Status Read(uint64_t offset, size_t length,
@@ -366,7 +335,7 @@ class RWFileImpl : public RWFile {
   }
 
  private:
-  FileState* file_;
+  const scoped_refptr<FileState> file_;
 };
 
 class InMemoryEnv : public EnvWrapper {
@@ -374,9 +343,6 @@ class InMemoryEnv : public EnvWrapper {
   explicit InMemoryEnv(Env* base_env) : EnvWrapper(base_env) { }
 
   virtual ~InMemoryEnv() {
-    for (FileSystem::iterator i = file_map_.begin(); i != file_map_.end(); ++i) {
-      i->second->Unref();
-    }
   }
 
   // Partial implementation of the Env interface.
@@ -453,7 +419,7 @@ class InMemoryEnv : public EnvWrapper {
 
       MutexLock lock(mutex_);
       if (!ContainsKey(file_map_, path)) {
-        CreateAndRegisterNewWritableFileUnlocked(path, result);
+        CreateAndRegisterNewWritableFileUnlocked<WritableFile, WritableFileImpl>(path, result);
         *created_filename = path;
         return Status::OK();
       }
@@ -471,8 +437,8 @@ class InMemoryEnv : public EnvWrapper {
     MutexLock lock(mutex_);
     result->clear();
 
-    for (FileSystem::iterator i = file_map_.begin(); i != file_map_.end(); ++i) {
-      const std::string& filename = i->first;
+    for (const auto& file : file_map_) {
+      const std::string& filename = file.first;
 
       if (filename.size() >= dir.size() + 1 && filename[dir.size()] == '/' &&
           Slice(filename).starts_with(Slice(dir))) {
@@ -515,7 +481,7 @@ class InMemoryEnv : public EnvWrapper {
 
     MutexLock lock(mutex_);
 
-    for (FileSystem::iterator i = file_map_.begin(); i != file_map_.end(); ) {
+    for (auto i = file_map_.begin(); i != file_map_.end();) {
       const std::string& filename = i->first;
 
       if (filename.size() >= dir.size() && Slice(filename).starts_with(Slice(dir))) {
@@ -596,25 +562,22 @@ class InMemoryEnv : public EnvWrapper {
     if (!ContainsKey(file_map_, fname)) {
       return;
     }
-
-    file_map_[fname]->Unref();
     file_map_.erase(fname);
   }
 
   // Create new internal representation of a writable file.
+  template <typename PtrType, typename ImplType>
   void CreateAndRegisterNewWritableFileUnlocked(const string& path,
-                                                gscoped_ptr<WritableFile>* result) {
-    FileState* file = new FileState(path);
-    file->Ref();
-    file_map_[path] = file;
-    result->reset(new WritableFileImpl(file));
+                                                gscoped_ptr<PtrType>* result) {
+    file_map_[path] = make_scoped_refptr(new FileState(path));
+    result->reset(new ImplType(file_map_[path]));
   }
 
   // Create new internal representation of a file.
-  template <typename T>
+  template <typename Type>
   Status CreateAndRegisterNewFile(const string& fname,
                                   CreateMode mode,
-                                  gscoped_ptr<T>* result) {
+                                  gscoped_ptr<Type>* result) {
     MutexLock lock(mutex_);
     if (ContainsKey(file_map_, fname)) {
       switch (mode) {
@@ -624,7 +587,7 @@ class InMemoryEnv : public EnvWrapper {
         case CREATE_NON_EXISTING:
           return Status::AlreadyPresent(fname, "File already exists");
         case OPEN_EXISTING:
-          result->reset(new T(file_map_[fname]));
+          result->reset(new Type(file_map_[fname]));
           return Status::OK();
         default:
           return Status::NotSupported(Substitute("Unknown create mode $0",
@@ -634,15 +597,12 @@ class InMemoryEnv : public EnvWrapper {
       return Status::IOError(fname, "File not found");
     }
 
-    FileState* file = new FileState(fname);
-    file->Ref();
-    file_map_[fname] = file;
-    result->reset(new T(file));
+    CreateAndRegisterNewWritableFileUnlocked<Type, Type>(fname, result);
     return Status::OK();
   }
 
   // Map from filenames to FileState objects, representing a simple file system.
-  typedef std::map<std::string, FileState*> FileSystem;
+  typedef std::map<std::string, scoped_refptr<FileState> > FileSystem;
   Mutex mutex_;
   FileSystem file_map_;  // Protected by mutex_.
 };

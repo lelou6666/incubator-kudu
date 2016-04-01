@@ -1,21 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_MOCK_ROWSETS_H
 #define KUDU_TABLET_MOCK_ROWSETS_H
 
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/gutil/strings/substitute.h"
@@ -78,10 +81,8 @@ class MockRowSet : public RowSet {
     LOG(FATAL) << "Unimplemented";
     return NULL;
   }
-  virtual std::tr1::shared_ptr<RowSetMetadata> metadata() OVERRIDE {
-    LOG(FATAL) << "Unimplemented";
-    return std::tr1::shared_ptr<RowSetMetadata>(
-      reinterpret_cast<RowSetMetadata *>(NULL));
+  virtual std::shared_ptr<RowSetMetadata> metadata() OVERRIDE {
+    return NULL;
   }
 
   virtual size_t DeltaMemStoreSize() const OVERRIDE {
@@ -123,11 +124,11 @@ class MockRowSet : public RowSet {
 // Mock which implements GetBounds() with constant provided bonuds.
 class MockDiskRowSet : public MockRowSet {
  public:
-  MockDiskRowSet(std::string first_key, std::string last_key, int size = 1000000)
-    : first_key_(first_key),
-      last_key_(last_key),
-      size_(size) {
-  }
+  MockDiskRowSet(std::string first_key, std::string last_key,
+                 int size = 1000000)
+      : first_key_(std::move(first_key)),
+        last_key_(std::move(last_key)),
+        size_(size) {}
 
   virtual Status GetBounds(Slice *min_encoded_key,
                            Slice *max_encoded_key) const OVERRIDE {

@@ -1,28 +1,29 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tool to dump tablets, rowsets, and blocks
 
 #include "kudu/tools/fs_tool.h"
 
 #include <iostream>
+#include <memory>
 #include <sstream>
-#include <tr1/memory>
 #include <vector>
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 
@@ -67,26 +68,23 @@ struct CommandHandler {
   string name_;
   string desc_;
 
-  CommandHandler(CommandType type, const string& name, const string& desc)
-      : type_(type),
-        name_(name),
-        desc_(desc) {
-  }
+  CommandHandler(CommandType type, string name, string desc)
+      : type_(type), name_(std::move(name)), desc_(std::move(desc)) {}
 };
 
-const vector<CommandHandler> kCommandHandlers = boost::assign::list_of
-    (CommandHandler(DUMP_TABLET_DATA, "dump_tablet_data",
-                    "Dump a tablet's data (requires a tablet id)"))
-    (CommandHandler(DUMP_TABLET_BLOCKS, "dump_tablet_blocks",
-                    "Dump a tablet's constituent blocks (requires a tablet id)"))
-    (CommandHandler(DUMP_ROWSET, "dump_rowset",
-                    "Dump a rowset (requires a tablet id and an index)"))
-    (CommandHandler(DUMP_CFILE_BLOCK, "dump_block",
-                    "Dump a cfile block (requires a block id)"))
-    (CommandHandler(PRINT_TABLET_META, "print_meta",
-                    "Print a tablet metadata (requires a tablet id)"))
-    (CommandHandler(PRINT_UUID, "print_uuid",
-                    "Print the UUID (master or TS) to whom the data belongs"));
+const vector<CommandHandler> kCommandHandlers = {
+    CommandHandler(DUMP_TABLET_DATA, "dump_tablet_data",
+                   "Dump a tablet's data (requires a tablet id)"),
+    CommandHandler(DUMP_TABLET_BLOCKS, "dump_tablet_blocks",
+                   "Dump a tablet's constituent blocks (requires a tablet id)"),
+    CommandHandler(DUMP_ROWSET, "dump_rowset",
+                   "Dump a rowset (requires a tablet id and an index)"),
+    CommandHandler(DUMP_CFILE_BLOCK, "dump_block",
+                   "Dump a cfile block (requires a block id)"),
+    CommandHandler(PRINT_TABLET_META, "print_meta",
+                   "Print a tablet metadata (requires a tablet id)"),
+    CommandHandler(PRINT_UUID, "print_uuid",
+                   "Print the UUID (master or TS) to whom the data belongs") };
 
 void PrintUsageToStream(const std::string& prog_name, std::ostream* out) {
   *out << "Usage: " << prog_name
@@ -94,7 +92,7 @@ void PrintUsageToStream(const std::string& prog_name, std::ostream* out) {
        << "-fs_wal_dir <dir> -fs_data_dirs <dirs> <command> <options> "
        << std::endl << std::endl;
   *out << "Commands: " << std::endl;
-  BOOST_FOREACH(const CommandHandler& handler, kCommandHandlers) {
+  for (const CommandHandler& handler : kCommandHandlers) {
     *out << handler.name_ << ": " << handler.desc_ << std::endl;
   }
 }
@@ -108,7 +106,7 @@ bool ValidateCommand(int argc, char** argv, CommandType* out) {
     Usage(argv[0], "At least one command must be specified!");
     return false;
   }
-  BOOST_FOREACH(const CommandHandler& handler, kCommandHandlers) {
+  for (const CommandHandler& handler : kCommandHandlers) {
     if (argv[1] == handler.name_) {
       *out = handler.type_;
       return true;

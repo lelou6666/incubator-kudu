@@ -1,30 +1,32 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/subprocess.h"
 
-#include <boost/foreach.hpp>
 #include <dirent.h>
-#include <glog/logging.h>
 #include <fcntl.h>
-#include <tr1/memory>
-#include <string>
-#include <vector>
+#include <glog/logging.h>
+#include <memory>
 #include <signal.h>
-#include <unistd.h>
+#include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
+#include <vector>
 
 #if defined(__linux__)
 #include <sys/prctl.h>
@@ -40,8 +42,8 @@
 #include "kudu/util/errno.h"
 #include "kudu/util/status.h"
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::Split;
 using strings::Substitute;
@@ -71,7 +73,7 @@ void DisableSigPipe() {
   act.sa_handler = SIG_IGN;
   sigemptyset(&act.sa_mask);
   act.sa_flags = 0;
-  PCHECK(sigaction(SIGPIPE, &act, NULL) == 0);
+  PCHECK(sigaction(SIGPIPE, &act, nullptr) == 0);
 }
 
 void EnsureSigPipeDisabled() {
@@ -83,7 +85,7 @@ void EnsureSigPipeDisabled() {
 // This function is not async-signal-safe.
 Status OpenProcFdDir(DIR** dir) {
   *dir = opendir(kProcSelfFd);
-  if (PREDICT_FALSE(dir == NULL)) {
+  if (PREDICT_FALSE(dir == nullptr)) {
     return Status::IOError(Substitute("opendir(\"$0\") failed", kProcSelfFd),
                            ErrnoToString(errno), errno);
   }
@@ -117,7 +119,7 @@ void CloseNonStandardFDs(DIR* fd_dir) {
   // make it as lean and mean as possible -- this runs in the subprocess
   // after a fork, so there's some possibility that various global locks
   // inside malloc() might be held, so allocating memory is a no-no.
-  PCHECK(fd_dir != NULL);
+  PCHECK(fd_dir != nullptr);
   int dir_fd = dirfd(fd_dir);
 
   struct DIRENT* ent;
@@ -129,7 +131,7 @@ void CloseNonStandardFDs(DIR* fd_dir) {
   // malloc() or free(). We could use readdir64_r() instead, but all that
   // buys us is reentrancy, and not async-signal-safety, due to the use of
   // dir->lock, so seems not worth the added complexity in lifecycle & plumbing.
-  while ((ent = READDIR(fd_dir)) != NULL) {
+  while ((ent = READDIR(fd_dir)) != nullptr) {
     uint32_t fd;
     if (!safe_strtou32(ent->d_name, &fd)) continue;
     if (!(fd == STDIN_FILENO  ||
@@ -143,14 +145,13 @@ void CloseNonStandardFDs(DIR* fd_dir) {
 
 } // anonymous namespace
 
-Subprocess::Subprocess(const string& program,
-                       const vector<string>& argv)
-  : program_(program),
-    argv_(argv),
-    state_(kNotStarted),
-    child_pid_(-1),
-    fd_state_(),
-    child_fds_() {
+Subprocess::Subprocess(string program, vector<string> argv)
+    : program_(std::move(program)),
+      argv_(std::move(argv)),
+      state_(kNotStarted),
+      child_pid_(-1),
+      fd_state_(),
+      child_fds_() {
   fd_state_[STDIN_FILENO]   = PIPED;
   fd_state_[STDOUT_FILENO]  = SHARED;
   fd_state_[STDERR_FILENO]  = SHARED;
@@ -238,10 +239,10 @@ Status Subprocess::Start() {
   }
 
   vector<char*> argv_ptrs;
-  BOOST_FOREACH(const string& arg, argv_) {
+  for (const string& arg : argv_) {
     argv_ptrs.push_back(const_cast<char*>(arg.c_str()));
   }
-  argv_ptrs.push_back(NULL);
+  argv_ptrs.push_back(nullptr);
 
   // Pipe from caller process to child's stdin
   // [0] = stdin for child, [1] = how parent writes to it
@@ -262,7 +263,7 @@ Status Subprocess::Start() {
     PCHECK(pipe2(child_stderr, O_CLOEXEC) == 0);
   }
 
-  DIR* fd_dir = NULL;
+  DIR* fd_dir = nullptr;
   RETURN_NOT_OK_PREPEND(OpenProcFdDir(&fd_dir), "Unable to open fd dir");
   shared_ptr<DIR> fd_dir_closer(fd_dir, CloseProcFdDir);
 
@@ -312,7 +313,7 @@ Status Subprocess::Start() {
     CloseNonStandardFDs(fd_dir);
 
     execvp(program_.c_str(), &argv_ptrs[0]);
-    PLOG(WARNING) << "Couldn't exec";
+    PLOG(WARNING) << "Couldn't exec " << program_;
     _exit(errno);
   } else {
     // We are the parent
@@ -366,9 +367,19 @@ Status Subprocess::Kill(int signal) {
 }
 
 Status Subprocess::Call(const string& arg_str) {
+<<<<<<< HEAD
   LOG(INFO) << "Invoking command: " << arg_str;
   vector<string> args = Split(arg_str, " ");
   Subprocess proc(args[0], args);
+=======
+  VLOG(2) << "Invoking command: " << arg_str;
+  vector<string> argv = Split(arg_str, " ");
+  return Call(argv);
+}
+
+Status Subprocess::Call(const vector<string>& argv) {
+  Subprocess proc(argv[0], argv);
+>>>>>>> refs/remotes/apache/master
   RETURN_NOT_OK(proc.Start());
   int retcode;
   RETURN_NOT_OK(proc.Wait(&retcode));
@@ -378,9 +389,52 @@ Status Subprocess::Call(const string& arg_str) {
   } else {
     return Status::RuntimeError(Substitute(
         "Subprocess '$0' terminated with non-zero exit status $1",
+<<<<<<< HEAD
         args[0],
         retcode));
   }
+=======
+        argv[0],
+        retcode));
+  }
+}
+
+Status Subprocess::Call(const vector<string>& argv, string* stdout_out) {
+  Subprocess p(argv[0], argv);
+  p.ShareParentStdout(false);
+  RETURN_NOT_OK_PREPEND(p.Start(), "Unable to fork " + argv[0]);
+  int err = close(p.ReleaseChildStdinFd());
+  if (PREDICT_FALSE(err != 0)) {
+    return Status::IOError("Unable to close child process stdin", ErrnoToString(errno), errno);
+  }
+
+  stdout_out->clear();
+  char buf[1024];
+  while (true) {
+    ssize_t n = read(p.from_child_stdout_fd(), buf, arraysize(buf));
+    if (n == 0) {
+      // EOF
+      break;
+    }
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return Status::IOError("IO error reading from " + argv[0], ErrnoToString(errno), errno);
+    }
+
+    stdout_out->append(buf, n);
+  }
+
+  int retcode;
+  RETURN_NOT_OK_PREPEND(p.Wait(&retcode), "Unable to wait() for " + argv[0]);
+
+  if (PREDICT_FALSE(retcode != 0)) {
+    return Status::RuntimeError(Substitute(
+        "Subprocess '$0' terminated with non-zero exit status $1",
+        argv[0],
+        retcode));
+  }
+  return Status::OK();
+>>>>>>> refs/remotes/apache/master
 }
 
 int Subprocess::CheckAndOffer(int stdfd) const {

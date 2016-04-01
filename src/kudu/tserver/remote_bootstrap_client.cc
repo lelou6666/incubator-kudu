@@ -1,16 +1,20 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 #include "kudu/tserver/remote_bootstrap_client.h"
 
 #include <gflags/gflags.h>
@@ -52,6 +56,14 @@ TAG_FLAG(remote_bootstrap_save_downloaded_metadata, advanced);
 TAG_FLAG(remote_bootstrap_save_downloaded_metadata, hidden);
 TAG_FLAG(remote_bootstrap_save_downloaded_metadata, runtime);
 
+<<<<<<< HEAD
+=======
+DEFINE_int32(remote_bootstrap_dowload_file_inject_latency_ms, 0,
+             "Injects latency into the loop that downloads files, causing remote bootstrap "
+             "to take much longer. For use in tests only.");
+TAG_FLAG(remote_bootstrap_dowload_file_inject_latency_ms, hidden);
+
+>>>>>>> refs/remotes/apache/master
 // RETURN_NOT_OK_PREPEND() with a remote-error unwinding step.
 #define RETURN_NOT_OK_UNWIND_PREPEND(status, controller, msg) \
   RETURN_NOT_OK_PREPEND(UnwindRemoteError(status, controller), msg)
@@ -67,8 +79,8 @@ using consensus::RaftPeerPB;
 using env_util::CopyFile;
 using fs::WritableBlock;
 using rpc::Messenger;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::Substitute;
 using tablet::ColumnDataPB;
@@ -80,8 +92,9 @@ using tablet::TabletMetadata;
 using tablet::TabletStatusListener;
 using tablet::TabletSuperBlockPB;
 
-RemoteBootstrapClient::RemoteBootstrapClient(const std::string& tablet_id,
+RemoteBootstrapClient::RemoteBootstrapClient(std::string tablet_id,
                                              FsManager* fs_manager,
+<<<<<<< HEAD
                                              const shared_ptr<Messenger>& messenger,
                                              const string& client_permanent_uuid)
   : tablet_id_(tablet_id),
@@ -96,6 +109,21 @@ RemoteBootstrapClient::RemoteBootstrapClient(const std::string& tablet_id,
     session_idle_timeout_millis_(0),
     start_time_micros_(0) {
 }
+=======
+                                             shared_ptr<Messenger> messenger,
+                                             string client_permanent_uuid)
+    : tablet_id_(std::move(tablet_id)),
+      fs_manager_(fs_manager),
+      messenger_(std::move(messenger)),
+      permanent_uuid_(std::move(client_permanent_uuid)),
+      started_(false),
+      downloaded_wal_(false),
+      downloaded_blocks_(false),
+      replace_tombstoned_tablet_(false),
+      status_listener_(nullptr),
+      session_idle_timeout_millis_(0),
+      start_time_micros_(0) {}
+>>>>>>> refs/remotes/apache/master
 
 RemoteBootstrapClient::~RemoteBootstrapClient() {
   // Note: Ending the remote bootstrap session releases anchors on the remote.
@@ -299,7 +327,7 @@ Status RemoteBootstrapClient::UnwindRemoteError(const Status& status,
 }
 
 void RemoteBootstrapClient::UpdateStatusMessage(const string& message) {
-  if (status_listener_ != NULL) {
+  if (status_listener_ != nullptr) {
     status_listener_->StatusMessage("RemoteBootstrap: " + message);
   }
 }
@@ -340,7 +368,7 @@ Status RemoteBootstrapClient::DownloadWALs() {
   int num_segments = wal_seqnos_.size();
   LOG_WITH_PREFIX(INFO) << "Starting download of " << num_segments << " WAL segments...";
   uint64_t counter = 0;
-  BOOST_FOREACH(uint64_t seg_seqno, wal_seqnos_) {
+  for (uint64_t seg_seqno : wal_seqnos_) {
     UpdateStatusMessage(Substitute("Downloading WAL segment with seq. number $0 ($1/$2)",
                                    seg_seqno, counter + 1, num_segments));
     RETURN_NOT_OK(DownloadWAL(seg_seqno));
@@ -356,7 +384,7 @@ Status RemoteBootstrapClient::DownloadBlocks() {
 
   // Count up the total number of blocks to download.
   int num_blocks = 0;
-  BOOST_FOREACH(const RowSetDataPB& rowset, superblock_->rowsets()) {
+  for (const RowSetDataPB& rowset : superblock_->rowsets()) {
     num_blocks += rowset.columns_size();
     num_blocks += rowset.redo_deltas_size();
     num_blocks += rowset.undo_deltas_size();
@@ -374,16 +402,16 @@ Status RemoteBootstrapClient::DownloadBlocks() {
   new_sb->CopyFrom(*superblock_);
   int block_count = 0;
   LOG_WITH_PREFIX(INFO) << "Starting download of " << num_blocks << " data blocks...";
-  BOOST_FOREACH(RowSetDataPB& rowset, *new_sb->mutable_rowsets()) {
-    BOOST_FOREACH(ColumnDataPB& col, *rowset.mutable_columns()) {
+  for (RowSetDataPB& rowset : *new_sb->mutable_rowsets()) {
+    for (ColumnDataPB& col : *rowset.mutable_columns()) {
       RETURN_NOT_OK(DownloadAndRewriteBlock(col.mutable_block(),
                                             &block_count, num_blocks));
     }
-    BOOST_FOREACH(DeltaDataPB& redo, *rowset.mutable_redo_deltas()) {
+    for (DeltaDataPB& redo : *rowset.mutable_redo_deltas()) {
       RETURN_NOT_OK(DownloadAndRewriteBlock(redo.mutable_block(),
                                             &block_count, num_blocks));
     }
-    BOOST_FOREACH(DeltaDataPB& undo, *rowset.mutable_undo_deltas()) {
+    for (DeltaDataPB& undo : *rowset.mutable_undo_deltas()) {
       RETURN_NOT_OK(DownloadAndRewriteBlock(undo.mutable_block(),
                                             &block_count, num_blocks));
     }
@@ -514,6 +542,12 @@ Status RemoteBootstrapClient::DownloadFile(const DataIdPB& data_id,
 
     // Write the data.
     RETURN_NOT_OK(appendable->Append(resp.chunk().data()));
+
+    if (PREDICT_FALSE(FLAGS_remote_bootstrap_dowload_file_inject_latency_ms > 0)) {
+      LOG_WITH_PREFIX(INFO) << "Injecting latency into file download: " <<
+          FLAGS_remote_bootstrap_dowload_file_inject_latency_ms;
+      SleepFor(MonoDelta::FromMilliseconds(FLAGS_remote_bootstrap_dowload_file_inject_latency_ms));
+    }
 
     if (offset + resp.chunk().data().size() == resp.chunk().total_data_length()) {
       done = true;

@@ -1,16 +1,19 @@
-# Copyright 2013 Cloudera, Inc.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
 set(CLIENT_SRCS
   batcher.cc
@@ -20,7 +23,7 @@ set(CLIENT_SRCS
   error_collector.cc
   error-internal.cc
   meta_cache.cc
-  row_result.cc
+  scan_batch.cc
   scan_predicate.cc
   scanner-internal.cc
   session-internal.cc
@@ -61,7 +64,7 @@ ADD_EXPORTABLE_LIBRARY(kudu_client
   DEPS ${CLIENT_LIBS}
   EXPORTED_SHARED
   EXPORTED_OUTPUT_NAME kudu_client
-  EXPORTED_OUTPUT_DIRECTORY "${BUILD_OUTPUT_ROOT_DIRECTORY}/exported"
+  EXPORTED_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/exported"
   EXPORTED_DEPS ${EXPORTED_CLIENT_LIBS})
 
 ################################################################################
@@ -133,7 +136,7 @@ set_target_properties(kudu_client_exported
 # Generate kudu_export.h.
 generate_export_header(kudu_client_exported
   BASE_NAME kudu
-  EXPORT_FILE_NAME ${CMAKE_SOURCE_DIR}/src/kudu/util/kudu_export.h)
+  EXPORT_FILE_NAME ${CMAKE_BINARY_DIR}/src/kudu/util/kudu_export.h)
 
 # "make install" invocations to generate a directory tree containing the
 # exported client library and all of its headers.
@@ -151,8 +154,10 @@ install(FILES
   callbacks.h
   client.h
   row_result.h
+  scan_batch.h
   scan_predicate.h
   schema.h
+  shared_ptr.h
   stubs.h
   value.h
   write_op.h
@@ -165,7 +170,7 @@ install(FILES
 
 # Headers: util
 install(FILES
-  ../util/kudu_export.h
+  ${CMAKE_CURRENT_BINARY_DIR}/../util/kudu_export.h
   ../util/monotime.h
   ../util/slice.h
   ../util/status.h
@@ -215,16 +220,20 @@ target_link_libraries(kudu_client_test_util
 
 # Tests
 
-if (NOT APPLE)
-  # The OS X system compiler does not support source symbol maps, so the client
-  # leaks internal symbols globally.
-  ADD_KUDU_TEST(client_symbol-test.sh)
+# The OS X system compiler does not support source symbol maps, so the client
+# leaks internal symbols globally.
+#
+# Coverage builds insert gcov-related symbols into the client library. We
+# don't ship such builds, so there's no point in checking symbol visibility.
+if (NOT APPLE AND NOT "${KUDU_GENERATE_COVERAGE}")
+  ADD_KUDU_TEST(client_symbol-test.sh LABELS no_dist_test)
 endif()
 
 # The samples are never built with ASAN/TSAN.
 if(NOT "${KUDU_USE_ASAN}" AND NOT "${KUDU_USE_TSAN}")
-  ADD_KUDU_TEST(client_samples-test.sh RUN_SERIAL true)
+  ADD_KUDU_TEST(client_samples-test.sh RUN_SERIAL true LABELS no_dist_test)
 endif()
 set(KUDU_TEST_LINK_LIBS kudu_client integration-tests ${KUDU_MIN_TEST_LIBS})
 ADD_KUDU_TEST(client-test)
 ADD_KUDU_TEST(client-unittest)
+ADD_KUDU_TEST(predicate-test)

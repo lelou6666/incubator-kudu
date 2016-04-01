@@ -1,22 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <glog/logging.h>
 #include <vector>
-#include <tr1/memory>
 #include <utility>
 
 #include "kudu/benchmarks/tpch/rpc_line_item_dao.h"
@@ -35,8 +36,6 @@
 
 DEFINE_bool(tpch_cache_blocks_when_scanning, true,
             "Whether the scanners should cache the blocks that are read or not");
-
-using std::tr1::shared_ptr;
 
 namespace kudu {
 
@@ -60,9 +59,9 @@ namespace {
 
 class FlushCallback : public KuduStatusCallback {
  public:
-  FlushCallback(shared_ptr<KuduSession> session, Semaphore *sem)
-    : session_(session),
-      sem_(sem) {
+  FlushCallback(client::sp::shared_ptr<KuduSession> session, Semaphore* sem)
+      : session_(std::move(session)),
+        sem_(sem) {
     sem_->Acquire();
   }
 
@@ -85,13 +84,13 @@ class FlushCallback : public KuduStatusCallback {
       if (overflow) {
         LOG(WARNING) << "Error overflow occured";
       }
-      BOOST_FOREACH(KuduError* error, errors) {
+      for (KuduError* error : errors) {
         LOG(WARNING) << "FAILED: " << error->failed_op().ToString();
       }
     }
   }
 
-  shared_ptr<KuduSession> session_;
+  client::sp::shared_ptr<KuduSession> session_;
   Semaphore *sem_;
 };
 
@@ -111,6 +110,7 @@ void RpcLineItemDAO::Init() {
     gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
     CHECK_OK(table_creator->table_name(table_name_)
              .schema(&schema)
+             .num_replicas(1)
              .split_rows(tablet_splits_)
              .Create());
     CHECK_OK(client_->OpenTable(table_name_, &client_table_));
@@ -169,7 +169,7 @@ void RpcLineItemDAO::OpenScanner(const vector<string>& columns,
   ret->scanner_.reset(new KuduScanner(client_table_.get()));
   ret->scanner_->SetCacheBlocks(FLAGS_tpch_cache_blocks_when_scanning);
   CHECK_OK(ret->scanner_->SetProjectedColumns(columns));
-  BOOST_FOREACH(KuduPredicate* pred, preds) {
+  for (KuduPredicate* pred : preds) {
     CHECK_OK(ret->scanner_->AddConjunctPredicate(pred));
   }
   CHECK_OK(ret->scanner_->Open());
@@ -221,18 +221,16 @@ RpcLineItemDAO::~RpcLineItemDAO() {
   FinishWriting();
 }
 
-RpcLineItemDAO::RpcLineItemDAO(const string& master_address,
-                               const string& table_name,
-                               int batch_size,
-                               int mstimeout,
-                               const vector<const KuduPartialRow*>& tablet_splits)
-  : master_address_(master_address),
-    table_name_(table_name),
-    timeout_(MonoDelta::FromMilliseconds(mstimeout)),
-    batch_max_(batch_size),
-    tablet_splits_(tablet_splits),
-    batch_size_(0),
-    semaphore_(1) {
+RpcLineItemDAO::RpcLineItemDAO(string master_address, string table_name,
+                               int batch_size, int mstimeout,
+                               vector<const KuduPartialRow*> tablet_splits)
+    : master_address_(std::move(master_address)),
+      table_name_(std::move(table_name)),
+      timeout_(MonoDelta::FromMilliseconds(mstimeout)),
+      batch_max_(batch_size),
+      tablet_splits_(std::move(tablet_splits)),
+      batch_size_(0),
+      semaphore_(1) {
 }
 
 } // namespace kudu

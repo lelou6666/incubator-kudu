@@ -1,19 +1,21 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 
 #include "kudu/consensus/log_util.h"
 #include "kudu/consensus/quorum_util.h"
@@ -31,8 +33,6 @@ namespace kudu {
 namespace consensus {
 
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
 using strings::Substitute;
 using strings::SubstituteAndAppend;
 
@@ -40,19 +40,18 @@ using strings::SubstituteAndAppend;
 // ReplicaState
 //////////////////////////////////////////////////
 
-ReplicaState::ReplicaState(const ConsensusOptions& options,
-                           const string& peer_uuid,
+ReplicaState::ReplicaState(ConsensusOptions options, string peer_uuid,
                            gscoped_ptr<ConsensusMetadata> cmeta,
                            ReplicaTransactionFactory* txn_factory)
-  : options_(options),
-    peer_uuid_(peer_uuid),
-    cmeta_(cmeta.Pass()),
-    next_index_(0),
-    txn_factory_(txn_factory),
-    last_received_op_id_(MinimumOpId()),
-    last_received_op_id_current_leader_(MinimumOpId()),
-    last_committed_index_(MinimumOpId()),
-    state_(kInitialized) {
+    : options_(std::move(options)),
+      peer_uuid_(std::move(peer_uuid)),
+      cmeta_(std::move(cmeta)),
+      next_index_(0),
+      txn_factory_(txn_factory),
+      last_received_op_id_(MinimumOpId()),
+      last_received_op_id_current_leader_(MinimumOpId()),
+      last_committed_index_(MinimumOpId()),
+      state_(kInitialized) {
   CHECK(cmeta_) << "ConsensusMeta passed as NULL";
 }
 
@@ -373,12 +372,11 @@ Status ReplicaState::CancelPendingTransactions() {
 
     LOG_WITH_PREFIX_UNLOCKED(INFO) << "Trying to abort " << pending_txns_.size()
                                    << " pending transactions.";
-    for (IndexToRoundMap::iterator iter = pending_txns_.begin();
-         iter != pending_txns_.end(); iter++) {
-      const scoped_refptr<ConsensusRound>& round = (*iter).second;
+    for (const auto& txn : pending_txns_) {
+      const scoped_refptr<ConsensusRound>& round = txn.second;
       // We cancel only transactions whose applies have not yet been triggered.
       LOG_WITH_PREFIX_UNLOCKED(INFO) << "Aborting transaction as it isn't in flight: "
-                            << (*iter).second->replicate_msg()->ShortDebugString();
+                            << txn.second->replicate_msg()->ShortDebugString();
       round->NotifyReplicationFinished(Status::Aborted("Transaction aborted"));
     }
   }
@@ -387,7 +385,7 @@ Status ReplicaState::CancelPendingTransactions() {
 
 void ReplicaState::GetUncommittedPendingOperationsUnlocked(
     vector<scoped_refptr<ConsensusRound> >* ops) {
-  BOOST_FOREACH(const IndexToRoundMap::value_type& entry, pending_txns_) {
+  for (const IndexToRoundMap::value_type& entry : pending_txns_) {
     if (entry.first > last_committed_index_.index()) {
       ops->push_back(entry.second);
     }
@@ -402,7 +400,7 @@ Status ReplicaState::AbortOpsAfterUnlocked(int64_t new_preceding_idx) {
   DCHECK_GE(new_preceding_idx, 0);
   OpId new_preceding;
 
-  IndexToRoundMap::iterator iter = pending_txns_.lower_bound(new_preceding_idx);
+  auto iter = pending_txns_.lower_bound(new_preceding_idx);
 
   // Either the new preceding id is in the pendings set or it must be equal to the
   // committed index since we can't truncate already committed operations.
@@ -422,8 +420,21 @@ Status ReplicaState::AbortOpsAfterUnlocked(int64_t new_preceding_idx) {
 
   for (; iter != pending_txns_.end();) {
     const scoped_refptr<ConsensusRound>& round = (*iter).second;
-    LOG_WITH_PREFIX_UNLOCKED(INFO) << "Aborting uncommitted operation due to leader change: "
-                                   << round->replicate_msg()->id();
+    auto op_type = round->replicate_msg()->op_type();
+    LOG_WITH_PREFIX_UNLOCKED(INFO)
+        << "Aborting uncommitted " << OperationType_Name(op_type)
+        << " operation due to leader change: " << round->replicate_msg()->id();
+
+    // When aborting a config-change operation, go back to using the committed
+    // configuration.
+    if (PREDICT_FALSE(op_type == CHANGE_CONFIG_OP)) {
+      CHECK(IsConfigChangePendingUnlocked())
+          << LogPrefixUnlocked() << "Aborting CHANGE_CONFIG_OP but "
+          << "there was no pending config set. Op: "
+          << round->replicate_msg()->ShortDebugString();
+      ClearPendingConfigUnlocked();
+    }
+
     round->NotifyReplicationFinished(Status::Aborted("Transaction aborted by new leader"));
     // Erase the entry from pendings.
     pending_txns_.erase(iter++);
@@ -523,7 +534,8 @@ Status ReplicaState::UpdateMajorityReplicatedUnlocked(const OpId& majority_repli
   }
 
   committed_index->CopyFrom(last_committed_index_);
-  LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Can't advance the committed index across term boundaries"
+  KLOG_EVERY_N_SECS(WARNING, 1) << LogPrefixUnlocked()
+          << "Can't advance the committed index across term boundaries"
           << " until operations from the current term are replicated."
           << " Last committed operation was: " << last_committed_index_.ShortDebugString() << ","
           << " New majority replicated is: " << majority_replicated.ShortDebugString() << ","
@@ -554,9 +566,9 @@ Status ReplicaState::AdvanceCommittedIndexUnlocked(const OpId& committed_index,
   }
 
   // Start at the operation after the last committed one.
-  IndexToRoundMap::iterator iter = pending_txns_.upper_bound(last_committed_index_.index());
+  auto iter = pending_txns_.upper_bound(last_committed_index_.index());
   // Stop at the operation after the last one we must commit.
-  IndexToRoundMap::iterator end_iter = pending_txns_.upper_bound(committed_index.index());
+  auto end_iter = pending_txns_.upper_bound(committed_index.index());
   CHECK(iter != pending_txns_.end());
 
   VLOG_WITH_PREFIX_UNLOCKED(1) << "Last triggered apply was: "

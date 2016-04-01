@@ -1,40 +1,30 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/server/default-path-handlers.h"
 
-#include <sstream>
-#include <string>
-#include <fstream>
-#include <sys/stat.h>
 #include <boost/algorithm/string.hpp>
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
+#include <fstream>
 #include <gperftools/malloc_extension.h>
-#include <tr1/memory>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <sys/stat.h>
 #include <vector>
 
 #include "kudu/gutil/map-util.h"
@@ -64,7 +54,7 @@ TAG_FLAG(web_log_bytes, runtime);
 
 namespace kudu {
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace {
 // Html/Text formatting tags
@@ -154,8 +144,8 @@ static void MemTrackersHandler(const Webserver::WebRequest& req, std::stringstre
 
   vector<shared_ptr<MemTracker> > trackers;
   MemTracker::ListTrackers(&trackers);
-  BOOST_FOREACH(const shared_ptr<MemTracker>& tracker, trackers) {
-    string parent = tracker->parent() == NULL ? "none" : tracker->parent()->id();
+  for (const shared_ptr<MemTracker>& tracker : trackers) {
+    string parent = tracker->parent() == nullptr ? "none" : tracker->parent()->id();
     string limit_str = tracker->limit() == -1 ? "none" :
                        HumanReadableNumBytes::ToString(tracker->limit());
     string current_consumption_str = HumanReadableNumBytes::ToString(tracker->consumption());
@@ -201,7 +191,7 @@ static void WriteMetricsAsJson(const MetricRegistry* const metrics,
 
   JsonWriter writer(output, json_mode);
 
-  if (requested_metrics_param != NULL) {
+  if (requested_metrics_param != nullptr) {
     SplitStringUsing(*requested_metrics_param, ",", &requested_metrics);
   } else {
     // Default to including all metrics.

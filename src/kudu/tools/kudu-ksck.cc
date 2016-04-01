@@ -1,23 +1,26 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Command line tool to run Ksck against a cluster. Defaults to running against a local Master
 // on the default RPC port. It verifies that all the reported Tablet Servers are running and that
 // the tablets are in a consistent state.
 
+#include <gflags/gflags.h>
 #include <glog/logging.h>
-#include <google/gflags.h>
 #include <iostream>
 
 #include "kudu/gutil/strings/split.h"
@@ -36,7 +39,7 @@
 using std::cerr;
 using std::cout;
 using std::endl;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -136,7 +139,7 @@ int main(int argc, char** argv) {
   cerr << "==================" << endl;
   cerr << "Errors:" << endl;
   cerr << "==================" << endl;
-  BOOST_FOREACH(const string& s, error_messages) {
+  for (const string& s : error_messages) {
     cerr << s << endl;
   }
   cerr << endl;

@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Benchmarking tool to run tpch1 concurrently with inserts.
 //
@@ -36,7 +39,6 @@
 //
 // TODO Make the inserts multi-threaded. See Kudu-629 for the technique.
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
 
 #include <glog/logging.h>
 #include <stdlib.h>
@@ -254,7 +256,7 @@ gscoped_ptr<RpcLineItemDAO> TpchRealWorld::GetInittedDAO() {
                                                      FLAGS_tpch_test_client_timeout_msec,
                                                      split_rows));
   dao->Init();
-  return dao.Pass();
+  return std::move(dao);
 }
 
 void TpchRealWorld::LoadLineItemsThread(int i) {
@@ -298,7 +300,7 @@ void TpchRealWorld::RunQueriesThread() {
   while (!stop_threads_.Load()) {
     string log;
     if (FLAGS_tpch_load_data) {
-      log = StringPrintf("querying %ld rows", rows_inserted_.Load());
+      log = StringPrintf("querying %" PRId64 " rows", rows_inserted_.Load());
     } else {
       log = "querying data in cluster";
     }
@@ -367,7 +369,7 @@ Status TpchRealWorld::Run() {
 
   stop_threads_.Store(true);
 
-  BOOST_FOREACH(scoped_refptr<kudu::Thread> thr, threads) {
+  for (scoped_refptr<kudu::Thread> thr : threads) {
     RETURN_NOT_OK(ThreadJoiner(thr.get()).Join());
   }
   return Status::OK();

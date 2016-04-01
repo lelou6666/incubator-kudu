@@ -1,31 +1,31 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
-#include <boost/assign/list_of.hpp>
 
 #include <algorithm>
 #include <map>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/client/client-test-util.h"
-#include "kudu/integration-tests/cluster_verifier.h"
-#include "kudu/integration-tests/external_mini_cluster.h"
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/stl_util.h"
 #include "kudu/gutil/strings/substitute.h"
+#include "kudu/integration-tests/cluster_verifier.h"
+#include "kudu/integration-tests/external_mini_cluster.h"
 #include "kudu/util/random.h"
 #include "kudu/util/random_util.h"
 #include "kudu/util/test_util.h"
@@ -45,10 +45,10 @@ using client::KuduTableAlterer;
 using client::KuduTableCreator;
 using client::KuduValue;
 using client::KuduWriteOperation;
+using client::sp::shared_ptr;
 using std::make_pair;
 using std::map;
 using std::pair;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::SubstituteAndAppend;
 
@@ -105,7 +105,7 @@ struct RowState {
     string ret = "(";
     typedef pair<string, int32_t> entry;
     bool first = true;
-    BOOST_FOREACH(const entry& e, cols) {
+    for (const entry& e : cols) {
       if (!first) {
         ret.append(", ");
       }
@@ -154,7 +154,7 @@ struct TableState {
     int32_t key = data[0].second;
     if (ContainsKey(rows_, key)) return false;
 
-    RowState* r = new RowState;
+    auto r = new RowState;
     r->cols = data;
     rows_[key] = r;
     return true;
@@ -179,17 +179,17 @@ struct TableState {
   void AddColumnWithDefault(const string& name, int32_t def, bool nullable) {
     col_names_.push_back(name);
     col_nullable_.push_back(nullable);
-    BOOST_FOREACH(entry& e, rows_) {
+    for (entry& e : rows_) {
       e.second->cols.push_back(make_pair(name, def));
     }
   }
 
   void DropColumn(const string& name) {
-    std::vector<string>::iterator col_it = std::find(col_names_.begin(), col_names_.end(), name);
+    auto col_it = std::find(col_names_.begin(), col_names_.end(), name);
     int index = col_it - col_names_.begin();
     col_names_.erase(col_it);
     col_nullable_.erase(col_nullable_.begin() + index);
-    BOOST_FOREACH(entry& e, rows_) {
+    for (entry& e : rows_) {
       e.second->cols.erase(e.second->cols.begin() + index);
     }
   }
@@ -206,7 +206,7 @@ struct TableState {
 
   void ToStrings(vector<string>* strs) {
     strs->clear();
-    BOOST_FOREACH(const entry& e, rows_) {
+    for (const entry& e : rows_) {
       strs->push_back(e.second->ToString());
     }
   }
@@ -223,9 +223,8 @@ struct TableState {
 };
 
 struct MirrorTable {
-  explicit MirrorTable(const shared_ptr<KuduClient>& client)
-    : client_(client) {
-  }
+  explicit MirrorTable(shared_ptr<KuduClient> client)
+      : client_(std::move(client)) {}
 
   Status Create() {
     KuduSchema schema;
@@ -367,11 +366,11 @@ struct MirrorTable {
       case UPDATE: op.reset(table->NewUpdate()); break;
       case DELETE: op.reset(table->NewDelete()); break;
     }
-    for (int i = 0; i < data.size(); i++) {
-      if (data[i].second == RowState::kNullValue) {
-        CHECK_OK(op->mutable_row()->SetNull(data[i].first));
+    for (const auto& d : data) {
+      if (d.second == RowState::kNullValue) {
+        CHECK_OK(op->mutable_row()->SetNull(d.first));
       } else {
-        CHECK_OK(op->mutable_row()->SetInt32(data[i].first, data[i].second));
+        CHECK_OK(op->mutable_row()->SetInt32(d.first, d.second));
       }
     }
     RETURN_NOT_OK(session->Apply(op.release()));

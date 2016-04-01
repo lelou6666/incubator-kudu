@@ -1,21 +1,24 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_DELTAFILE_H
 #define KUDU_TABLET_DELTAFILE_H
 
 #include <boost/ptr_container/ptr_deque.hpp>
-#include <tr1/memory>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -96,7 +99,7 @@ class DeltaFileWriter {
 };
 
 class DeltaFileReader : public DeltaStore,
-                        public std::tr1::enable_shared_from_this<DeltaFileReader> {
+                        public std::enable_shared_from_this<DeltaFileReader> {
  public:
   static const char * const kDeltaStatsEntryName;
 
@@ -105,7 +108,7 @@ class DeltaFileReader : public DeltaStore,
   // After this call, the delta reader is safe for use.
   static Status Open(gscoped_ptr<fs::ReadableBlock> file,
                      const BlockId& block_id,
-                     std::tr1::shared_ptr<DeltaFileReader>* reader_out,
+                     std::shared_ptr<DeltaFileReader>* reader_out,
                      DeltaType delta_type);
 
   // Lazily opens a delta file using a previously opened block. A lazy open
@@ -115,7 +118,7 @@ class DeltaFileReader : public DeltaStore,
   // Init() must be called before using the file's stats.
   static Status OpenNoInit(gscoped_ptr<fs::ReadableBlock> file,
                            const BlockId& block_id,
-                           std::tr1::shared_ptr<DeltaFileReader>* reader_out,
+                           std::shared_ptr<DeltaFileReader>* reader_out,
                            DeltaType delta_type);
 
   virtual Status Init() OVERRIDE;
@@ -155,12 +158,11 @@ class DeltaFileReader : public DeltaStore,
 
   DISALLOW_COPY_AND_ASSIGN(DeltaFileReader);
 
-  const std::tr1::shared_ptr<cfile::CFileReader> &cfile_reader() const {
+  const std::shared_ptr<cfile::CFileReader> &cfile_reader() const {
     return reader_;
   }
 
-  DeltaFileReader(const BlockId& block_id,
-                  cfile::CFileReader *cf_reader,
+  DeltaFileReader(BlockId block_id, cfile::CFileReader *cf_reader,
                   DeltaType delta_type);
 
   // Callback used in 'init_once_' to initialize this delta file.
@@ -168,7 +170,7 @@ class DeltaFileReader : public DeltaStore,
 
   Status ReadDeltaStats();
 
-  std::tr1::shared_ptr<cfile::CFileReader> reader_;
+  std::shared_ptr<cfile::CFileReader> reader_;
   gscoped_ptr<DeltaStats> delta_stats_;
 
   const BlockId block_id_;
@@ -248,9 +250,8 @@ class DeltaFileIterator : public DeltaIterator {
 
   // The passed 'projection' and 'dfr' must remain valid for the lifetime
   // of the iterator.
-  DeltaFileIterator(const std::tr1::shared_ptr<DeltaFileReader>& dfr,
-                    const Schema *projection,
-                    const MvccSnapshot &snap,
+  DeltaFileIterator(std::shared_ptr<DeltaFileReader> dfr,
+                    const Schema *projection, MvccSnapshot snap,
                     DeltaType delta_type);
 
   // Determine the row index of the first update in the block currently
@@ -273,7 +274,7 @@ class DeltaFileIterator : public DeltaIterator {
   // Log a FATAL error message about a bad delta.
   void FatalUnexpectedDelta(const DeltaKey &key, const Slice &deltas, const string &msg);
 
-  std::tr1::shared_ptr<DeltaFileReader> dfr_;
+  std::shared_ptr<DeltaFileReader> dfr_;
 
   // Schema used during projection.
   const Schema* projection_;

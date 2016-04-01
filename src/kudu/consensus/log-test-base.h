@@ -1,23 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CONSENSUS_LOG_TEST_BASE_H
 #define KUDU_CONSENSUS_LOG_TEST_BASE_H
 
 #include "kudu/consensus/log.h"
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
@@ -170,7 +171,7 @@ class LogTestBase : public KuduTest {
                                         kTestTablet),
                        &files));
     int count = 0;
-    BOOST_FOREACH(const string& s, files) {
+    for (const string& s : files) {
       if (HasPrefixString(s, FsManager::kWalFileNamePrefix)) {
         count++;
       }
@@ -179,7 +180,7 @@ class LogTestBase : public KuduTest {
   }
 
   void EntriesToIdList(vector<uint32_t>* ids) {
-    BOOST_FOREACH(const LogEntryPB* entry, entries_) {
+    for (const LogEntryPB* entry : entries_) {
       VLOG(2) << "Entry contents: " << entry->DebugString();
       if (entry->type() == REPLICATE) {
         ids->push_back(entry->replicate().id().index());
@@ -218,15 +219,13 @@ class LogTestBase : public KuduTest {
                             bool sync = APPEND_SYNC) {
     if (sync) {
       Synchronizer s;
-      ASSERT_OK(log_->AsyncAppendReplicates(boost::assign::list_of(replicate),
-                                                   s.AsStatusCallback()));
+      ASSERT_OK(log_->AsyncAppendReplicates({ replicate }, s.AsStatusCallback()));
       ASSERT_OK(s.Wait());
     } else {
       // AsyncAppendReplicates does not free the ReplicateMsg on completion, so we
       // need to pass it through to our callback.
-      ASSERT_OK(log_->AsyncAppendReplicates(boost::assign::list_of(replicate),
-                                                   Bind(&LogTestBase::CheckReplicateResult,
-                                                        replicate)));
+      ASSERT_OK(log_->AsyncAppendReplicates({ replicate },
+                                            Bind(&LogTestBase::CheckReplicateResult, replicate)));
     }
   }
 
@@ -265,16 +264,16 @@ class LogTestBase : public KuduTest {
     MemStoreTargetPB* target = mutate->add_mutated_stores();
     target->set_dms_id(dms_id);
     target->set_rs_id(rs_id);
-    AppendCommit(commit.Pass(), sync);
+    AppendCommit(std::move(commit), sync);
   }
 
   void AppendCommit(gscoped_ptr<CommitMsg> commit, bool sync = APPEND_SYNC) {
     if (sync) {
       Synchronizer s;
-      ASSERT_OK(log_->AsyncAppendCommit(commit.Pass(), s.AsStatusCallback()));
+      ASSERT_OK(log_->AsyncAppendCommit(std::move(commit), s.AsStatusCallback()));
       ASSERT_OK(s.Wait());
     } else {
-      ASSERT_OK(log_->AsyncAppendCommit(commit.Pass(),
+      ASSERT_OK(log_->AsyncAppendCommit(std::move(commit),
                                                Bind(&LogTestBase::CheckCommitResult)));
     }
   }
@@ -314,7 +313,7 @@ class LogTestBase : public KuduTest {
 
   string DumpSegmentsToString(const SegmentSequence& segments) {
     string dump;
-    BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments) {
+    for (const scoped_refptr<ReadableLogSegment>& segment : segments) {
       dump.append("------------\n");
       strings::SubstituteAndAppend(&dump, "Segment: $0, Path: $1\n",
                                    segment->header().sequence_number(), segment->path());

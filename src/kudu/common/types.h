@@ -1,25 +1,29 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_COMMON_TYPES_H
 #define KUDU_COMMON_TYPES_H
 
 #include <glog/logging.h>
 
+#include <cmath>
 #include <stdint.h>
 #include <string>
-#include <string.h>
+
 #include "kudu/common/common.pb.h"
 #include "kudu/gutil/mathlimits.h"
 #include "kudu/gutil/strings/escaping.h"
@@ -51,6 +55,8 @@ class TypeInfo {
   const size_t size() const { return size_; }
   void AppendDebugStringForValue(const void *ptr, string *str) const;
   int Compare(const void *lhs, const void *rhs) const;
+  // Returns true if increment(a) is equal to b.
+  bool AreConsecutive(const void* a, const void* b) const;
   void CopyMinValue(void* dst) const {
     memcpy(dst, min_value_, size_);
   }
@@ -70,6 +76,9 @@ class TypeInfo {
 
   typedef int (*CompareFunc)(const void *, const void *);
   const CompareFunc compare_func_;
+
+  typedef bool (*AreConsecutiveFunc)(const void*, const void*);
+  const AreConsecutiveFunc are_consecutive_func_;
 };
 
 template<DataType Type> struct DataTypeTraits {};
@@ -88,6 +97,23 @@ static int GenericCompare(const void *lhs, const void *rhs) {
   }
 }
 
+template<DataType Type>
+static int AreIntegersConsecutive(const void* a, const void* b) {
+  typedef typename DataTypeTraits<Type>::cpp_type CppType;
+  CppType a_int = *reinterpret_cast<const CppType*>(a);
+  CppType b_int = *reinterpret_cast<const CppType*>(b);
+  // Avoid overflow by checking relative position first.
+  return a_int < b_int && a_int + 1 == b_int;
+}
+
+template<DataType Type>
+static int AreFloatsConsecutive(const void* a, const void* b) {
+  typedef typename DataTypeTraits<Type>::cpp_type CppType;
+  CppType a_float = *reinterpret_cast<const CppType*>(a);
+  CppType b_float = *reinterpret_cast<const CppType*>(b);
+  return a_float < b_float && std::nextafter(a_float, b_float) == b_float;
+}
+
 template<>
 struct DataTypeTraits<UINT8> {
   static const DataType physical_type = UINT8;
@@ -100,6 +126,9 @@ struct DataTypeTraits<UINT8> {
   }
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<UINT8>(lhs, rhs);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<UINT8>(a, b);
   }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
@@ -119,6 +148,9 @@ struct DataTypeTraits<INT8> {
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<INT8>(lhs, rhs);
   }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<INT8>(a, b);
+  }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
   }
@@ -136,6 +168,9 @@ struct DataTypeTraits<UINT16> {
   }
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<UINT16>(lhs, rhs);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<UINT16>(a, b);
   }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
@@ -155,6 +190,9 @@ struct DataTypeTraits<INT16> {
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<INT16>(lhs, rhs);
   }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<INT16>(a, b);
+  }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
   }
@@ -172,6 +210,9 @@ struct DataTypeTraits<UINT32> {
   }
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<UINT32>(lhs, rhs);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<UINT32>(a, b);
   }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
@@ -191,6 +232,9 @@ struct DataTypeTraits<INT32> {
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<INT32>(lhs, rhs);
   }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<INT32>(a, b);
+  }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
   }
@@ -208,6 +252,9 @@ struct DataTypeTraits<UINT64> {
   }
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<UINT64>(lhs, rhs);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<UINT64>(a, b);
   }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
@@ -227,6 +274,9 @@ struct DataTypeTraits<INT64> {
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<INT64>(lhs, rhs);
   }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<INT64>(a, b);
+  }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
   }
@@ -244,6 +294,9 @@ struct DataTypeTraits<FLOAT> {
   }
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<FLOAT>(lhs, rhs);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreFloatsConsecutive<FLOAT>(a, b);
   }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
@@ -263,6 +316,9 @@ struct DataTypeTraits<DOUBLE> {
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<DOUBLE>(lhs, rhs);
   }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreFloatsConsecutive<DOUBLE>(a, b);
+  }
   static const cpp_type* min_value() {
     return &MathLimits<cpp_type>::kMin;
   }
@@ -279,11 +335,23 @@ struct DataTypeTraits<BINARY> {
     const Slice *s = reinterpret_cast<const Slice *>(val);
     str->append(strings::CHexEscape(s->ToString()));
   }
-
   static int Compare(const void *lhs, const void *rhs) {
     const Slice *lhs_slice = reinterpret_cast<const Slice *>(lhs);
     const Slice *rhs_slice = reinterpret_cast<const Slice *>(rhs);
     return lhs_slice->compare(*rhs_slice);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    const Slice *a_slice = reinterpret_cast<const Slice *>(a);
+    const Slice *b_slice = reinterpret_cast<const Slice *>(b);
+    size_t a_size = a_slice->size();
+    size_t b_size = b_slice->size();
+
+    // Strings are consecutive if the larger is equal to the lesser with an
+    // additional null byte.
+
+    return a_size + 1 == b_size
+        && (*b_slice)[a_size] == 0
+        && a_slice->compare(Slice(b_slice->data(), a_size)) == 0;
   }
   static const cpp_type* min_value() {
     static Slice s("");
@@ -301,9 +369,11 @@ struct DataTypeTraits<BOOL> {
   static void AppendDebugStringForValue(const void* val, string* str) {
     str->append(*reinterpret_cast<const bool *>(val) ? "true" : "false");
   }
-
   static int Compare(const void *lhs, const void *rhs) {
     return GenericCompare<BOOL>(lhs, rhs);
+  }
+  static bool AreConsecutive(const void* a, const void* b) {
+    return AreIntegersConsecutive<BOOL>(a, b);
   }
   static const cpp_type* min_value() {
     static bool b = false;
@@ -326,6 +396,10 @@ struct DerivedTypeTraits {
     return DataTypeTraits<PhysicalType>::Compare(lhs, rhs);
   }
 
+  static bool AreConsecutive(const void* a, const void* b) {
+    return DataTypeTraits<PhysicalType>::AreConsecutive(a, b);
+  }
+
   static const cpp_type* min_value() {
     return DataTypeTraits<PhysicalType>::min_value();
   }
@@ -342,19 +416,34 @@ struct DataTypeTraits<STRING> : public DerivedTypeTraits<BINARY>{
   }
 };
 
+static const char* kDateFormat = "%Y-%m-%d %H:%M:%S";
+static const char* kDateMicrosAndTzFormat = "%s.%06d GMT";
+
 template<>
 struct DataTypeTraits<TIMESTAMP> : public DerivedTypeTraits<INT64>{
+  static const int US_TO_S = 1000L * 1000L;
+
   static const char* name() {
     return "timestamp";
   }
 
   static void AppendDebugStringForValue(const void* val, string* str) {
-    // TODO KUDU-980 - This only stringifies down to seconds,
-    // we should also print the micros.
-    time_t time = *reinterpret_cast<const int64_t *>(val);
-    char time_as_string[kFastToBufferSize];
-    FastTimeToBuffer(time, &time_as_string[0]);
-    str->append(time_as_string);
+    int64_t timestamp_micros = *reinterpret_cast<const int64_t *>(val);
+    time_t secs_since_epoch = timestamp_micros / US_TO_S;
+    // If the time is negative we need to take into account that any microseconds
+    // will actually decrease the time in seconds by one.
+    int remaining_micros = timestamp_micros % US_TO_S;
+    if (remaining_micros < 0) {
+      secs_since_epoch--;
+      remaining_micros = US_TO_S - std::abs(remaining_micros);
+    }
+    struct tm tm_info;
+    gmtime_r(&secs_since_epoch, &tm_info);
+    char time_up_to_secs[24];
+    strftime(time_up_to_secs, sizeof(time_up_to_secs), kDateFormat, &tm_info);
+    char time[34];
+    snprintf(time, sizeof(time), kDateMicrosAndTzFormat, time_up_to_secs, remaining_micros);
+    str->append(time);
   }
 };
 
@@ -441,7 +530,7 @@ class Variant {
           // set vstr_ to Slice(""). Otherwise, we need to allocate and copy the
           // user's data.
           if (str->size() > 0) {
-            uint8_t *blob = new uint8_t[str->size()];
+            auto blob = new uint8_t[str->size()];
             memcpy(blob, str->data(), str->size());
             vstr_ = Slice(blob, str->size());
           }

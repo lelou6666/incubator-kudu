@@ -1,21 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tserver/remote_bootstrap_service.h"
 
 #include <algorithm>
 #include <boost/date_time/time_duration.hpp>
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -147,7 +149,7 @@ void RemoteBootstrapServiceImpl::BeginRemoteBootstrapSession(
   resp->mutable_superblock()->CopyFrom(session->tablet_superblock());
   resp->mutable_initial_committed_cstate()->CopyFrom(session->initial_committed_cstate());
 
-  BOOST_FOREACH(const scoped_refptr<log::ReadableLogSegment>& segment, session->log_segments()) {
+  for (const scoped_refptr<log::ReadableLogSegment>& segment : session->log_segments()) {
     resp->add_wal_segment_seqnos(segment->header().sequence_number());
   }
 
@@ -255,10 +257,10 @@ void RemoteBootstrapServiceImpl::Shutdown() {
 
   // Destroy all remote bootstrap sessions.
   vector<string> session_ids;
-  BOOST_FOREACH(const MonoTimeMap::value_type& entry, session_expirations_) {
+  for (const MonoTimeMap::value_type& entry : session_expirations_) {
     session_ids.push_back(entry.first);
   }
-  BOOST_FOREACH(const string& session_id, session_ids) {
+  for (const string& session_id : session_ids) {
     LOG(INFO) << "Destroying remote bootstrap session " << session_id << " due to service shutdown";
     RemoteBootstrapErrorPB::Code app_error;
     CHECK_OK(DoEndRemoteBootstrapSessionUnlocked(session_id, &app_error));
@@ -336,14 +338,14 @@ void RemoteBootstrapServiceImpl::EndExpiredSessions() {
     MonoTime now = MonoTime::Now(MonoTime::FINE);
 
     vector<string> expired_session_ids;
-    BOOST_FOREACH(const MonoTimeMap::value_type& entry, session_expirations_) {
+    for (const MonoTimeMap::value_type& entry : session_expirations_) {
       const string& session_id = entry.first;
       const MonoTime& expiration = entry.second;
       if (expiration.ComesBefore(now)) {
         expired_session_ids.push_back(session_id);
       }
     }
-    BOOST_FOREACH(const string& session_id, expired_session_ids) {
+    for (const string& session_id : expired_session_ids) {
       LOG(INFO) << "Remote bootstrap session " << session_id
                 << " has expired. Terminating session.";
       RemoteBootstrapErrorPB::Code app_error;

@@ -1,22 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tserver/scanners.h"
 
 #include <boost/bind.hpp>
 #include <boost/thread/locks.hpp>
 #include <gflags/gflags.h>
-#include <tr1/memory>
 
 #include "kudu/common/iterator.h"
 #include "kudu/common/scan_spec.h"
@@ -33,7 +35,7 @@ DEFINE_int32(scanner_ttl_ms, 60000,
 TAG_FLAG(scanner_ttl_ms, advanced);
 DEFINE_int32(scanner_gc_check_interval_us, 5 * 1000L *1000L, // 5 seconds
              "Number of microseconds in the interval at which we remove expired scanners");
-TAG_FLAG(scanner_ttl_ms, hidden);
+TAG_FLAG(scanner_gc_check_interval_us, hidden);
 
 // TODO: would be better to scope this at a tablet level instead of
 // server level.
@@ -68,7 +70,7 @@ ScannerManager::~ScannerManager() {
     shutdown_ = true;
     shutdown_cv_.notify_all();
   }
-  if (removal_thread_.get() != NULL) {
+  if (removal_thread_.get() != nullptr) {
     CHECK_OK(ThreadJoiner(removal_thread_.get()).Join());
   }
   STLDeleteElements(&scanner_maps_);
@@ -134,7 +136,7 @@ bool ScannerManager::UnregisterScanner(const string& scanner_id) {
 
 size_t ScannerManager::CountActiveScanners() const {
   size_t total = 0;
-  BOOST_FOREACH(const ScannerMapStripe* e, scanner_maps_) {
+  for (const ScannerMapStripe* e : scanner_maps_) {
     boost::shared_lock<boost::shared_mutex> l(e->lock_);
     total += e->scanners_by_id_.size();
   }
@@ -142,9 +144,9 @@ size_t ScannerManager::CountActiveScanners() const {
 }
 
 void ScannerManager::ListScanners(std::vector<SharedScanner>* scanners) {
-  BOOST_FOREACH(const ScannerMapStripe* stripe, scanner_maps_) {
+  for (const ScannerMapStripe* stripe : scanner_maps_) {
     boost::shared_lock<boost::shared_mutex> l(stripe->lock_);
-    BOOST_FOREACH(const ScannerMapEntry& se, stripe->scanners_by_id_) {
+    for (const ScannerMapEntry& se : stripe->scanners_by_id_) {
       scanners->push_back(se.second);
     }
   }
@@ -153,18 +155,18 @@ void ScannerManager::ListScanners(std::vector<SharedScanner>* scanners) {
 void ScannerManager::RemoveExpiredScanners() {
   MonoDelta scanner_ttl = MonoDelta::FromMilliseconds(FLAGS_scanner_ttl_ms);
 
-  BOOST_FOREACH(ScannerMapStripe* stripe, scanner_maps_) {
+  for (ScannerMapStripe* stripe : scanner_maps_) {
     boost::lock_guard<boost::shared_mutex> l(stripe->lock_);
-    for (ScannerMap::iterator it = stripe->scanners_by_id_.begin();
-         it != stripe->scanners_by_id_.end(); ) {
+    for (auto it = stripe->scanners_by_id_.begin(); it != stripe->scanners_by_id_.end();) {
       SharedScanner& scanner = it->second;
       MonoDelta time_live =
           scanner->TimeSinceLastAccess(MonoTime::Now(MonoTime::COARSE));
       if (time_live.MoreThan(scanner_ttl)) {
         // TODO: once we have a metric for the number of scanners expired, make this a
         // VLOG(1).
-        LOG(INFO) << "Expiring scanner id: " << it->first << ", after "
-                  << time_live.ToMicroseconds() << " us of inactivity, which is > TTL ("
+        LOG(INFO) << "Expiring scanner id: " << it->first << ", of tablet " << scanner->tablet_id()
+                  << ", after " << time_live.ToMicroseconds()
+                  << " us of inactivity, which is > TTL ("
                   << scanner_ttl.ToMicroseconds() << " us).";
         it = stripe->scanners_by_id_.erase(it);
         if (metrics_) {
@@ -177,13 +179,11 @@ void ScannerManager::RemoveExpiredScanners() {
   }
 }
 
-Scanner::Scanner(const string& id,
-                 const scoped_refptr<TabletPeer>& tablet_peer,
-                 const string& requestor_string,
-                 ScannerMetrics* metrics)
-    : id_(id),
+Scanner::Scanner(string id, const scoped_refptr<TabletPeer>& tablet_peer,
+                 string requestor_string, ScannerMetrics* metrics)
+    : id_(std::move(id)),
       tablet_peer_(tablet_peer),
-      requestor_string_(requestor_string),
+      requestor_string_(std::move(requestor_string)),
       call_seq_id_(0),
       start_time_(MonoTime::Now(MonoTime::COARSE)),
       metrics_(metrics),

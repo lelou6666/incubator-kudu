@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/deltafile.h"
 
@@ -39,7 +42,7 @@ DEFINE_int32(deltafile_default_block_size, 32*1024,
              "on a per-table basis.");
 TAG_FLAG(deltafile_default_block_size, experimental);
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 
@@ -69,7 +72,7 @@ DeltaFileWriter::DeltaFileWriter(gscoped_ptr<WritableBlock> block)
   opts.write_validx = true;
   opts.storage_attributes.cfile_block_size = FLAGS_deltafile_default_block_size;
   opts.storage_attributes.encoding = PLAIN_ENCODING;
-  writer_.reset(new cfile::CFileWriter(opts, GetTypeInfo(BINARY), false, block.Pass()));
+  writer_.reset(new cfile::CFileWriter(opts, GetTypeInfo(BINARY), false, std::move(block)));
 }
 
 
@@ -120,7 +123,7 @@ Status DeltaFileWriter::AppendDelta<REDO>(
       << last_key_.ToString();
   }
   has_appended_ = true;
-  last_key_= key;
+  last_key_ = key;
 #endif
 
   return DoAppendDelta(key, delta);
@@ -139,7 +142,7 @@ Status DeltaFileWriter::AppendDelta<UNDO>(
       << last_key_.ToString();
   }
   has_appended_ = true;
-  last_key_= key;
+  last_key_ = key;
 #endif
 
   return DoAppendDelta(key, delta);
@@ -168,7 +171,7 @@ Status DeltaFileReader::Open(gscoped_ptr<ReadableBlock> block,
                              shared_ptr<DeltaFileReader>* reader_out,
                              DeltaType delta_type) {
   shared_ptr<DeltaFileReader> df_reader;
-  RETURN_NOT_OK(DeltaFileReader::OpenNoInit(block.Pass(),
+  RETURN_NOT_OK(DeltaFileReader::OpenNoInit(std::move(block),
                                             block_id, &df_reader, delta_type));
   RETURN_NOT_OK(df_reader->Init());
 
@@ -181,7 +184,7 @@ Status DeltaFileReader::OpenNoInit(gscoped_ptr<ReadableBlock> block,
                                    shared_ptr<DeltaFileReader>* reader_out,
                                    DeltaType delta_type) {
   gscoped_ptr<CFileReader> cf_reader;
-  RETURN_NOT_OK(CFileReader::OpenNoInit(block.Pass(),
+  RETURN_NOT_OK(CFileReader::OpenNoInit(std::move(block),
                                         cfile::ReaderOptions(), &cf_reader));
   gscoped_ptr<DeltaFileReader> df_reader(new DeltaFileReader(block_id,
                                                              cf_reader.release(),
@@ -195,13 +198,11 @@ Status DeltaFileReader::OpenNoInit(gscoped_ptr<ReadableBlock> block,
   return Status::OK();
 }
 
-DeltaFileReader::DeltaFileReader(const BlockId& block_id,
-                                 CFileReader *cf_reader,
+DeltaFileReader::DeltaFileReader(BlockId block_id, CFileReader *cf_reader,
                                  DeltaType delta_type)
-  : reader_(cf_reader),
-    block_id_(block_id),
-    delta_type_(delta_type) {
-}
+    : reader_(cf_reader),
+      block_id_(std::move(block_id)),
+      delta_type_(delta_type) {}
 
 Status DeltaFileReader::Init() {
   return init_once_.Init(&DeltaFileReader::InitOnce, this);
@@ -327,21 +328,19 @@ uint64_t DeltaFileReader::EstimateSize() const {
 // DeltaFileIterator
 ////////////////////////////////////////////////////////////
 
-DeltaFileIterator::DeltaFileIterator(const shared_ptr<DeltaFileReader>& dfr,
+DeltaFileIterator::DeltaFileIterator(shared_ptr<DeltaFileReader> dfr,
                                      const Schema *projection,
-                                     const MvccSnapshot &snap,
-                                     DeltaType delta_type) :
-  dfr_(dfr),
-  projection_(projection),
-  mvcc_snap_(snap),
-  prepared_idx_(0xdeadbeef),
-  prepared_count_(0),
-  prepared_(false),
-  exhausted_(false),
-  initted_(false),
-  delta_type_(delta_type),
-  cache_blocks_(CFileReader::CACHE_BLOCK)
-{}
+                                     MvccSnapshot snap, DeltaType delta_type)
+    : dfr_(std::move(dfr)),
+      projection_(projection),
+      mvcc_snap_(std::move(snap)),
+      prepared_idx_(0xdeadbeef),
+      prepared_count_(0),
+      prepared_(false),
+      exhausted_(false),
+      initted_(false),
+      delta_type_(delta_type),
+      cache_blocks_(CFileReader::CACHE_BLOCK) {}
 
 Status DeltaFileIterator::Init(ScanSpec *spec) {
   DCHECK(!initted_) << "Already initted";
@@ -510,7 +509,7 @@ Status DeltaFileIterator::VisitMutations(Visitor *visitor) {
 
   rowid_t start_row = prepared_idx_;
 
-  BOOST_FOREACH(PreparedDeltaBlock &block, delta_blocks_) {
+  for (PreparedDeltaBlock &block : delta_blocks_) {
     BinaryPlainBlockDecoder &bpd = *block.decoder_;
     DVLOG(2) << "Visiting delta block " << block.first_updated_idx_ << "-"
       << block.last_updated_idx_ << " for row block starting at " << start_row;

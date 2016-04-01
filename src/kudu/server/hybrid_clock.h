@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_SERVER_HYBRID_CLOCK_H_
 #define KUDU_SERVER_HYBRID_CLOCK_H_
@@ -177,16 +180,17 @@ class HybridClock : public Clock {
   // For testing purposes only.
   uint64_t mock_clock_max_error_usec_;
 
+#if !defined(__APPLE__)
   uint64_t divisor_;
+#endif
 
   double tolerance_adjustment_;
 
   mutable simple_spinlock lock_;
 
-  // the last clock read/update, in microseconds.
-  uint64_t last_usec_;
-  // the next logical value to be assigned to a timestamp
-  uint64_t next_logical_;
+  // The next timestamp to be generated from this clock, assuming that
+  // the physical clock hasn't advanced beyond the value stored here.
+  uint64_t next_timestamp_;
 
   // How many bits to left shift a microseconds clock read. The remainder
   // of the timestamp will be reserved for logical values.

@@ -1,19 +1,22 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 [[introduction]]
-= Introducing Kudu
+= Introducing Apache Kudu (incubating)
 :author: Kudu Team
 :imagesdir: ./images
 :icons: font
@@ -35,14 +38,16 @@ Kudu's design sets it apart. Some of Kudu's benefits include:
 - Tight integration with Cloudera Impala, making it a good, mutable alternative
   to using HDFS with Parquet.
 - Strong but flexible consistency model, allowing you to choose consistency
-  requirements on a per-request basis, including the option for strict
-  serialized consistency.
+  requirements on a per-request basis, including the option for strict-serializable consistency.
 - Strong performance for running sequential and random workloads simultaneously.
 - Easy to administer and manage with Cloudera Manager.
-- High availability. Tablet Servers and Master use the <<raft>>, which ensures
-  availability even if _f_ nodes failing, given _2f+1_ nodes in the cluster.
-  Reads can be serviced by read-only follower tablets, even in the event of a
-  leader tablet failure.
+- High availability. Tablet Servers and Masters use the <<raft>>, which ensures that
+  as long as more than half the total number of replicas is available, the tablet is available for
+  reads and writes. For instance, if 2 out of 3 replicas or 3 out of 5 replicas are available, the tablet
+  is available.
++
+Reads can be serviced by read-only follower tablets, even in the event of a
+leader tablet failure.
 - Structured data model.
 
 By combining all of these properties, Kudu targets support for families of
@@ -77,17 +82,6 @@ compression can be orders of magnitude more efficient than compressing mixed dat
 types. Combined with the efficiencies of reading data from columns,  compression allows
 you to fulfill your query while reading even fewer blocks from disk. See
 link:schema_design.html#encoding[Data Compression]
-
-[[raft]]
-.Raft Consensus Algorithm
-
-The link:http://raftconsensus.github.io/[Raft consensus algorithm] provides a
-way to elect a _leader_ for a distributed cluster from a pool of potential
-leaders, or _candidates_. Other cluster members are _followers_, who are not
-candidates or leaders, but always look to the current leader for consensus. Kudu
-uses the Raft Consensus Algorithm for the election of masters and leader
-tablets, as well as determining the success or failure of a given write
-operation.
 
 .Table
 
@@ -128,6 +122,16 @@ other candidate masters.
 Tablet servers heartbeat to the master at a set interval (the default is once
 per second).
 
+[[raft]]
+.Raft Consensus Algorithm
+
+Kudu uses the link:https://raft.github.io/[Raft consensus algorithm] as
+a means to guarantee fault-tolerance and consistency, both for regular tablets and for master
+data. Through Raft, multiple replicas of a tablet elect a _leader_, which is responsible
+for accepting and replicating writes to _follower_ replicas. Once a write is persisted
+in a majority of replicas it is acknowledged to the client. A given group of `N` replicas
+(usually 3 or 5) is able to accept writes with at most `(N - 1)/2` faulty replicas.
+
 [[catalog_table]]
 .Catalog Table
 
@@ -150,7 +154,7 @@ substantial reduction in network traffic for heavy write scenarios.
 == Architectural Overview
 
 The following diagram shows a Kudu cluster with three masters and multiple tablet
-servers, each serving multiple tablets. It illustrates how RAFT consensus is used
+servers, each serving multiple tablets. It illustrates how Raft consensus is used
 to allow for both leaders and followers for both the masters and tablet servers. In
 addition, a tablet server can be a leader for some tablets, and a follower for others.
 Leaders are shown in gold, while followers are shown in blue.

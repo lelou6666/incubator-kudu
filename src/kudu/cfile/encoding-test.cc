@@ -1,18 +1,20 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
 #include <boost/utility/binary.hpp>
 #include <glog/logging.h>
@@ -57,7 +59,7 @@ class TestEncoding : public ::testing::Test {
   template<DataType type>
   void CopyOne(BlockDecoder *decoder,
                typename TypeTraits<type>::cpp_type *ret) {
-    ColumnBlock cb(GetTypeInfo(type), NULL, ret, 1, &arena_);
+    ColumnBlock cb(GetTypeInfo(type), nullptr, ret, 1, &arena_);
     ColumnDataView cdv(&cb);
     size_t n = 1;
     ASSERT_OK(decoder->CopyNextValues(&n, &cdv));
@@ -95,7 +97,7 @@ class TestEncoding : public ::testing::Test {
   }
 
   WriterOptions* NewWriterOptions() {
-    WriterOptions* ret = new WriterOptions();
+    auto ret = new WriterOptions();
     ret->storage_attributes.cfile_block_size = 256 * 1024;
     return ret;
   }
@@ -370,7 +372,7 @@ class TestEncoding : public ::testing::Test {
     std::vector<CppType> decoded;
     decoded.resize(size);
 
-    ColumnBlock dst_block(GetTypeInfo(Type), NULL, &decoded[0], size, &arena_);
+    ColumnBlock dst_block(GetTypeInfo(Type), nullptr, &decoded[0], size, &arena_);
     ColumnDataView view(&dst_block);
     int dec_count = 0;
     while (pbd.HasNext()) {
@@ -464,7 +466,7 @@ class TestEncoding : public ::testing::Test {
     std::vector<CppType> decoded;
     decoded.resize(to_insert.size());
 
-    ColumnBlock dst_block(GetTypeInfo(IntType), NULL,
+    ColumnBlock dst_block(GetTypeInfo(IntType), nullptr,
                           &decoded[0],
                           to_insert.size(),
                           &arena_);
@@ -541,7 +543,7 @@ class TestEncoding : public ::testing::Test {
     std::vector<uint8_t> decoded;
     decoded.resize(to_insert.size());
 
-    ColumnBlock dst_block(GetTypeInfo(BOOL), NULL,
+    ColumnBlock dst_block(GetTypeInfo(BOOL), nullptr,
                           &decoded[0],
                           to_insert.size(),
                           &arena_);
@@ -638,7 +640,7 @@ TEST_F(TestEncoding, TestIntBlockEncoder) {
   gscoped_ptr<WriterOptions> opts(NewWriterOptions());
   GVIntBlockBuilder ibb(opts.get());
 
-  int *ints = new int[10000];
+  auto ints = new int[10000];
   for (int i = 0; i < 10000; i++) {
     ints[i] = random();
   }

@@ -1,19 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
+<<<<<<< HEAD
 #include <tr1/memory>
+=======
+#include <memory>
+>>>>>>> refs/remotes/apache/master
 
 #include <glog/logging.h>
 #include <string>
@@ -24,7 +31,7 @@
 #include "kudu/util/status.h"
 
 using strings::Substitute;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace env_util {
@@ -97,7 +104,7 @@ Status ReadFully(RandomAccessFile* file, uint64_t offset, size_t n,
 
 Status CreateDirIfMissing(Env* env, const string& path, bool* created) {
   Status s = env->CreateDir(path);
-  if (created != NULL) {
+  if (created != nullptr) {
     *created = s.ok();
   }
   return s.IsAlreadyPresent() ? Status::OK() : s;
@@ -105,8 +112,11 @@ Status CreateDirIfMissing(Env* env, const string& path, bool* created) {
 
 Status CopyFile(Env* env, const string& source_path, const string& dest_path,
                 WritableFileOptions opts) {
+<<<<<<< HEAD
   opts.mmap_file = false;
 
+=======
+>>>>>>> refs/remotes/apache/master
   gscoped_ptr<SequentialFile> source;
   RETURN_NOT_OK(env->NewSequentialFile(source_path, &source));
   uint64_t size;
@@ -128,13 +138,19 @@ Status CopyFile(Env* env, const string& source_path, const string& dest_path,
     bytes_read += data.size();
   }
   return Status::OK();
+<<<<<<< HEAD
 }
 
 ScopedFileDeleter::ScopedFileDeleter(Env* env, const std::string& path)
   : env_(DCHECK_NOTNULL(env)),
     path_(path),
     should_delete_(true) {
+=======
+>>>>>>> refs/remotes/apache/master
 }
+
+ScopedFileDeleter::ScopedFileDeleter(Env* env, std::string path)
+    : env_(DCHECK_NOTNULL(env)), path_(std::move(path)), should_delete_(true) {}
 
 ScopedFileDeleter::~ScopedFileDeleter() {
   if (should_delete_) {

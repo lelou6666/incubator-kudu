@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This class defines a singleton thread which manages a map of other thread IDs to
 // watch. Before performing some operation which may stall (eg IO) or which we expect
@@ -50,8 +53,8 @@
 #ifndef KUDU_UTIL_KERNEL_STACK_WATCHDOG_H
 #define KUDU_UTIL_KERNEL_STACK_WATCHDOG_H
 
-#include <tr1/unordered_map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/gutil/gscoped_ptr.h"
@@ -171,7 +174,7 @@ class KernelStackWatchdog {
 
   DECLARE_STATIC_THREAD_LOCAL(TLS, tls_);
 
-  typedef std::tr1::unordered_map<pid_t, TLS*> TLSMap;
+  typedef std::unordered_map<pid_t, TLS*> TLSMap;
   TLSMap tls_by_tid_;
 
   // If non-NULL, warnings will be emitted into this vector instead of glog.

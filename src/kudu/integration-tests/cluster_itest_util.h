@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This header file contains generic helper utilities for writing tests against
 // MiniClusters and ExternalMiniClusters. Ideally, the functions will be
@@ -25,13 +28,14 @@
 #define KUDU_INTEGRATION_TESTS_CLUSTER_ITEST_UTIL_H_
 
 #include <boost/optional/optional_fwd.hpp>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/gutil/ref_counted.h"
+#include "kudu/consensus/consensus.pb.h"
 #include "kudu/consensus/consensus.proxy.h"
 #include "kudu/master/master.pb.h"
 #include "kudu/master/master.proxy.h"
@@ -83,10 +87,10 @@ struct TServerDetails {
 };
 
 // tablet_id -> replica map.
-typedef std::tr1::unordered_multimap<std::string, TServerDetails*> TabletReplicaMap;
+typedef std::unordered_multimap<std::string, TServerDetails*> TabletReplicaMap;
 
 // uuid -> tablet server map.
-typedef std::tr1::unordered_map<std::string, TServerDetails*> TabletServerMap;
+typedef std::unordered_map<std::string, TServerDetails*> TabletServerMap;
 
 // Returns possibly the simplest imaginable schema, with a single int key column.
 client::KuduSchema SimpleIntKeyKuduSchema();
@@ -95,18 +99,22 @@ client::KuduSchema SimpleIntKeyKuduSchema();
 // Note: The bare-pointer TServerDetails values must be deleted by the caller!
 // Consider using ValueDeleter (in gutil/stl_util.h) for that.
 Status CreateTabletServerMap(master::MasterServiceProxy* master_proxy,
-                             const std::tr1::shared_ptr<rpc::Messenger>& messenger,
-                             std::tr1::unordered_map<std::string, TServerDetails*>* ts_map);
+                             const std::shared_ptr<rpc::Messenger>& messenger,
+                             std::unordered_map<std::string, TServerDetails*>* ts_map);
 
 // Gets a vector containing the latest OpId for each of the given replicas.
 // Returns a bad Status if any replica cannot be reached.
 Status GetLastOpIdForEachReplica(const std::string& tablet_id,
                                  const std::vector<TServerDetails*>& replicas,
+                                 consensus::OpIdType opid_type,
+                                 const MonoDelta& timeout,
                                  std::vector<consensus::OpId>* op_ids);
 
 // Like the above, but for a single replica.
 Status GetLastOpIdForReplica(const std::string& tablet_id,
                              TServerDetails* replica,
+                             consensus::OpIdType opid_type,
+                             const MonoDelta& timeout,
                              consensus::OpId* op_id);
 
 // Wait until all of the servers have converged on the same log index.
@@ -141,12 +149,18 @@ Status WaitUntilCommittedConfigNumVotersIs(int config_size,
                                            const std::string& tablet_id,
                                            const MonoDelta& timeout);
 
-// Wait until the the opid_index of the committed consensus config on the
+// Wait until the opid_index of the committed consensus config on the
 // specified tablet is 'opid_index'.
-Status WaitUntilCommittedConfigOpidIndexIs(int64_t opid_index,
+Status WaitUntilCommittedConfigOpIdIndexIs(int64_t opid_index,
                                            const TServerDetails* replica,
                                            const std::string& tablet_id,
                                            const MonoDelta& timeout);
+
+// Wait until the last commited OpId has index exactly 'opid_index'.
+Status WaitUntilCommittedOpIdIndexIs(int64_t opid_index,
+                                     TServerDetails* replica,
+                                     const std::string& tablet_id,
+                                     const MonoDelta& timeout);
 
 // Returns:
 // Status::OK() if the replica is alive and leader of the consensus configuration.
@@ -228,13 +242,13 @@ Status ListRunningTabletIds(const TServerDetails* ts,
                             std::vector<std::string>* tablet_ids);
 
 // Get the list of tablet locations for the specified tablet from the Master.
-Status GetTabletLocations(const std::tr1::shared_ptr<master::MasterServiceProxy>& master_proxy,
+Status GetTabletLocations(const std::shared_ptr<master::MasterServiceProxy>& master_proxy,
                           const std::string& tablet_id,
                           const MonoDelta& timeout,
                           master::TabletLocationsPB* tablet_locations);
 
 // Get the list of tablet locations for all tablets in the specified table from the Master.
-Status GetTableLocations(const std::tr1::shared_ptr<master::MasterServiceProxy>& master_proxy,
+Status GetTableLocations(const std::shared_ptr<master::MasterServiceProxy>& master_proxy,
                          const std::string& table_name,
                          const MonoDelta& timeout,
                          master::GetTableLocationsResponsePB* table_locations);
@@ -242,7 +256,7 @@ Status GetTableLocations(const std::tr1::shared_ptr<master::MasterServiceProxy>&
 // Wait for the specified number of voters to be reported to the config on the
 // master for the specified tablet.
 Status WaitForNumVotersInConfigOnMaster(
-    const std::tr1::shared_ptr<master::MasterServiceProxy>& master_proxy,
+    const std::shared_ptr<master::MasterServiceProxy>& master_proxy,
     const std::string& tablet_id,
     int num_voters,
     const MonoDelta& timeout);
@@ -254,6 +268,12 @@ Status WaitForNumTabletsOnTS(
     int count,
     const MonoDelta& timeout,
     std::vector<tserver::ListTabletsResponsePB::StatusAndSchemaPB>* tablets);
+
+// Wait until the specified replica is in the specified state.
+Status WaitUntilTabletInState(TServerDetails* ts,
+                              const std::string& tablet_id,
+                              tablet::TabletStatePB state,
+                              const MonoDelta& timeout);
 
 // Wait until the specified tablet is in RUNNING state.
 Status WaitUntilTabletRunning(TServerDetails* ts,

@@ -1,18 +1,20 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 
 #include "kudu/client/client.h"
 #include "kudu/client/client-test-util.h"
@@ -44,7 +46,7 @@ using client::KuduSession;
 using client::KuduTable;
 using client::KuduTableCreator;
 using client::KuduUpdate;
-using std::tr1::shared_ptr;
+using client::sp::shared_ptr;
 
 const char* const TestWorkload::kDefaultTableName = "test-workload";
 
@@ -135,7 +137,7 @@ void TestWorkload::WriteThread() {
       bool overflow;
       session->GetPendingErrors(&errors, &overflow);
       CHECK(!overflow);
-      BOOST_FOREACH(const client::KuduError* e, errors) {
+      for (const client::KuduError* e : errors) {
         if (timeout_allowed_ && e->status().IsTimedOut()) {
           continue;
         }
@@ -234,7 +236,7 @@ void TestWorkload::Start() {
 void TestWorkload::StopAndJoin() {
   should_run_.Store(false);
   start_latch_.Reset(0);
-  BOOST_FOREACH(scoped_refptr<kudu::Thread> thr, threads_) {
+  for (scoped_refptr<kudu::Thread> thr : threads_) {
    CHECK_OK(ThreadJoiner(thr.get()).Join());
   }
   threads_.clear();

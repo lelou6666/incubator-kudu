@@ -1,22 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/reactor.h"
 
 #include <arpa/inet.h>
 #include <boost/intrusive/list.hpp>
-#include <boost/foreach.hpp>
 #include <ev++.h>
 #include <netinet/in.h>
 #include <stdlib.h>
@@ -45,11 +47,21 @@
 #include "kudu/util/thread.h"
 #include "kudu/util/threadpool.h"
 #include "kudu/util/thread_restrictions.h"
+#include "kudu/util/trace.h"
 #include "kudu/util/status.h"
 #include "kudu/util/net/socket.h"
 
+// When compiling on Mac OS X, use 'kqueue' instead of the default, 'select', for the event loop.
+// Otherwise we run into problems because 'select' can't handle connections when more than 1024
+// file descriptors are open by the process.
+#if defined(__APPLE__)
+static const int kDefaultLibEvFlags = ev::KQUEUE;
+#else
+static const int kDefaultLibEvFlags = ev::AUTO;
+#endif
+
 using std::string;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 DEFINE_int64(rpc_negotiation_timeout_ms, 3000,
              "Timeout for negotiating an RPC connection.");
@@ -69,7 +81,7 @@ Status ShutdownError(bool aborted) {
 } // anonymous namespace
 
 ReactorThread::ReactorThread(Reactor *reactor, const MessengerBuilder &bld)
-  : loop_(0),
+  : loop_(kDefaultLibEvFlags),
     cur_time_(MonoTime::Now(MonoTime::COARSE)),
     last_unused_tcp_scan_(cur_time_),
     reactor_(reactor),
@@ -78,7 +90,7 @@ ReactorThread::ReactorThread(Reactor *reactor, const MessengerBuilder &bld)
 }
 
 Status ReactorThread::Init() {
-  DCHECK(thread_.get() == NULL) << "Already started";
+  DCHECK(thread_.get() == nullptr) << "Already started";
   DVLOG(6) << "Called ReactorThread::Init()";
   // Register to get async notifications in our epoll loop.
   async_.set(loop_);
@@ -110,8 +122,8 @@ void ReactorThread::ShutdownInternal() {
   // Tear down any outbound TCP connections.
   Status service_unavailable = ShutdownError(false);
   VLOG(1) << name() << ": tearing down outbound TCP connections...";
-  for (conn_map_t::iterator c = client_conns_.begin();
-       c != client_conns_.end(); c = client_conns_.begin()) {
+  for (auto c = client_conns_.begin(); c != client_conns_.end();
+       c = client_conns_.begin()) {
     const scoped_refptr<Connection>& conn = (*c).second;
     VLOG(1) << name() << ": shutting down " << conn->ToString();
     conn->Shutdown(service_unavailable);
@@ -120,7 +132,7 @@ void ReactorThread::ShutdownInternal() {
 
   // Tear down any inbound TCP connections.
   VLOG(1) << name() << ": tearing down inbound TCP connections...";
-  BOOST_FOREACH(const scoped_refptr<Connection>& conn, server_conns_) {
+  for (const scoped_refptr<Connection>& conn : server_conns_) {
     VLOG(1) << name() << ": shutting down " << conn->ToString();
     conn->Shutdown(service_unavailable);
   }
@@ -131,7 +143,7 @@ void ReactorThread::ShutdownInternal() {
   // These won't be found in the ReactorThread's list of pending tasks
   // because they've been "run" (that is, they've been scheduled).
   Status aborted = ShutdownError(true); // aborted
-  BOOST_FOREACH(DelayedTask* task, scheduled_tasks_) {
+  for (DelayedTask* task : scheduled_tasks_) {
     task->Abort(aborted); // should also free the task.
   }
   scheduled_tasks_.clear();
@@ -152,10 +164,10 @@ Status ReactorThread::GetMetrics(ReactorMetrics *metrics) {
 Status ReactorThread::DumpRunningRpcs(const DumpRunningRpcsRequestPB& req,
                                       DumpRunningRpcsResponsePB* resp) {
   DCHECK(IsCurrentThread());
-  BOOST_FOREACH(const scoped_refptr<Connection>& conn, server_conns_) {
+  for (const scoped_refptr<Connection>& conn : server_conns_) {
     RETURN_NOT_OK(conn->DumpPB(req, resp->add_inbound_connections()));
   }
-  BOOST_FOREACH(const conn_map_t::value_type& entry, client_conns_) {
+  for (const conn_map_t::value_type& entry : client_conns_) {
     Connection* conn = entry.second.get();
     RETURN_NOT_OK(conn->DumpPB(req, resp->add_outbound_connections()));
   }
@@ -258,8 +270,8 @@ void ReactorThread::RegisterTimeout(ev::timer *watcher) {
 void ReactorThread::ScanIdleConnections() {
   DCHECK(IsCurrentThread());
   // enforce TCP connection timeouts
-  conn_list_t::iterator c = server_conns_.begin();
-  conn_list_t::iterator c_end = server_conns_.end();
+  auto c = server_conns_.begin();
+  auto c_end = server_conns_.end();
   uint64_t timed_out = 0;
   for (; c != c_end; ) {
     const scoped_refptr<Connection>& conn = *c;
@@ -360,8 +372,11 @@ Status ReactorThread::StartConnectionNegotiation(const scoped_refptr<Connection>
     const MonoTime &deadline) {
   DCHECK(IsCurrentThread());
 
+  scoped_refptr<Trace> trace(new Trace());
+  ADOPT_TRACE(trace.get());
+  TRACE("Submitting negotiation task for $0", conn->ToString());
   RETURN_NOT_OK(reactor()->messenger()->negotiation_pool()->SubmitClosure(
-                  Bind(&Negotiation::RunNegotiation, conn, deadline)));
+      Bind(&Negotiation::RunNegotiation, conn, deadline)));
   return Status::OK();
 }
 
@@ -425,11 +440,11 @@ void ReactorThread::DestroyConnection(Connection *conn,
   // Unlink connection from lists.
   if (conn->direction() == Connection::CLIENT) {
     ConnectionId conn_id(conn->remote(), conn->user_credentials());
-    conn_map_t::iterator it = client_conns_.find(conn_id);
+    auto it = client_conns_.find(conn_id);
     CHECK(it != client_conns_.end()) << "Couldn't find connection " << conn->ToString();
     client_conns_.erase(it);
   } else if (conn->direction() == Connection::SERVER) {
-    conn_list_t::iterator it = server_conns_.begin();
+    auto it = server_conns_.begin();
     while (it != server_conns_.end()) {
       if ((*it).get() == conn) {
         server_conns_.erase(it);
@@ -440,15 +455,12 @@ void ReactorThread::DestroyConnection(Connection *conn,
   }
 }
 
-DelayedTask::DelayedTask(const boost::function<void(const Status&)>& func,
+DelayedTask::DelayedTask(boost::function<void(const Status &)> func,
                          MonoDelta when)
-  : func_(func),
-    when_(when),
-    thread_(NULL) {
-}
+    : func_(std::move(func)), when_(std::move(when)), thread_(nullptr) {}
 
 void DelayedTask::Run(ReactorThread* thread) {
-  DCHECK(thread_ == NULL) << "Task has already been scheduled";
+  DCHECK(thread_ == nullptr) << "Task has already been scheduled";
   DCHECK(thread->IsCurrentThread());
 
   // Schedule the task to run later.
@@ -529,10 +541,8 @@ bool Reactor::closing() const {
 // Task to call an arbitrary function within the reactor thread.
 class RunFunctionTask : public ReactorTask {
  public:
-  explicit RunFunctionTask(const boost::function<Status()>& f) :
-    function_(f),
-    latch_(1)
-  {}
+  explicit RunFunctionTask(boost::function<Status()> f)
+      : function_(std::move(f)), latch_(1) {}
 
   virtual void Run(ReactorThread *reactor) OVERRIDE {
     status_ = function_();
@@ -598,7 +608,7 @@ void Reactor::RegisterInboundSocket(Socket *socket, const Sockaddr &remote) {
   VLOG(3) << name_ << ": new inbound connection to " << remote.ToString();
   scoped_refptr<Connection> conn(
     new Connection(&thread_, remote, socket->Release(), Connection::SERVER));
-  RegisterConnectionTask *task = new RegisterConnectionTask(conn);
+  auto task = new RegisterConnectionTask(conn);
   ScheduleReactorTask(task);
 }
 
@@ -606,9 +616,8 @@ void Reactor::RegisterInboundSocket(Socket *socket, const Sockaddr &remote) {
 // to a connection.
 class AssignOutboundCallTask : public ReactorTask {
  public:
-  explicit AssignOutboundCallTask(const shared_ptr<OutboundCall> &call) :
-    call_(call)
-  {}
+  explicit AssignOutboundCallTask(shared_ptr<OutboundCall> call)
+      : call_(std::move(call)) {}
 
   virtual void Run(ReactorThread *reactor) OVERRIDE {
     reactor->AssignOutboundCall(call_);

@@ -1,14 +1,15 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
-
 #ifndef KUDU_UTIL_RANDOM_H_
 #define KUDU_UTIL_RANDOM_H_
 
-#include <stdint.h>
-
 #include <cmath>
+#include <cstdint>
+#include <random>
+#include <vector>
 
+#include "kudu/gutil/map-util.h"
 #include "kudu/util/locks.h"
 
 namespace kudu {
@@ -19,6 +20,9 @@ static const uint32_t M = 2147483647L;   // 2^31-1
 const double kTwoPi = 6.283185307179586476925286;
 
 } // namespace random_internal
+
+template<class R>
+class StdUniformRNG;
 
 // A very simple random number generator.  Not especially good at
 // generating truly random bits, but good enough for our needs in this
@@ -103,20 +107,46 @@ class Random {
     return Uniform(1 << Uniform(max_log + 1));
   }
 
-  // Creates a normal distribution variable using the
-  // Box-Muller transform. See:
-  // http://en.wikipedia.org/wiki/Box%E2%80%93Muller_transform
-  // Adapted from WebRTC source code at:
-  // webrtc/trunk/modules/video_coding/main/test/test_util.cc
-  double Normal(double mean, double std_dev) {
-    double uniform1 = (Next() + 1.0) / (random_internal::M + 1.0);
-    double uniform2 = (Next() + 1.0) / (random_internal::M + 1.0);
-    return (mean + std_dev * sqrt(-2 * ::log(uniform1)) * cos(random_internal::kTwoPi * uniform2));
-  }
+  // Samples a random number from the given normal distribution.
+  double Normal(double mean, double std_dev);
 
   // Return a random number between 0.0 and 1.0 inclusive.
   double NextDoubleFraction() {
     return Next() / static_cast<double>(random_internal::M + 1.0);
+  }
+
+  // Sample 'k' random elements from the collection 'c' into 'result', taking care not to sample any
+  // elements that are already present in 'avoid'.
+  //
+  // In the case that 'c' has fewer than 'k' elements then all elements in 'c' will be selected.
+  //
+  // 'c' should be an iterable STL collection such as a vector, set, or list.
+  // 'avoid' should be an STL-compatible set.
+  //
+  // The results are not stored in a randomized order: the order of results will
+  // match their order in the input collection.
+  template<class Collection, class Set, class T>
+  void ReservoirSample(const Collection& c, int k, const Set& avoid,
+                       std::vector<T>* result) {
+    result->clear();
+    result->reserve(k);
+    int i = 0;
+    for (const T& elem : c) {
+      if (ContainsKey(avoid, elem)) {
+        continue;
+      }
+      i++;
+      // Fill the reservoir if there is available space.
+      if (result->size() < k) {
+        result->push_back(elem);
+        continue;
+      }
+      // Otherwise replace existing elements with decreasing probability.
+      int j = Uniform(i);
+      if (j < k) {
+        (*result)[j] = elem;
+      }
+    }
   }
 };
 
@@ -177,12 +207,43 @@ class ThreadSafeRandom {
     return random_.Normal(mean, std_dev);
   }
 
+  template<class Collection, class Set, class T>
+  void ReservoirSample(const Collection& c, int k, const Set& avoid,
+                       std::vector<T>* result) {
+    lock_guard<simple_spinlock> l(&lock_);
+    random_.ReservoirSample(c, k, avoid, result);
+  }
+
  private:
   simple_spinlock lock_;
   Random random_;
 };
 
+// Wraps either Random or ThreadSafeRandom as a C++ standard library
+// compliant UniformRandomNumberGenerator:
+//   http://en.cppreference.com/w/cpp/concept/UniformRandomNumberGenerator
+template<class R>
+class StdUniformRNG {
+ public:
+  typedef uint32_t result_type;
 
+  explicit StdUniformRNG(R* r) : r_(r) {}
+  uint32_t operator()() {
+    return r_->Next32();
+  }
+  constexpr static uint32_t min() { return 0; }
+  constexpr static uint32_t max() { return (1L << 31) - 1; }
+
+ private:
+  R* r_;
+};
+
+// Defined outside the class to make use of StdUniformRNG above.
+inline double Random::Normal(double mean, double std_dev) {
+  std::normal_distribution<> nd(mean, std_dev);
+  StdUniformRNG<Random> gen(this);
+  return nd(gen);
+}
 
 }  // namespace kudu
 

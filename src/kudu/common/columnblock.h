@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_COMMON_COLUMNBLOCK_H
 #define KUDU_COMMON_COLUMNBLOCK_H
 
@@ -19,11 +22,11 @@
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/util/bitmap.h"
 #include "kudu/util/memory/arena.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
 
-class Arena;
 class ColumnBlockCell;
 
 // A block of data all belonging to a single column.
@@ -124,8 +127,7 @@ class ColumnBlock {
 class ColumnBlockCell {
  public:
   ColumnBlockCell(ColumnBlock block, size_t row_idx)
-    : block_(block), row_idx_(row_idx) {
-  }
+      : block_(std::move(block)), row_idx_(row_idx) {}
 
   const TypeInfo* typeinfo() const { return block_.type_info(); }
   size_t size() const { return block_.type_info()->size(); }
@@ -150,7 +152,7 @@ inline ColumnBlockCell ColumnBlock::cell(size_t idx) const {
 // Used by the reader and block encoders to read/write raw data.
 class ColumnDataView {
  public:
-  ColumnDataView(ColumnBlock *column_block, size_t first_row_idx = 0)
+  explicit ColumnDataView(ColumnBlock *column_block, size_t first_row_idx = 0)
     : column_block_(column_block), row_offset_(0) {
     Advance(first_row_idx);
   }

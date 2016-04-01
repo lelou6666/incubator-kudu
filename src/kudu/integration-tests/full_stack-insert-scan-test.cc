@@ -1,27 +1,27 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
-#include <gflags/gflags.h>
-#include <glog/logging.h>
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <cmath>
 #include <cstdlib>
+#include <gflags/gflags.h>
+#include <glog/logging.h>
+#include <memory>
 #include <signal.h>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/client/callbacks.h"
@@ -71,18 +71,16 @@ DEFINE_bool(perf_fp_flag, false, "Only applicable with --perf_record_scan,"
             " provides argument \"fp\" to the --call-graph flag");
 DECLARE_bool(enable_maintenance_manager);
 
-using boost::assign::list_of;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 
 namespace kudu {
 namespace tablet {
 
-using client::KuduInsert;
 using client::KuduClient;
 using client::KuduClientBuilder;
 using client::KuduColumnSchema;
+using client::KuduInsert;
 using client::KuduRowResult;
 using client::KuduScanner;
 using client::KuduSchema;
@@ -136,6 +134,7 @@ class FullStackInsertScanTest : public KuduTest {
     gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
     ASSERT_OK(table_creator->table_name(kTableName)
              .schema(&schema_)
+             .num_replicas(1)
              .Create());
     ASSERT_OK(client_->OpenTable(kTableName, &reader_table_));
   }
@@ -176,7 +175,7 @@ class FullStackInsertScanTest : public KuduTest {
   // Adds newly generated client's session and table pointers to arrays at id
   void CreateNewClient(int id) {
     ASSERT_OK(client_->OpenTable(kTableName, &tables_[id]));
-    shared_ptr<KuduSession> session = client_->NewSession();
+    client::sp::shared_ptr<KuduSession> session = client_->NewSession();
     session->SetTimeoutMillis(kSessionTimeoutMs);
     ASSERT_OK(session->SetFlushMode(KuduSession::MANUAL_FLUSH));
     sessions_[id] = session;
@@ -210,12 +209,12 @@ class FullStackInsertScanTest : public KuduTest {
   Random random_;
 
   KuduSchema schema_;
-  shared_ptr<MiniCluster> cluster_;
-  shared_ptr<KuduClient> client_;
-  shared_ptr<KuduTable> reader_table_;
+  std::shared_ptr<MiniCluster> cluster_;
+  client::sp::shared_ptr<KuduClient> client_;
+  client::sp::shared_ptr<KuduTable> reader_table_;
   // Concurrent client insertion test variables
-  vector<shared_ptr<KuduSession> > sessions_;
-  vector<shared_ptr<KuduTable> > tables_;
+  vector<client::sp::shared_ptr<KuduSession> > sessions_;
+  vector<client::sp::shared_ptr<KuduTable> > tables_;
 };
 
 namespace {
@@ -300,7 +299,7 @@ void FullStackInsertScanTest::DoConcurrentClientInserts() {
              strings::Substitute("concurrent inserts ($0 rows, $1 threads)",
                                  kNumRows, kNumInsertClients)) {
     start_latch.CountDown();
-    BOOST_FOREACH(const scoped_refptr<Thread>& thread, threads) {
+    for (const scoped_refptr<Thread>& thread : threads) {
       ASSERT_OK(ThreadJoiner(thread.get())
                 .warn_every_ms(15000)
                 .Join());
@@ -317,14 +316,14 @@ void FullStackInsertScanTest::DoTestScans() {
   if (record) record->Start();
 
   NO_FATALS(ScanProjection(vector<string>(), "empty projection, 0 col"));
-  NO_FATALS(ScanProjection(list_of<string>("key"), "key scan, 1 col"));
+  NO_FATALS(ScanProjection({ "key" }, "key scan, 1 col"));
   NO_FATALS(ScanProjection(AllColumnNames(), "full schema scan, 10 col"));
   NO_FATALS(ScanProjection(StringColumnNames(), "String projection, 1 col"));
   NO_FATALS(ScanProjection(Int32ColumnNames(), "Int32 projection, 4 col"));
   NO_FATALS(ScanProjection(Int64ColumnNames(), "Int64 projection, 4 col"));
 
-  NO_FATALS(InterruptNotNull(record.Pass()));
-  NO_FATALS(InterruptNotNull(stat.Pass()));
+  NO_FATALS(InterruptNotNull(std::move(record)));
+  NO_FATALS(InterruptNotNull(std::move(stat)));
 }
 
 void FullStackInsertScanTest::FlushToDisk() {
@@ -334,7 +333,7 @@ void FullStackInsertScanTest::FlushToDisk() {
     tserver::TSTabletManager* tm = ts->tablet_manager();
     vector<scoped_refptr<TabletPeer> > peers;
     tm->GetTabletPeers(&peers);
-    BOOST_FOREACH(const scoped_refptr<TabletPeer>& peer, peers) {
+    for (const scoped_refptr<TabletPeer>& peer : peers) {
       Tablet* tablet = peer->tablet();
       if (!tablet->MemRowSetEmpty()) {
         ASSERT_OK(tablet->Flush());
@@ -350,8 +349,8 @@ void FullStackInsertScanTest::InsertRows(CountDownLatch* start_latch, int id,
 
   start_latch->Wait();
   // Retrieve id's session and table
-  shared_ptr<KuduSession> session = sessions_[id];
-  shared_ptr<KuduTable> table = tables_[id];
+  client::sp::shared_ptr<KuduSession> session = sessions_[id];
+  client::sp::shared_ptr<KuduTable> table = tables_[id];
   // Identify start and end of keyrange id is responsible for
   int64_t start = kNumInsertsPerClient * id;
   int64_t end = start + kNumInsertsPerClient;
@@ -443,23 +442,21 @@ vector<string> FullStackInsertScanTest::AllColumnNames() const {
 }
 
 vector<string> FullStackInsertScanTest::StringColumnNames() const {
-  return list_of<string>("string_val");
+  return { "string_val" };
 }
 
 vector<string> FullStackInsertScanTest::Int32ColumnNames() const {
-  return list_of<string>
-    ("int32_val1")
-    ("int32_val2")
-    ("int32_val3")
-    ("int32_val4");
+  return { "int32_val1",
+           "int32_val2",
+           "int32_val3",
+           "int32_val4" };
 }
 
 vector<string> FullStackInsertScanTest::Int64ColumnNames() const {
-  return list_of<string>
-    ("int64_val1")
-    ("int64_val2")
-    ("int64_val3")
-    ("int64_val4");
+  return { "int64_val1",
+           "int64_val2",
+           "int64_val3",
+           "int64_val4" };
 }
 
 } // namespace tablet

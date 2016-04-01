@@ -1,19 +1,22 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 [[developing]]
-= Developing Applications With Kudu
+= Developing Applications With Apache Kudu (incubating)
 
 :author: Kudu Team
 :imagesdir: ./images
@@ -96,8 +99,8 @@ and using Impala with Kudu, including several `impala-shell` examples.
 == Integration with MapReduce, YARN, and Other Frameworks
 
 Kudu was designed to integrate with MapReduce, YARN, Spark, and other frameworks in
-the Hadoop ecosystem. See link:https://github.com/cloudera/kudu/blob/master/java/kudu-client-tools/src/main/java/org/kududb/mapreduce/tools/RowCounter.java[RowCounter.java]
+the Hadoop ecosystem. See link:https://github.com/apache/incubator-kudu/blob/master/java/kudu-client-tools/src/main/java/org/kududb/mapreduce/tools/RowCounter.java[RowCounter.java]
 and
-link:https://github.com/cloudera/kudu/blob/master/java/kudu-client-tools/src/main/java/org/kududb/mapreduce/tools/ImportCsv.java[ImportCsv.java]
+link:https://github.com/apache/incubator-kudu/blob/master/java/kudu-client-tools/src/main/java/org/kududb/mapreduce/tools/ImportCsv.java[ImportCsv.java]
 for examples which you can model your own integrations on. Stay tuned for more examples
 using YARN and Spark in the future.

@@ -1,20 +1,8 @@
-// Copyright 2015 Cloudera, Inc.
+// This file is derived from cache.cc in the LevelDB project:
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Some portions copyright (c) 2011 The LevelDB Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file. See the AUTHORS file for names of contributors.
+//   Some portions copyright (c) 2011 The LevelDB Authors. All rights reserved.
+//   Use of this source code is governed by a BSD-style license that can be
+//   found in the LICENSE file.
 //
 // ------------------------------------------------------------
 // This file implements a cache based on the NVML library (http://pmem.io),
@@ -32,14 +20,13 @@
 
 #include "kudu/util/nvm_cache.h"
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
+#include <iostream>
 #include <libvmem.h>
+#include <memory>
 #include <stdlib.h>
 #include <string>
-#include <iostream>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/gutil/atomic_refcount.h"
@@ -78,7 +65,7 @@ class MetricEntity;
 
 namespace {
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
 
 typedef simple_spinlock MutexType;
@@ -543,7 +530,7 @@ class ShardedLRUCache : public Cache {
   }
   virtual void SetMetrics(const scoped_refptr<MetricEntity>& entity) OVERRIDE {
     metrics_.reset(new CacheMetrics(entity));
-    BOOST_FOREACH(NvmLRUCache* cache, shards_) {
+    for (NvmLRUCache* cache : shards_) {
       cache->SetMetrics(metrics_.get());
     }
   }
@@ -551,7 +538,7 @@ class ShardedLRUCache : public Cache {
     // Try allocating from each of the shards -- if vmem is tight,
     // this can cause eviction, so we might have better luck in different
     // shards.
-    BOOST_FOREACH(NvmLRUCache* cache, shards_) {
+    for (NvmLRUCache* cache : shards_) {
       uint8_t* ptr = reinterpret_cast<uint8_t*>(cache->AllocateAndRetry(size));
       if (ptr) return ptr;
     }

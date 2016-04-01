@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_LOCKS_H
 #define KUDU_UTIL_LOCKS_H
 
@@ -156,7 +159,7 @@ class percpu_rwlock {
  public:
   percpu_rwlock() {
     errno = 0;
-    n_cpus_ = base::NumCPUs();
+    n_cpus_ = base::MaxCPUIndex() + 1;
     CHECK_EQ(errno, 0) << ErrnoToString(errno);
     CHECK_GT(n_cpus_, 0);
     locks_ = new padded_lock[n_cpus_];
@@ -294,18 +297,28 @@ class unique_lock {
   DISALLOW_COPY_AND_ASSIGN(unique_lock<Mutex>);
 };
 
-// Simpler version of boost::shared_lock. Only supports the basic object
-// lifecycle and defers any error checking to the underlying mutex.
+// Simpler version of boost::shared_lock. Defers error checking to the
+// underlying mutex.
 template <typename Mutex>
 class shared_lock {
  public:
+  shared_lock()
+    : m_(NULL) {
+  }
+
   explicit shared_lock(Mutex* m)
     : m_(DCHECK_NOTNULL(m)) {
     m_->lock_shared();
   }
 
+  void swap(shared_lock& other) {
+    std::swap(m_,other.m_);
+  }
+
   ~shared_lock() {
-    m_->unlock_shared();
+    if (m_ != NULL) {
+      m_->unlock_shared();
+    }
   }
 
  private:

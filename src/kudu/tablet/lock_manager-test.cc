@@ -1,23 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <boost/thread/thread.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include "kudu/gutil/gscoped_ptr.h"
@@ -28,7 +30,7 @@
 #include "kudu/util/thread.h"
 
 using std::vector;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 DEFINE_int32(num_test_threads, 10, "number of stress test client threads");
 DEFINE_int32(num_iterations, 1000, "number of iterations per client thread");
@@ -97,7 +99,7 @@ TEST_F(LockManagerTest, TestMoveLock) {
   ASSERT_TRUE(row_lock.acquired());
 
   // Move it to a new instance.
-  ScopedRowLock moved_lock(row_lock.Pass());
+  ScopedRowLock moved_lock(std::move(row_lock));
   ASSERT_TRUE(moved_lock.acquired());
   ASSERT_FALSE(row_lock.acquired());
 }
@@ -143,10 +145,7 @@ class LmTestThread {
  public:
   LmTestThread(LockManager* manager, vector<const Slice*> keys,
                const vector<LmTestResource*> resources)
-    : manager_(manager),
-      keys_(keys),
-      resources_(resources) {
-  }
+      : manager_(manager), keys_(std::move(keys)), resources_(resources) {}
 
   void Start() {
     CHECK_OK(kudu::Thread::Create("test", "test", &LmTestThread::Run, this, &thread_));
@@ -160,16 +159,16 @@ class LmTestThread {
     for (int i = 0; i < FLAGS_num_iterations; i++) {
       std::vector<shared_ptr<ScopedRowLock> > locks;
       // TODO: We don't have an API for multi-row
-      BOOST_FOREACH(const Slice* key, keys_) {
+      for (const Slice* key : keys_) {
         locks.push_back(shared_ptr<ScopedRowLock>(
                           new ScopedRowLock(manager_, my_txn,
                                             *key, LockManager::LOCK_EXCLUSIVE)));
       }
 
-      BOOST_FOREACH(LmTestResource* r, resources_) {
+      for (LmTestResource* r : resources_) {
         r->acquire(tid_);
       }
-      BOOST_FOREACH(LmTestResource* r, resources_) {
+      for (LmTestResource* r : resources_) {
         r->release(tid_);
       }
     }
@@ -180,7 +179,7 @@ class LmTestThread {
              warn_after_ms(1000).
              warn_every_ms(5000).
              Join());
-    thread_ = NULL;
+    thread_ = nullptr;
   }
 
  private:
@@ -196,11 +195,11 @@ static void runPerformanceTest(const char *test_type,
                                vector<shared_ptr<LmTestThread> > *threads) {
   Stopwatch sw(Stopwatch::ALL_THREADS);
   sw.start();
-  BOOST_FOREACH(const shared_ptr<LmTestThread>& t, *threads) {
+  for (const shared_ptr<LmTestThread>& t : *threads) {
     t->Start();
   }
 
-  BOOST_FOREACH(const shared_ptr<LmTestThread>& t, *threads) {
+  for (const shared_ptr<LmTestThread>& t : *threads) {
     t->Join();
   }
   sw.stop();

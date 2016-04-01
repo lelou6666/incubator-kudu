@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
 #include <boost/thread/locks.hpp>
@@ -131,12 +134,13 @@ const uint64_t HybridClock::kNanosPerSec = 1000000;
 const double HybridClock::kAdjtimexScalingFactor = 65536;
 
 HybridClock::HybridClock()
-    : divisor_(1),
-      tolerance_adjustment_(1),
-      last_usec_(0),
-      next_logical_(0),
-      mock_clock_time_usec_(0),
+    : mock_clock_time_usec_(0),
       mock_clock_max_error_usec_(0),
+#if !defined(__APPLE__)
+      divisor_(1),
+#endif
+      tolerance_adjustment_(1),
+      next_timestamp_(0),
       state_(kNotInitialized) {
 }
 
@@ -225,11 +229,12 @@ void HybridClock::NowWithError(Timestamp* timestamp, uint64_t* max_error_usec) {
         "Status: $0", s.ToString());
   }
 
-  // If the current time surpasses the last update just return it
-  if (PREDICT_TRUE(now_usec > last_usec_)) {
-    last_usec_ = now_usec;
-    next_logical_ = 1;
-    *timestamp = TimestampFromMicroseconds(last_usec_);
+  // If the physical time from the system clock is higher than our last-returned
+  // time, we should use the physical timestamp.
+  uint64_t candidate_phys_timestamp = now_usec << kBitsToShift;
+  if (PREDICT_TRUE(candidate_phys_timestamp > next_timestamp_)) {
+    next_timestamp_ = candidate_phys_timestamp;
+    *timestamp = Timestamp(next_timestamp_++);
     *max_error_usec = error_usec;
     if (PREDICT_FALSE(VLOG_IS_ON(2))) {
       VLOG(2) << "Current clock is higher than the last one. Resetting logical values."
@@ -257,14 +262,12 @@ void HybridClock::NowWithError(Timestamp* timestamp, uint64_t* max_error_usec) {
   // This broadens the error interval for both cases but always returns
   // a correct error interval.
 
-  *max_error_usec = last_usec_ - (now_usec - error_usec);
-  *timestamp = TimestampFromMicrosecondsAndLogicalValue(last_usec_, next_logical_);
+  *max_error_usec = (next_timestamp_ >> kBitsToShift) - (now_usec - error_usec);
+  *timestamp = Timestamp(next_timestamp_++);
   if (PREDICT_FALSE(VLOG_IS_ON(2))) {
     VLOG(2) << "Current clock is lower than the last one. Returning last read and incrementing"
-        " logical values. Physical Value: " << now_usec << " usec Logical Value: "
-        << next_logical_ << " Error: " << *max_error_usec;
+        " logical values. Clock: " + Stringify(*timestamp) << " Error: " << *max_error_usec;
   }
-  next_logical_++;
 }
 
 Status HybridClock::Update(const Timestamp& to_update) {
@@ -273,10 +276,11 @@ Status HybridClock::Update(const Timestamp& to_update) {
   uint64_t error_ignored;
   NowWithError(&now, &error_ignored);
 
+  // If the incoming message is in the past relative to our current
+  // physical clock, there's nothing to do.
   if (PREDICT_TRUE(now.CompareTo(to_update) > 0)) return Status::OK();
 
   uint64_t to_update_physical = GetPhysicalValueMicros(to_update);
-  uint64_t to_update_logical = GetLogicalValue(to_update);
   uint64_t now_physical = GetPhysicalValueMicros(now);
 
   // we won't update our clock if to_update is more than 'max_clock_sync_error_usec'
@@ -286,8 +290,9 @@ Status HybridClock::Update(const Timestamp& to_update) {
     return Status::InvalidArgument("Tried to update clock beyond the max. error.");
   }
 
-  last_usec_ = to_update_physical;
-  next_logical_ = to_update_logical + 1;
+  // Our next timestamp must be higher than the one that we are updating
+  // from.
+  next_timestamp_ = to_update.value() + 1;
   return Status::OK();
 }
 
@@ -365,18 +370,11 @@ bool HybridClock::IsAfter(Timestamp t) {
   uint64_t error_usec;
   CHECK_OK(WalltimeWithError(&now_usec, &error_usec));
 
-  boost::lock_guard<simple_spinlock> lock(lock_);
-  now_usec = std::max(now_usec, last_usec_);
-
   Timestamp now;
-  if (now_usec > last_usec_) {
-    now = TimestampFromMicroseconds(now_usec);
-  } else {
-    // last_usec_ may be in the future if we were updated from a remote
-    // node.
-    now = TimestampFromMicrosecondsAndLogicalValue(last_usec_, next_logical_);
+  {
+    boost::lock_guard<simple_spinlock> lock(lock_);
+    now = Timestamp(std::max(next_timestamp_, now_usec << kBitsToShift));
   }
-
   return t.value() < now.value();
 }
 
@@ -414,7 +412,7 @@ void HybridClock::SetMockClockWallTimeForTests(uint64_t now_usec) {
   CHECK(FLAGS_use_mock_wall_clock);
   boost::lock_guard<simple_spinlock> lock(lock_);
   CHECK_GE(now_usec, mock_clock_time_usec_);
-  mock_clock_time_usec_= now_usec;
+  mock_clock_time_usec_ = now_usec;
 }
 
 void HybridClock::SetMockMaxClockErrorForTests(uint64_t max_error_usec) {

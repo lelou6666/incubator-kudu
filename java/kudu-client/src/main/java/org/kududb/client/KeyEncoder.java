@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import com.google.common.primitives.UnsignedLongs;
@@ -110,24 +113,42 @@ class KeyEncoder {
     final Type type = column.getType();
 
     if (type == Type.STRING || type == Type.BINARY) {
-      addComponent(row.getVarLengthData().get(columnIdx), type, isLast);
+      addBinaryComponent(row.getVarLengthData().get(columnIdx), isLast);
     } else {
       addComponent(row.getRowAlloc(),
                    schema.getColumnOffset(columnIdx),
                    type.getSize(),
-                   type,
-                   isLast);
+                   type);
     }
   }
 
   /**
-   * Encodes a value of the given type into the key.
+   * Encodes a byte buffer into the key.
    * @param value the value to encode
-   * @param type the type of the value to encode
    * @param isLast whether the value is the final component in the key
    */
-  private void addComponent(byte[] value, Type type, boolean isLast) {
-    addComponent(value, 0, value.length, type, isLast);
+  private void addBinaryComponent(ByteBuffer value, boolean isLast) {
+    value.reset();
+
+    // TODO find a way to not have to read byte-by-byte that doesn't require extra copies. This is
+    // especially slow now that users can pass direct byte buffers.
+    while (value.hasRemaining()) {
+      byte currentByte = value.get();
+      buf.write(currentByte);
+      if (!isLast && currentByte == 0x00) {
+        // If we're a middle component of a composite key, we need to add a \x00
+        // at the end in order to separate this component from the next one. However,
+        // if we just did that, we'd have issues where a key that actually has
+        // \x00 in it would compare wrong, so we have to instead add \x00\x00, and
+        // encode \x00 as \x00\x01. -- key_encoder.h
+        buf.write(0x01);
+      }
+    }
+
+    if (!isLast) {
+      buf.write(0x00);
+      buf.write(0x00);
+    }
   }
 
   /**
@@ -136,20 +157,15 @@ class KeyEncoder {
    * @param offset the offset into the {@code value} buffer that the value begins
    * @param len the length of the value
    * @param type the type of the value to encode
-   * @param isLast whether the value is the final component in the key
    */
-  private void addComponent(byte[] value, int offset, int len, Type type, boolean isLast) {
+  private void addComponent(byte[] value, int offset, int len, Type type) {
     switch (type) {
-      case BOOL:
-        assert len == 1;
-        buf.write(value[0]);
-        break;
       case INT8:
       case INT16:
       case INT32:
       case INT64:
       case TIMESTAMP:
-        // picking the first byte because big endian
+        // Picking the first byte because big endian.
         byte lastByte = value[offset + (len - 1)];
         lastByte = Bytes.xorLeftMostBit(lastByte);
         buf.write(lastByte);
@@ -157,27 +173,6 @@ class KeyEncoder {
           for (int i = len - 2; i >= 0; i--) {
             buf.write(value[offset + i]);
           }
-        }
-        break;
-      case BINARY:
-      case STRING:
-        // if this is the last component, just add
-        if (isLast) {
-          buf.write(value, offset, len);
-        } else {
-          // If we're a middle component of a composite key, we need to add a \x00
-          // at the end in order to separate this component from the next one. However,
-          // if we just did that, we'd have issues where a key that actually has
-          // \x00 in it would compare wrong, so we have to instead add \x00\x00, and
-          // encode \x00 as \x00\x01. -- key_encoder.h
-          for (int b = offset; b < (offset + len); b++) {
-            buf.write(value[b]);
-            if (value[b] == 0x00) {
-              buf.write(0x01);
-            }
-          }
-          buf.write(0x00);
-          buf.write(0x00);
         }
         break;
       default:
