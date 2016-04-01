@@ -1,22 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TEST_GRAPH_COLLECTOR_H
 #define KUDU_TEST_GRAPH_COLLECTOR_H
 
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/gutil/macros.h"
@@ -27,10 +30,6 @@
 #include "kudu/util/thread.h"
 
 namespace kudu {
-
-using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
 
 class TimeSeries {
  public:
@@ -54,15 +53,12 @@ class TimeSeries {
 
 class TimeSeriesCollector {
  public:
-  explicit TimeSeriesCollector(const string &scope) :
-    scope_(scope),
-    exit_latch_(0),
-    started_(false)
-  {}
+  explicit TimeSeriesCollector(std::string scope)
+      : scope_(std::move(scope)), exit_latch_(0), started_(false) {}
 
   ~TimeSeriesCollector();
 
-  shared_ptr<TimeSeries> GetTimeSeries(const string &key);
+  std::shared_ptr<TimeSeries> GetTimeSeries(const std::string &key);
   void StartDumperThread();
   void StopDumperThread();
 
@@ -72,9 +68,9 @@ class TimeSeriesCollector {
   void DumperThread();
   void BuildMetricsString(WallTime time_since_start, faststring *dst_buf) const;
 
-  string scope_;
+  std::string scope_;
 
-  typedef unordered_map<string, shared_ptr<TimeSeries> > SeriesMap;
+  typedef std::unordered_map<std::string, std::shared_ptr<TimeSeries> > SeriesMap;
   SeriesMap series_map_;
   mutable Mutex series_lock_;
 

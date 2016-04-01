@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This module is internal to the client and not a public API.
 #ifndef KUDU_CLIENT_META_CACHE_H
@@ -19,8 +22,8 @@
 #include <boost/function.hpp>
 #include <map>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/common/partition.h"
@@ -66,18 +69,18 @@ class RemoteTabletServer {
  public:
   explicit RemoteTabletServer(const master::TSInfoPB& pb);
 
-  // Refresh the RPC proxy to this tablet server. This may involve a DNS
-  // lookup if there is not already an active proxy.
-  void RefreshProxy(KuduClient* client, const StatusCallback& cb,
-                    bool force);
+  // Initialize the RPC proxy to this tablet server, if it is not already set up.
+  // This will involve a DNS lookup if there is not already an active proxy.
+  // If there is an active proxy, does nothing.
+  void InitProxy(KuduClient* client, const StatusCallback& cb);
 
   // Update information from the given pb.
   // Requires that 'pb''s UUID matches this server.
   void Update(const master::TSInfoPB& pb);
 
-  // Return the current proxy to this tablet server. Requires that RefreshProxy
+  // Return the current proxy to this tablet server. Requires that InitProxy()
   // be called prior to this.
-  std::tr1::shared_ptr<tserver::TabletServerServiceProxy> proxy() const;
+  std::shared_ptr<tserver::TabletServerServiceProxy> proxy() const;
 
   std::string ToString() const;
 
@@ -98,7 +101,7 @@ class RemoteTabletServer {
   const std::string uuid_;
 
   std::vector<HostPort> rpc_hostports_;
-  std::tr1::shared_ptr<tserver::TabletServerServiceProxy> proxy_;
+  std::shared_ptr<tserver::TabletServerServiceProxy> proxy_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteTabletServer);
 };
@@ -109,7 +112,7 @@ struct RemoteReplica {
   bool failed;
 };
 
-typedef std::tr1::unordered_map<std::string, RemoteTabletServer*> TabletServerMap;
+typedef std::unordered_map<std::string, RemoteTabletServer*> TabletServerMap;
 
 // The client's view of a given tablet. This object manages lookups of
 // the tablet's locations, status, etc.
@@ -117,16 +120,26 @@ typedef std::tr1::unordered_map<std::string, RemoteTabletServer*> TabletServerMa
 // This class is thread-safe.
 class RemoteTablet : public RefCountedThreadSafe<RemoteTablet> {
  public:
-  RemoteTablet(const std::string& tablet_id,
-               const Partition& partition)
-    : tablet_id_(tablet_id),
-      partition_(partition) {
+  RemoteTablet(std::string tablet_id,
+               Partition partition)
+      : tablet_id_(std::move(tablet_id)),
+        partition_(std::move(partition)),
+        stale_(false) {
   }
 
   // Updates this tablet's replica locations.
   void Refresh(const TabletServerMap& tservers,
                const google::protobuf::RepeatedPtrField
                  <master::TabletLocationsPB_ReplicaPB>& replicas);
+
+  // Mark this tablet as stale, indicating that the cached tablet metadata is
+  // out of date. Staleness is checked by the MetaCache when
+  // LookupTabletByKey() is called to determine whether the fast (non-network)
+  // path can be used or whether the metadata must be refreshed from the Master.
+  void MarkStale();
+
+  // Whether the tablet has been marked as stale.
+  bool stale() const;
 
   // Mark any replicas of this tablet hosted by 'ts' as failed. They will
   // not be returned in future cache lookups.
@@ -170,10 +183,6 @@ class RemoteTablet : public RefCountedThreadSafe<RemoteTablet> {
   // Return stringified representation of the list of replicas for this tablet.
   std::string ReplicasAsString() const;
 
-  // Invalidate the current set of replicas. This will result in a new lookup of the
-  // replicas from the master on the next access.
-  void InvalidateCachedReplicas();
-
  private:
   // Same as ReplicasAsString(), except that the caller must hold lock_.
   std::string ReplicasAsStringUnlocked() const;
@@ -183,6 +192,7 @@ class RemoteTablet : public RefCountedThreadSafe<RemoteTablet> {
 
   // All non-const members are protected by 'lock_'.
   mutable simple_spinlock lock_;
+  bool stale_;
   std::vector<RemoteReplica> replicas_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteTablet);
@@ -212,13 +222,6 @@ class MetaCache : public RefCountedThreadSafe<MetaCache> {
                          const MonoTime& deadline,
                          scoped_refptr<RemoteTablet>* remote_tablet,
                          const StatusCallback& callback);
-
-  // Look up the RemoteTablet object for the given tablet ID. Will die if not
-  // found.
-  //
-  // This is always a local operation (no network round trips or DNS resolution, etc).
-  void LookupTabletByID(const std::string& tablet_id,
-                        scoped_refptr<RemoteTablet>* remote_tablet);
 
   // Mark any replicas of any tablets hosted by 'ts' as failed. They will
   // not be returned in future cache lookups.
@@ -258,25 +261,25 @@ class MetaCache : public RefCountedThreadSafe<MetaCache> {
 
   rw_spinlock lock_;
 
-  // Cache of tablet servers, by UUID.
+  // Cache of Tablet Server locations: TS UUID -> RemoteTabletServer*.
   //
   // Given that the set of tablet servers is bounded by physical machines, we never
   // evict entries from this map until the MetaCache is destructed. So, no need to use
   // shared_ptr, etc.
   //
-  // Protected by lock_
+  // Protected by lock_.
   TabletServerMap ts_cache_;
 
   // Cache of tablets, keyed by table ID, then by start partition key.
   //
   // Protected by lock_.
   typedef std::map<std::string, scoped_refptr<RemoteTablet> > TabletMap;
-  std::tr1::unordered_map<std::string, TabletMap> tablets_by_table_and_key_;
+  std::unordered_map<std::string, TabletMap> tablets_by_table_and_key_;
 
   // Cache of tablets, keyed by tablet ID.
   //
   // Protected by lock_
-  std::tr1::unordered_map<std::string, scoped_refptr<RemoteTablet> > tablets_by_id_;
+  std::unordered_map<std::string, scoped_refptr<RemoteTablet> > tablets_by_id_;
 
   // Prevents master lookup "storms" by delaying master lookups when all
   // permits have been acquired.

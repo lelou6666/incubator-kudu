@@ -1,19 +1,22 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 
 #include "kudu/common/partial_row.h"
@@ -22,6 +25,7 @@
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/test_util.h"
 
+using std::shared_ptr;
 using strings::Substitute;
 using strings::SubstituteAndAppend;
 
@@ -270,12 +274,12 @@ TEST_F(RowOperationsTest, SchemaFuzz) {
 // One case from SchemaFuzz which failed previously.
 TEST_F(RowOperationsTest, TestFuzz1) {
   SchemaBuilder client_schema_builder;
-  client_schema_builder.AddColumn("c1", INT32, false, NULL, NULL);
-  client_schema_builder.AddColumn("c2", STRING, false, NULL, NULL);
+  client_schema_builder.AddColumn("c1", INT32, false, nullptr, nullptr);
+  client_schema_builder.AddColumn("c2", STRING, false, nullptr, nullptr);
   Schema client_schema = client_schema_builder.BuildWithoutIds();
   SchemaBuilder server_schema_builder;
-  server_schema_builder.AddColumn("c1", INT32, false, NULL, NULL);
-  server_schema_builder.AddColumn("c2", STRING, false, NULL, NULL);
+  server_schema_builder.AddColumn("c1", INT32, false, nullptr, nullptr);
+  server_schema_builder.AddColumn("c2", STRING, false, nullptr, nullptr);
   Schema server_schema = server_schema_builder.Build();
   KuduPartialRow row(&client_schema);
   CHECK_OK(row.SetInt32(0, 12345));
@@ -286,12 +290,12 @@ TEST_F(RowOperationsTest, TestFuzz1) {
 // Another case from SchemaFuzz which failed previously.
 TEST_F(RowOperationsTest, TestFuzz2) {
   SchemaBuilder client_schema_builder;
-  client_schema_builder.AddColumn("c1", STRING, true, NULL, NULL);
-  client_schema_builder.AddColumn("c2", STRING, false, NULL, NULL);
+  client_schema_builder.AddColumn("c1", STRING, true, nullptr, nullptr);
+  client_schema_builder.AddColumn("c2", STRING, false, nullptr, nullptr);
   Schema client_schema = client_schema_builder.BuildWithoutIds();
   SchemaBuilder server_schema_builder;
-  server_schema_builder.AddColumn("c1", STRING, true, NULL, NULL);
-  server_schema_builder.AddColumn("c2", STRING, false, NULL, NULL);
+  server_schema_builder.AddColumn("c1", STRING, true, nullptr, nullptr);
+  server_schema_builder.AddColumn("c2", STRING, false, nullptr, nullptr);
   Schema server_schema = server_schema_builder.Build();
   KuduPartialRow row(&client_schema);
   CHECK_OK(row.SetNull(0));
@@ -328,10 +332,9 @@ string TestProjection(RowOperationsPB::Type type,
 // Test decoding partial rows from a client who has a schema which matches
 // the table schema.
 TEST_F(RowOperationsTest, ProjectionTestWholeSchemaSpecified) {
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT32))
-                       (ColumnSchema("string_val", STRING, true)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT32),
+                         ColumnSchema("string_val", STRING, true) },
                        1);
 
   // Test a row missing 'int_val', which is required.
@@ -385,12 +388,10 @@ TEST_F(RowOperationsTest, ProjectionTestWithDefaults) {
 
   // Clients may not have the defaults specified.
   // TODO: evaluate whether this should be true - how "dumb" should clients be?
-  Schema client_schema(
-    boost::assign::list_of
-    (ColumnSchema("key", INT32))
-    (ColumnSchema("nullable_with_default", INT32, true))
-    (ColumnSchema("non_null_with_default", INT32, false)),
-    1);
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("nullable_with_default", INT32, true),
+                         ColumnSchema("non_null_with_default", INT32, false) },
+                       1);
 
   // Specify just the key. The other two columns have defaults, so they'll get filled in.
   {
@@ -438,9 +439,8 @@ TEST_F(RowOperationsTest, ProjectionTestWithClientHavingValidSubset) {
   CHECK_OK(b.AddNullableColumn("new_nullable_int", INT32));
   Schema server_schema = b.Build();
 
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT32)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT32) },
                        1);
 
   // Specify just the key. This is an error because we're missing int_val.
@@ -486,10 +486,9 @@ TEST_F(RowOperationsTest, ProjectionTestWithClientHavingInvalidSubset) {
 
 // Simple Update case where the client and server schemas match.
 TEST_F(RowOperationsTest, TestProjectUpdates) {
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT32))
-                       (ColumnSchema("string_val", STRING, true)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT32),
+                         ColumnSchema("string_val", STRING, true) },
                        1);
   Schema server_schema = SchemaBuilder(client_schema).Build();
 
@@ -523,15 +522,13 @@ TEST_F(RowOperationsTest, TestProjectUpdates) {
 // Client schema has the columns in a different order. Makes
 // sure the name-based projection is functioning.
 TEST_F(RowOperationsTest, TestProjectUpdatesReorderedColumns) {
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("string_val", STRING, true))
-                       (ColumnSchema("int_val", INT32)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("string_val", STRING, true),
+                         ColumnSchema("int_val", INT32) },
                        1);
-  Schema server_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT32))
-                       (ColumnSchema("string_val", STRING, true)),
+  Schema server_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT32),
+                         ColumnSchema("string_val", STRING, true) },
                        1);
   server_schema = SchemaBuilder(server_schema).Build();
 
@@ -545,14 +542,12 @@ TEST_F(RowOperationsTest, TestProjectUpdatesReorderedColumns) {
 // Client schema is missing one of the columns in the server schema.
 // This is OK on an update.
 TEST_F(RowOperationsTest, DISABLED_TestProjectUpdatesSubsetOfColumns) {
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("string_val", STRING, true)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("string_val", STRING, true) },
                        1);
-  Schema server_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT32))
-                       (ColumnSchema("string_val", STRING, true)),
+  Schema server_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT32),
+                         ColumnSchema("string_val", STRING, true) },
                        1);
   server_schema = SchemaBuilder(server_schema).Build();
 
@@ -564,13 +559,11 @@ TEST_F(RowOperationsTest, DISABLED_TestProjectUpdatesSubsetOfColumns) {
 }
 
 TEST_F(RowOperationsTest, TestClientMismatchedType) {
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT8)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT8) },
                        1);
-  Schema server_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("int_val", INT32)),
+  Schema server_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("int_val", INT32) },
                        1);
   server_schema = SchemaBuilder(server_schema).Build();
 
@@ -583,10 +576,9 @@ TEST_F(RowOperationsTest, TestClientMismatchedType) {
 }
 
 TEST_F(RowOperationsTest, TestProjectDeletes) {
-  Schema client_schema(boost::assign::list_of
-                       (ColumnSchema("key", INT32))
-                       (ColumnSchema("key_2", INT32))
-                       (ColumnSchema("string_val", STRING, true)),
+  Schema client_schema({ ColumnSchema("key", INT32),
+                         ColumnSchema("key_2", INT32),
+                         ColumnSchema("string_val", STRING, true) },
                        2);
   Schema server_schema = SchemaBuilder(client_schema).Build();
 
@@ -613,14 +605,14 @@ TEST_F(RowOperationsTest, TestProjectDeletes) {
 }
 
 TEST_F(RowOperationsTest, SplitKeyRoundTrip) {
-  Schema client_schema = Schema(boost::assign::list_of(ColumnSchema("int8", INT8))
-                                                      (ColumnSchema("int16", INT16))
-                                                      (ColumnSchema("int32", INT32))
-                                                      (ColumnSchema("int64", INT64))
-                                                      (ColumnSchema("string", STRING))
-                                                      (ColumnSchema("binary", BINARY))
-                                                      (ColumnSchema("timestamp", TIMESTAMP))
-                                                      (ColumnSchema("missing", STRING)),
+  Schema client_schema = Schema({ ColumnSchema("int8", INT8),
+                                  ColumnSchema("int16", INT16),
+                                  ColumnSchema("int32", INT32),
+                                  ColumnSchema("int64", INT64),
+                                  ColumnSchema("string", STRING),
+                                  ColumnSchema("binary", BINARY),
+                                  ColumnSchema("timestamp", TIMESTAMP),
+                                  ColumnSchema("missing", STRING) },
                                 8);
 
   // Use values at the upper end of the range.
@@ -642,7 +634,7 @@ TEST_F(RowOperationsTest, SplitKeyRoundTrip) {
   RowOperationsPBEncoder(&pb).Add(RowOperationsPB::SPLIT_ROW, row);
 
   Schema schema = client_schema.CopyWithColumnIds();
-  RowOperationsPBDecoder decoder(&pb, &client_schema, &schema, NULL);
+  RowOperationsPBDecoder decoder(&pb, &client_schema, &schema, nullptr);
   vector<DecodedRowOperation> ops;
   ASSERT_OK(decoder.DecodeOperations(&ops));
   ASSERT_EQ(1, ops.size());

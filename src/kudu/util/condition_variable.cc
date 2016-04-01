@@ -27,7 +27,7 @@ ConditionVariable::ConditionVariable(Mutex* user_lock)
   // non-standard pthread_cond_timedwait_monotonic_np. Newer platform
   // versions have pthread_condattr_setclock.
   // Mac can use relative time deadlines.
-#if !defined(OS_MACOSX) && !defined(OS_NACL) && \
+#if !defined(__APPLE__) && !defined(OS_NACL) && \
       !(defined(OS_ANDROID) && defined(HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC))
   pthread_condattr_t attrs;
   rv = pthread_condattr_init(&attrs);
@@ -36,12 +36,24 @@ ConditionVariable::ConditionVariable(Mutex* user_lock)
   rv = pthread_cond_init(&condition_, &attrs);
   pthread_condattr_destroy(&attrs);
 #else
-  rv = pthread_cond_init(&condition_, NULL);
+  rv = pthread_cond_init(&condition_, nullptr);
 #endif
   DCHECK_EQ(0, rv);
 }
 
 ConditionVariable::~ConditionVariable() {
+#if defined(OS_MACOSX)
+  // This hack is necessary to avoid a fatal pthreads subsystem bug in the
+  // Darwin kernel. https://codereview.chromium.org/1323293005/
+  {
+    Mutex lock;
+    MutexLock l(lock);
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1;
+    pthread_cond_timedwait_relative_np(&condition_, lock.native_handle, &ts);
+  }
+#endif
   int rv = pthread_cond_destroy(&condition_);
   DCHECK_EQ(0, rv);
 }
@@ -74,7 +86,7 @@ bool ConditionVariable::TimedWait(const MonoDelta& max_time) const {
   user_lock_->CheckHeldAndUnmark();
 #endif
 
-#if defined(OS_MACOSX)
+#if defined(__APPLE__)
   int rv = pthread_cond_timedwait_relative_np(
       &condition_, user_mutex_, &relative_time);
 #else
@@ -105,7 +117,7 @@ bool ConditionVariable::TimedWait(const MonoDelta& max_time) const {
 #else
   int rv = pthread_cond_timedwait(&condition_, user_mutex_, &absolute_time);
 #endif  // OS_ANDROID && HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC
-#endif  // OS_MACOSX
+#endif  // __APPLE__
 
   DCHECK(rv == 0 || rv == ETIMEDOUT)
     << "unexpected pthread_cond_timedwait return value: " << rv;

@@ -1,24 +1,26 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tool to query tablet server operational data
 
-#include <boost/foreach.hpp>
-#include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <tr1/memory>
+#include <glog/logging.h>
 #include <iostream>
+#include <memory>
 #include <strstream>
 
 #include "kudu/client/row_result.h"
@@ -41,15 +43,15 @@
 #include "kudu/rpc/messenger.h"
 #include "kudu/rpc/rpc_controller.h"
 
-using std::ostringstream;
-using std::string;
-using std::tr1::shared_ptr;
-using std::vector;
 using kudu::client::KuduRowResult;
-using kudu::client::KuduScanner;
+using kudu::HostPort;
+using kudu::rpc::Messenger;
+using kudu::rpc::MessengerBuilder;
+using kudu::rpc::RpcController;
+using kudu::server::ServerStatusPB;
+using kudu::Sockaddr;
+using kudu::client::KuduScanBatch;
 using kudu::tablet::TabletStatusPB;
-using kudu::tserver::TabletServerAdminServiceProxy;
-using kudu::tserver::TabletServerServiceProxy;
 using kudu::tserver::DeleteTabletRequestPB;
 using kudu::tserver::DeleteTabletResponsePB;
 using kudu::tserver::ListTabletsRequestPB;
@@ -57,12 +59,12 @@ using kudu::tserver::ListTabletsResponsePB;
 using kudu::tserver::NewScanRequestPB;
 using kudu::tserver::ScanRequestPB;
 using kudu::tserver::ScanResponsePB;
-using kudu::rpc::Messenger;
-using kudu::rpc::MessengerBuilder;
-using kudu::rpc::RpcController;
-using kudu::server::ServerStatusPB;
-using kudu::HostPort;
-using kudu::Sockaddr;
+using kudu::tserver::TabletServerAdminServiceProxy;
+using kudu::tserver::TabletServerServiceProxy;
+using std::ostringstream;
+using std::shared_ptr;
+using std::string;
+using std::vector;
 
 const char* const kListTabletsOp = "list_tablets";
 const char* const kAreTabletsRunningOp = "are_tablets_running";
@@ -82,9 +84,14 @@ DEFINE_bool(force, false, "If true, allows the set_flag command to set a flag "
 
 // Check that the value of argc matches what's expected, otherwise return a
 // non-zero exit code. Should be used in main().
-#define CHECK_ARGC_OR_RETURN_WITH_USAGE(expected) \
+#define CHECK_ARGC_OR_RETURN_WITH_USAGE(op, expected) \
   do { \
-    if (argc != (expected)) { \
+    const string& _op = (op); \
+    const int _expected = (expected); \
+    if (argc != _expected) { \
+      /* We substract 2 from _expected because we don't want to count argv[0] or [1]. */ \
+      std::cerr << "Invalid number of arguments for " << _op \
+                << ": expected " << (_expected - 2) << " arguments" << std::endl; \
       google::ShowUsageWithFlagsRestrict(argv[0], __FILE__); \
       return 2; \
     } \
@@ -110,7 +117,7 @@ class TsAdminClient {
  public:
   // Creates an admin client for host/port combination e.g.,
   // "localhost" or "127.0.0.1:7050".
-  TsAdminClient(const std::string& addr, int64_t timeout_millis);
+  TsAdminClient(std::string addr, int64_t timeout_millis);
 
   // Initialized the client and connects to the specified tablet
   // server.
@@ -133,8 +140,8 @@ class TsAdminClient {
   // Dump the contents of the given tablet, in key order, to the console.
   Status DumpTablet(const std::string& tablet_id);
 
-  // Delete a replica. The 'reason' string is passed to the tablet server,
-  // used for logging.
+  // Delete a tablet replica from the specified peer.
+  // The 'reason' string is passed to the tablet server, used for logging.
   Status DeleteTablet(const std::string& tablet_id,
                       const std::string& reason);
 
@@ -156,11 +163,10 @@ class TsAdminClient {
   DISALLOW_COPY_AND_ASSIGN(TsAdminClient);
 };
 
-TsAdminClient::TsAdminClient(const string& addr, int64_t timeout_millis)
-    : addr_(addr),
+TsAdminClient::TsAdminClient(string addr, int64_t timeout_millis)
+    : addr_(std::move(addr)),
       timeout_(MonoDelta::FromMilliseconds(timeout_millis)),
-      initted_(false) {
-}
+      initted_(false) {}
 
 Status TsAdminClient::Init() {
   CHECK(!initted_);
@@ -228,7 +234,7 @@ Status TsAdminClient::GetTabletSchema(const std::string& tablet_id,
   VLOG(1) << "Fetching schema for tablet " << tablet_id;
   vector<StatusAndSchemaPB> tablets;
   RETURN_NOT_OK(ListTablets(&tablets));
-  BOOST_FOREACH(const StatusAndSchemaPB& pair, tablets) {
+  for (const StatusAndSchemaPB& pair : tablets) {
     if (pair.tablet_status().tablet_id() == tablet_id) {
       *schema = pair.schema();
       return Status::OK();
@@ -242,6 +248,7 @@ Status TsAdminClient::DumpTablet(const std::string& tablet_id) {
   RETURN_NOT_OK(GetTabletSchema(tablet_id, &schema_pb));
   Schema schema;
   RETURN_NOT_OK(SchemaFromPB(schema_pb, &schema));
+  kudu::client::KuduSchema client_schema(schema);
 
   ScanRequestPB req;
   ScanResponsePB resp;
@@ -267,8 +274,13 @@ Status TsAdminClient::DumpTablet(const std::string& tablet_id) {
     }
 
     rows.clear();
-    RETURN_NOT_OK(KuduScanner::Data::ExtractRows(rpc, &schema, &resp, &rows));
-    BOOST_FOREACH(const KuduRowResult& r, rows) {
+    KuduScanBatch::Data results;
+    RETURN_NOT_OK(results.Reset(&rpc,
+                                &schema,
+                                &client_schema,
+                                make_gscoped_ptr(resp.release_data())));
+    results.ExtractRows(&rows);
+    for (const KuduRowResult& r : rows) {
       std::cout << r.ToString() << std::endl;
     }
 
@@ -286,13 +298,17 @@ Status TsAdminClient::DumpTablet(const std::string& tablet_id) {
   return Status::OK();
 }
 
-Status TsAdminClient::DeleteTablet(const std::string& tablet_id,
-                                   const std::string& reason) {
+Status TsAdminClient::DeleteTablet(const string& tablet_id,
+                                   const string& reason) {
+  ServerStatusPB status_pb;
+  RETURN_NOT_OK(GetStatus(&status_pb));
+
   DeleteTabletRequestPB req;
   DeleteTabletResponsePB resp;
   RpcController rpc;
 
   req.set_tablet_id(tablet_id);
+  req.set_dest_uuid(status_pb.node_instance().permanent_uuid());
   req.set_reason(reason);
   req.set_delete_type(tablet::TABLET_DATA_TOMBSTONED);
   rpc.set_timeout(timeout_);
@@ -333,7 +349,7 @@ namespace {
 void SetUsage(const char* argv0) {
   ostringstream str;
 
-  str << argv0 << " [-tserver_address=<addr>] <operation> <flags>\n"
+  str << argv0 << " [--server_address=<addr>] <operation> <flags>\n"
       << "<operation> must be one of:\n"
       << "  " << kListTabletsOp << "\n"
       << "  " << kAreTabletsRunningOp << "\n"
@@ -372,12 +388,12 @@ static int TsCliMain(int argc, char** argv) {
 
   // TODO add other operations here...
   if (op == kListTabletsOp) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(2);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 2);
 
     vector<StatusAndSchemaPB> tablets;
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.ListTablets(&tablets),
                                     "Unable to list tablets on " + addr);
-    BOOST_FOREACH(const StatusAndSchemaPB& status_and_schema, tablets) {
+    for (const StatusAndSchemaPB& status_and_schema : tablets) {
       Schema schema;
       RETURN_NOT_OK_PREPEND_FROM_MAIN(SchemaFromPB(status_and_schema.schema(), &schema),
                                       "Unable to deserialize schema from " + addr);
@@ -405,13 +421,13 @@ static int TsCliMain(int argc, char** argv) {
       std::cout << "Schema: " << schema.ToString() << std::endl;
     }
   } else if (op == kAreTabletsRunningOp) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(2);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 2);
 
     vector<StatusAndSchemaPB> tablets;
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.ListTablets(&tablets),
                                     "Unable to list tablets on " + addr);
     bool all_running = true;
-    BOOST_FOREACH(const StatusAndSchemaPB& status_and_schema, tablets) {
+    for (const StatusAndSchemaPB& status_and_schema : tablets) {
       TabletStatusPB ts = status_and_schema.tablet_status();
       if (ts.state() != tablet::RUNNING) {
         std::cout << "Tablet id: " << ts.tablet_id() << " is "
@@ -427,19 +443,19 @@ static int TsCliMain(int argc, char** argv) {
       return 1;
     }
   } else if (op == kSetFlagOp) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(4);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 4);
 
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.SetFlag(argv[2], argv[3], FLAGS_force),
                                     "Unable to set flag");
 
   } else if (op == kDumpTabletOp) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(3);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 3);
 
     string tablet_id = argv[2];
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.DumpTablet(tablet_id),
                                     "Unable to dump tablet");
   } else if (op == kDeleteTabletOp) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(4);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 4);
 
     string tablet_id = argv[2];
     string reason = argv[3];
@@ -447,14 +463,14 @@ static int TsCliMain(int argc, char** argv) {
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.DeleteTablet(tablet_id, reason),
                                     "Unable to delete tablet");
   } else if (op == kCurrentTimestamp) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(2);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 2);
 
     uint64_t timestamp;
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.CurrentTimestamp(&timestamp),
                                     "Unable to get timestamp");
     std::cout << timestamp << std::endl;
   } else if (op == kStatus) {
-    CHECK_ARGC_OR_RETURN_WITH_USAGE(2);
+    CHECK_ARGC_OR_RETURN_WITH_USAGE(op, 2);
 
     ServerStatusPB status;
     RETURN_NOT_OK_PREPEND_FROM_MAIN(client.GetStatus(&status),

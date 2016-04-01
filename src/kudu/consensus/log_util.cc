@@ -1,21 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log_util.h"
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <iostream>
 #include <limits>
 #include <utility>
@@ -28,11 +30,11 @@
 #include "kudu/fs/fs_manager.h"
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/stl_util.h"
+#include "kudu/gutil/strings/split.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/strings/util.h"
-#include "kudu/gutil/strings/split.h"
-#include "kudu/util/coding.h"
 #include "kudu/util/coding-inl.h"
+#include "kudu/util/coding.h"
 #include "kudu/util/crc.h"
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/env_util.h"
@@ -61,7 +63,7 @@ namespace log {
 using consensus::OpId;
 using env_util::ReadFully;
 using std::vector;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
 using strings::SubstituteAndAppend;
 
@@ -108,15 +110,14 @@ Status ReadableLogSegment::Open(Env* env,
   return Status::OK();
 }
 
-ReadableLogSegment::ReadableLogSegment(const std::string &path,
-                                       const shared_ptr<RandomAccessFile>& readable_file)
-  : path_(path),
-    file_size_(0),
-    readable_to_offset_(0),
-    readable_file_(readable_file),
-    is_initialized_(false),
-    footer_was_rebuilt_(false) {
-}
+ReadableLogSegment::ReadableLogSegment(
+    std::string path, shared_ptr<RandomAccessFile> readable_file)
+    : path_(std::move(path)),
+      file_size_(0),
+      readable_to_offset_(0),
+      readable_file_(std::move(readable_file)),
+      is_initialized_(false),
+      footer_was_rebuilt_(false) {}
 
 Status ReadableLogSegment::Init(const LogSegmentHeaderPB& header,
                                 const LogSegmentFooterPB& footer,
@@ -195,7 +196,7 @@ Status ReadableLogSegment::RebuildFooterByScanning() {
   footer_.set_num_entries(entries.size());
 
   // Rebuild the min/max replicate index (by scanning)
-  BOOST_FOREACH(const LogEntryPB* entry, entries) {
+  for (const LogEntryPB* entry : entries) {
     if (entry->has_replicate()) {
       int64_t index = entry->replicate().id().index();
       // TODO: common code with Log::UpdateFooterForBatch
@@ -428,7 +429,7 @@ Status ReadableLogSegment::ReadEntries(vector<LogEntryPB*>* entries,
       file_size() - footer_.ByteSize() - kLogSegmentFooterMagicAndFooterLength :
       readable_to_offset;
 
-  if (end_offset != NULL) {
+  if (end_offset != nullptr) {
     *end_offset = offset;
   }
 
@@ -496,8 +497,8 @@ Status ReadableLogSegment::ReadEntries(vector<LogEntryPB*>* entries,
     }
     current_batch->mutable_entry()->ExtractSubrange(0,
                                                     current_batch->entry_size(),
-                                                    NULL);
-    if (end_offset != NULL) {
+                                                    nullptr);
+    if (end_offset != nullptr) {
       *end_offset = offset;
     }
   }
@@ -565,7 +566,7 @@ Status ReadableLogSegment::MakeCorruptionStatus(int batch_number, int64_t batch_
                       batch_number, batch_offset, path_);
   err.append("Prior batch offsets:");
   std::sort(recent_offsets->begin(), recent_offsets->end());
-  BOOST_FOREACH(int64_t offset, *recent_offsets) {
+  for (int64_t offset : *recent_offsets) {
     if (offset >= 0) {
       SubstituteAndAppend(&err, " $0", offset);
     }
@@ -683,16 +684,13 @@ Status ReadableLogSegment::ReadEntryBatch(int64_t *offset,
   return Status::OK();
 }
 
-
-WritableLogSegment::WritableLogSegment(
-    const string &path,
-    const shared_ptr<WritableFile>& writable_file)
-: path_(path),
-  writable_file_(writable_file),
-  is_header_written_(false),
-  is_footer_written_(false),
-  written_offset_(0) {
-}
+WritableLogSegment::WritableLogSegment(string path,
+                                       shared_ptr<WritableFile> writable_file)
+    : path_(std::move(path)),
+      writable_file_(std::move(writable_file)),
+      is_header_written_(false),
+      is_footer_written_(false),
+      written_offset_(0) {}
 
 Status WritableLogSegment::WriteHeaderAndOpen(const LogSegmentHeaderPB& new_header) {
   DCHECK(!IsHeaderWritten()) << "Can only call WriteHeader() once";
@@ -779,11 +777,10 @@ void CreateBatchFromAllocatedOperations(const vector<consensus::ReplicateRefPtr>
                                         gscoped_ptr<LogEntryBatchPB>* batch) {
   gscoped_ptr<LogEntryBatchPB> entry_batch(new LogEntryBatchPB);
   entry_batch->mutable_entry()->Reserve(msgs.size());
-  for (size_t i = 0; i < msgs.size(); i++) {
-    consensus::ReplicateMsg* msg = msgs[i]->get();
+  for (const auto& msg : msgs) {
     LogEntryPB* entry_pb = entry_batch->add_entry();
     entry_pb->set_type(log::REPLICATE);
-    entry_pb->set_allocated_replicate(msg);
+    entry_pb->set_allocated_replicate(msg->get());
   }
   batch->reset(entry_batch.release());
 }

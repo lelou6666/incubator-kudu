@@ -1,16 +1,21 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+#include "kudu/consensus/consensus.proxy.h"
 
 #include <algorithm>
 #include <boost/bind.hpp>
@@ -22,7 +27,6 @@
 
 #include "kudu/common/wire_protocol.h"
 #include "kudu/consensus/consensus_peers.h"
-#include "kudu/consensus/consensus.proxy.h"
 #include "kudu/consensus/consensus_queue.h"
 #include "kudu/consensus/log.h"
 #include "kudu/gutil/map-util.h"
@@ -64,10 +68,11 @@ namespace consensus {
 
 using log::Log;
 using log::LogEntryBatch;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using rpc::Messenger;
 using rpc::RpcController;
 using strings::Substitute;
+using tserver::TabletServerErrorPB;
 
 Status Peer::NewRemotePeer(const RaftPeerPB& peer_pb,
                            const string& tablet_id,
@@ -80,7 +85,7 @@ Status Peer::NewRemotePeer(const RaftPeerPB& peer_pb,
   gscoped_ptr<Peer> new_peer(new Peer(peer_pb,
                                       tablet_id,
                                       leader_uuid,
-                                      proxy.Pass(),
+                                      std::move(proxy),
                                       queue,
                                       thread_pool));
   RETURN_NOT_OK(new_peer->Init());
@@ -88,25 +93,22 @@ Status Peer::NewRemotePeer(const RaftPeerPB& peer_pb,
   return Status::OK();
 }
 
-Peer::Peer(const RaftPeerPB& peer_pb,
-           const string& tablet_id,
-           const string& leader_uuid,
-           gscoped_ptr<PeerProxy> proxy,
-           PeerMessageQueue* queue,
+Peer::Peer(const RaftPeerPB& peer_pb, string tablet_id, string leader_uuid,
+           gscoped_ptr<PeerProxy> proxy, PeerMessageQueue* queue,
            ThreadPool* thread_pool)
-    : tablet_id_(tablet_id),
-      leader_uuid_(leader_uuid),
+    : tablet_id_(std::move(tablet_id)),
+      leader_uuid_(std::move(leader_uuid)),
       peer_pb_(peer_pb),
-      proxy_(proxy.Pass()),
+      proxy_(std::move(proxy)),
       queue_(queue),
       failed_attempts_(0),
       sem_(1),
-      heartbeater_(peer_pb.permanent_uuid(),
-                   MonoDelta::FromMilliseconds(FLAGS_raft_heartbeat_interval_ms),
-                   boost::bind(&Peer::SignalRequest, this, true)),
+      heartbeater_(
+          peer_pb.permanent_uuid(),
+          MonoDelta::FromMilliseconds(FLAGS_raft_heartbeat_interval_ms),
+          boost::bind(&Peer::SignalRequest, this, true)),
       thread_pool_(thread_pool),
-      state_(kPeerCreated) {
-}
+      state_(kPeerCreated) {}
 
 void Peer::SetTermForTest(int term) {
   response_.set_responder_term(term);
@@ -243,8 +245,10 @@ void Peer::ProcessResponse() {
 
   // Pass through errors we can respond to, like not found, since in that case
   // we will need to remotely bootstrap. TODO: Handle DELETED response once implemented.
-  if (response_.has_error() &&
-      response_.error().code() != tserver::TabletServerErrorPB::TABLET_NOT_FOUND) {
+  if ((response_.has_error() &&
+      response_.error().code() != TabletServerErrorPB::TABLET_NOT_FOUND) ||
+      (response_.status().has_error() &&
+          response_.status().error().code() == consensus::ConsensusErrorPB::CANNOT_PREPARE)) {
     // Again, let the queue know that the remote is still responsive, since we
     // will not be sending this error response through to the queue.
     queue_->NotifyPeerIsResponsiveDespiteError(peer_pb_.permanent_uuid());
@@ -298,19 +302,32 @@ Status Peer::SendRemoteBootstrapRequest() {
 }
 
 void Peer::ProcessRemoteBootstrapResponse() {
-  // We treat remote bootstrap as fire-and-forget.
-  if (rb_response_.has_error()) {
-    LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Unable to begin remote bootstrap on peer: "
-                                      << rb_response_.ShortDebugString();
+  if (controller_.status().ok() && rb_response_.has_error()) {
+    // ALREADY_INPROGRESS is expected, so we do not log this error.
+    if (rb_response_.error().code() ==
+        TabletServerErrorPB::TabletServerErrorPB::ALREADY_INPROGRESS) {
+      queue_->NotifyPeerIsResponsiveDespiteError(peer_pb_.permanent_uuid());
+    } else {
+      LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Unable to begin remote bootstrap on peer: "
+                                        << rb_response_.ShortDebugString();
+    }
   }
   sem_.Release();
 }
 
 void Peer::ProcessResponseError(const Status& status) {
   failed_attempts_++;
+  string resp_err_info;
+  if (response_.has_error()) {
+    resp_err_info = Substitute(" Error code: $0 ($1).",
+                               TabletServerErrorPB::Code_Name(response_.error().code()),
+                               response_.error().code());
+  }
   LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Couldn't send request to peer " << peer_pb_.permanent_uuid()
-      << " for tablet " << tablet_id_
-      << " Status: " << status.ToString() << ". Retrying in the next heartbeat period."
+      << " for tablet " << tablet_id_ << "."
+      << resp_err_info
+      << " Status: " << status.ToString() << "."
+      << " Retrying in the next heartbeat period."
       << " Already tried " << failed_attempts_ << " times.";
   sem_.Release();
 }
@@ -339,7 +356,7 @@ void Peer::Close() {
   boost::lock_guard<Semaphore> l(sem_);
   queue_->UntrackPeer(peer_pb_.permanent_uuid());
   // We don't own the ops (the queue does).
-  request_.mutable_ops()->ExtractSubrange(0, request_.ops_size(), NULL);
+  request_.mutable_ops()->ExtractSubrange(0, request_.ops_size(), nullptr);
 }
 
 Peer::~Peer() {
@@ -349,8 +366,8 @@ Peer::~Peer() {
 
 RpcPeerProxy::RpcPeerProxy(gscoped_ptr<HostPort> hostport,
                            gscoped_ptr<ConsensusServiceProxy> consensus_proxy)
-    : hostport_(hostport.Pass()),
-      consensus_proxy_(consensus_proxy.Pass()) {
+    : hostport_(std::move(hostport)),
+      consensus_proxy_(std::move(consensus_proxy)) {
 }
 
 void RpcPeerProxy::UpdateAsync(const ConsensusRequestPB* request,
@@ -395,9 +412,8 @@ Status CreateConsensusServiceProxyForHost(const shared_ptr<Messenger>& messenger
 
 } // anonymous namespace
 
-RpcPeerProxyFactory::RpcPeerProxyFactory(const shared_ptr<Messenger>& messenger)
-    : messenger_(messenger) {
-}
+RpcPeerProxyFactory::RpcPeerProxyFactory(shared_ptr<Messenger> messenger)
+    : messenger_(std::move(messenger)) {}
 
 Status RpcPeerProxyFactory::NewProxy(const RaftPeerPB& peer_pb,
                                      gscoped_ptr<PeerProxy>* proxy) {
@@ -405,7 +421,7 @@ Status RpcPeerProxyFactory::NewProxy(const RaftPeerPB& peer_pb,
   RETURN_NOT_OK(HostPortFromPB(peer_pb.last_known_addr(), hostport.get()));
   gscoped_ptr<ConsensusServiceProxy> new_proxy;
   RETURN_NOT_OK(CreateConsensusServiceProxyForHost(messenger_, *hostport, &new_proxy));
-  proxy->reset(new RpcPeerProxy(hostport.Pass(), new_proxy.Pass()));
+  proxy->reset(new RpcPeerProxy(std::move(hostport), std::move(new_proxy)));
   return Status::OK();
 }
 

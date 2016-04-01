@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This file implements a concurrent in-memory B-tree similar to the one
 // described in the MassTree paper;
@@ -35,10 +38,12 @@
 #ifndef KUDU_TABLET_CONCURRENT_BTREE_H
 #define KUDU_TABLET_CONCURRENT_BTREE_H
 
+#include <algorithm>
 #include <boost/smart_ptr/detail/yield_k.hpp>
 #include <boost/utility/binary.hpp>
-#include <algorithm>
+#include <memory>
 #include <string>
+
 #include "kudu/util/inline_slice.h"
 #include "kudu/util/memory/arena.h"
 #include "kudu/util/status.h"
@@ -87,6 +92,18 @@ inline void PrefetchMemory(const T *addr) {
   }
 }
 
+// Utility function that, when Traits::debug_raciness is non-zero
+// (i.e only in debug code), will spin for some amount of time
+// related to that setting.
+// This can be used when trying to debug race conditions, but
+// will compile away in production code.
+template<class Traits>
+void DebugRacyPoint() {
+  if (Traits::debug_raciness > 0) {
+    boost::detail::yield(Traits::debug_raciness);
+  }
+}
+
 template<class Traits> class NodeBase;
 template<class Traits> class InternalNode;
 template<class Traits> class LeafNode;
@@ -101,7 +118,7 @@ struct VersionField {
   static AtomicVersion StableVersion(volatile AtomicVersion *version) {
     for (int loop_count = 0; true; loop_count++) {
       AtomicVersion v_acq = base::subtle::Acquire_Load(version);
-      if (!IsLocked(v_acq)) {
+      if (PREDICT_TRUE(!IsLocked(v_acq))) {
         return v_acq;
       }
       boost::detail::yield(loop_count++);
@@ -113,9 +130,9 @@ struct VersionField {
 
     while (true) {
       AtomicVersion v_acq = base::subtle::Acquire_Load(version);
-      if (!IsLocked(v_acq)) {
+      if (PREDICT_TRUE(!IsLocked(v_acq))) {
         AtomicVersion v_locked = SetLockBit(v_acq, 1);
-        if (base::subtle::Acquire_CompareAndSwap(version, v_acq, v_locked) == v_acq) {
+        if (PREDICT_TRUE(base::subtle::Acquire_CompareAndSwap(version, v_acq, v_locked) == v_acq)) {
           return;
         }
       }
@@ -183,7 +200,7 @@ struct VersionField {
   }
 
   static string Stringify(AtomicVersion v) {
-    return StringPrintf("[flags=%c%c%c vins=%ld vsplit=%ld]",
+    return StringPrintf("[flags=%c%c%c vins=%" PRIu64 " vsplit=%" PRIu64 "]",
                         (v & BTREE_LOCK_MASK) ? 'L':' ',
                         (v & BTREE_SPLITTING_MASK) ? 'S':' ',
                         (v & BTREE_INSERTING_MASK) ? 'I':' ',
@@ -697,9 +714,10 @@ class LeafNode : public NodeBase<Traits> {
     this->SetInserting();
 
     // The following inserts should always succeed because we
-    // verified space_available above
+    // verified that there is space available above.
     num_entries_++;
     InsertInSliceArray(keys_, num_entries_, key, idx, arena);
+    DebugRacyPoint<Traits>();
     InsertInSliceArray(vals_, num_entries_, val, idx, arena);
 
     return INSERT_SUCCESS;
@@ -734,12 +752,12 @@ class LeafNode : public NodeBase<Traits> {
   //
   // NOTE: the value slice may include an *invalid pointer*, not
   // just invalid data, so any readers should check for conflicts
-  // before accessing any referred-to data in the value slice.
+  // before accessing the value slice.
   // The key, on the other hand, will always be a valid pointer, but
   // may be invalid data.
-  void Get(size_t idx, Slice *k, Slice *v) const {
+  void Get(size_t idx, Slice *k, ValueSlice *v) const {
     *k = keys_[idx].as_slice();
-    *v = vals_[idx].as_slice();
+    *v = vals_[idx];
   }
 
   // Truncates the node, removing entries from the right to reduce
@@ -810,12 +828,8 @@ class PreparedMutation {
   //
   // The data referred to by the 'key' Slice passed in themust remain
   // valid for the lifetime of the PreparedMutation object.
-  explicit PreparedMutation(const Slice &key) :
-    key_(key),
-    tree_(NULL),
-    leaf_(NULL),
-    needs_unlock_(false)
-  {}
+  explicit PreparedMutation(Slice key)
+      : key_(std::move(key)), tree_(NULL), leaf_(NULL), needs_unlock_(false) {}
 
   ~PreparedMutation() {
     UnPrepare();
@@ -854,10 +868,11 @@ class PreparedMutation {
   // has the same size as the original data.
   Slice current_mutable_value() {
     CHECK(prepared());
-    Slice k, v;
+    Slice k;
+    ValueSlice v;
     leaf_->Get(idx_, &k, &v);
     leaf_->SetInserting();
-    return v;
+    return v.as_slice();
   }
 
   // Accessors
@@ -935,11 +950,8 @@ class CBTree {
       frozen_(false) {
   }
 
-  explicit CBTree(const std::tr1::shared_ptr<typename Traits::ArenaType>& arena)
-      : arena_(arena),
-        root_(NewLeaf(false)),
-        frozen_(false) {
-  }
+  explicit CBTree(std::shared_ptr<typename Traits::ArenaType> arena)
+      : arena_(std::move(arena)), root_(NewLeaf(false)), frozen_(false) {}
 
   ~CBTree() {
     RecursiveDelete(root_);
@@ -992,7 +1004,8 @@ class CBTree {
       retry_in_leaf:
       {
         GetResult ret;
-        Slice key_in_node, val_in_node;
+        Slice key_in_node;
+        ValueSlice val_in_node;
         bool exact;
         size_t idx = leaf->Find(key, &exact);
         DebugRacyPoint();
@@ -1001,13 +1014,7 @@ class CBTree {
           ret = GET_NOT_FOUND;
         } else {
           leaf->Get(idx, &key_in_node, &val_in_node);
-          *buf_len = val_in_node.size();
-
-          if (PREDICT_FALSE(val_in_node.size() > in_buf_len)) {
-            ret = GET_TOO_BIG;
-          } else {
-            ret = GET_SUCCESS;
-          }
+          ret = GET_SUCCESS;
         }
 
         // Got some kind of result, but may be based on racy data.
@@ -1019,8 +1026,18 @@ class CBTree {
           version = new_version;
           goto retry_in_leaf;
         }
+
+        // If we found a matching key earlier, and the read of the node
+        // wasn't racy, we can safely work with the ValueSlice.
         if (ret == GET_SUCCESS) {
-          memcpy(buf, val_in_node.data(), val_in_node.size());
+          Slice val = val_in_node.as_slice();
+          *buf_len = val.size();
+
+          if (PREDICT_FALSE(val.size() > in_buf_len)) {
+            ret = GET_TOO_BIG;
+          } else {
+            memcpy(buf, val.data(), val.size());
+          }
         }
         return ret;
       }
@@ -1181,16 +1198,8 @@ class CBTree {
     return node.leaf_node_ptr();
   }
 
-
-  // Utility function that, when Traits::debug_raciness is non-zero
-  // (i.e only in debug code), will spin for some amount of time
-  // related to that setting.
-  // This can be used when trying to debug race conditions, but
-  // will compile away in production code.
   void DebugRacyPoint() const {
-    if (Traits::debug_raciness > 0) {
-      boost::detail::yield(Traits::debug_raciness);
-    }
+    btree::DebugRacyPoint<Traits>();
   }
 
   // Dump the tree.
@@ -1576,7 +1585,7 @@ class CBTree {
     // No need to actually free, since it came from the arena
   }
 
-  std::tr1::shared_ptr<typename Traits::ArenaType> arena_;
+  std::shared_ptr<typename Traits::ArenaType> arena_;
 
   // marked 'mutable' because readers will lazy-update the root
   // when they encounter a stale root pointer.
@@ -1618,7 +1627,9 @@ class CBTreeIterator {
 
   void GetCurrentEntry(Slice *key, Slice *val) const {
     DCHECK(seeked_);
-    leaf_to_scan_->Get(idx_in_leaf_, key, val);
+    ValueSlice val_slice;
+    leaf_to_scan_->Get(idx_in_leaf_, key, &val_slice);
+    *val = val_slice.as_slice();
   }
 
   Slice GetCurrentKey() const {

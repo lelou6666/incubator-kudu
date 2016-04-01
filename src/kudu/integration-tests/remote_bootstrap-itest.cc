@@ -1,26 +1,28 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <boost/optional.hpp>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
-#include <tr1/memory>
-#include <tr1/unordered_map>
 #include <string>
+#include <unordered_map>
 
-#include "kudu/client/client.h"
 #include "kudu/client/client-test-util.h"
+#include "kudu/client/client.h"
 #include "kudu/common/wire_protocol-test-util.h"
 #include "kudu/fs/fs_manager.h"
 #include "kudu/gutil/stl_util.h"
@@ -51,14 +53,15 @@ using kudu::client::KuduClientBuilder;
 using kudu::client::KuduSchema;
 using kudu::client::KuduSchemaFromSchema;
 using kudu::client::KuduTableCreator;
+using kudu::client::sp::shared_ptr;
 using kudu::consensus::CONSENSUS_CONFIG_COMMITTED;
 using kudu::itest::TServerDetails;
+using kudu::tablet::TABLET_DATA_DELETED;
 using kudu::tablet::TABLET_DATA_TOMBSTONED;
 using kudu::tserver::ListTabletsResponsePB;
 using kudu::tserver::RemoteBootstrapClient;
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
+using std::unordered_map;
 using std::vector;
 using strings::Substitute;
 
@@ -431,13 +434,13 @@ TEST_F(RemoteBootstrapITest, TestConcurrentRemoteBootstraps) {
   ASSERT_OK(WaitForNumTabletsOnTS(target_ts, kNumTablets, timeout, &tablets));
 
   vector<string> tablet_ids;
-  BOOST_FOREACH(const ListTabletsResponsePB::StatusAndSchemaPB& t, tablets) {
+  for (const ListTabletsResponsePB::StatusAndSchemaPB& t : tablets) {
     tablet_ids.push_back(t.tablet_status().tablet_id());
   }
 
   // Wait until all replicas are up and running.
   for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
-    BOOST_FOREACH(const string& tablet_id, tablet_ids) {
+    for (const string& tablet_id : tablet_ids) {
       ASSERT_OK(itest::WaitUntilTabletRunning(ts_map_[cluster_->tablet_server(i)->uuid()],
                                               tablet_id, timeout));
     }
@@ -446,7 +449,7 @@ TEST_F(RemoteBootstrapITest, TestConcurrentRemoteBootstraps) {
   // Elect leaders on each tablet for term 1. All leaders will be on TS 1.
   const int kLeaderIndex = 1;
   const string kLeaderUuid = cluster_->tablet_server(kLeaderIndex)->uuid();
-  BOOST_FOREACH(const string& tablet_id, tablet_ids) {
+  for (const string& tablet_id : tablet_ids) {
     ASSERT_OK(itest::StartElection(ts_map_[kLeaderUuid], tablet_id, timeout));
   }
 
@@ -462,14 +465,14 @@ TEST_F(RemoteBootstrapITest, TestConcurrentRemoteBootstraps) {
   }
   workload.StopAndJoin();
 
-  BOOST_FOREACH(const string& tablet_id, tablet_ids) {
+  for (const string& tablet_id : tablet_ids) {
     ASSERT_OK(WaitForServersToAgree(timeout, ts_map_, tablet_id, 1));
   }
 
   // Now pause the leader so we can tombstone the tablets.
   ASSERT_OK(cluster_->tablet_server(kLeaderIndex)->Pause());
 
-  BOOST_FOREACH(const string& tablet_id, tablet_ids) {
+  for (const string& tablet_id : tablet_ids) {
     LOG(INFO) << "Tombstoning tablet " << tablet_id << " on TS " << target_ts->uuid();
     ASSERT_OK(itest::DeleteTablet(target_ts, tablet_id, TABLET_DATA_TOMBSTONED, boost::none,
                                   MonoDelta::FromSeconds(10)));
@@ -478,7 +481,7 @@ TEST_F(RemoteBootstrapITest, TestConcurrentRemoteBootstraps) {
   // Unpause the leader TS and wait for it to remotely bootstrap the tombstoned
   // tablets, in parallel.
   ASSERT_OK(cluster_->tablet_server(kLeaderIndex)->Resume());
-  BOOST_FOREACH(const string& tablet_id, tablet_ids) {
+  for (const string& tablet_id : tablet_ids) {
     ASSERT_OK(itest::WaitUntilTabletRunning(target_ts, tablet_id, timeout));
   }
 
@@ -526,8 +529,8 @@ TEST_F(RemoteBootstrapITest, TestDeleteLeaderDuringRemoteBootstrapStressTest) {
 
   int leader_index = -1;
   int follower_index = -1;
-  TServerDetails* leader_ts = NULL;
-  TServerDetails* follower_ts = NULL;
+  TServerDetails* leader_ts = nullptr;
+  TServerDetails* follower_ts = nullptr;
 
   for (int i = 0; i < FLAGS_test_delete_leader_num_iters; i++) {
     LOG(INFO) << "Iteration " << (i + 1);
@@ -554,8 +557,10 @@ TEST_F(RemoteBootstrapITest, TestDeleteLeaderDuringRemoteBootstrapStressTest) {
                                   timeout));
 
     // Wait for remote bootstrap to start.
-    ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(follower_index, tablet_id,
-                                                   tablet::TABLET_DATA_COPYING, timeout));
+    ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(
+        follower_index, tablet_id,
+        { tablet::TABLET_DATA_COPYING, tablet::TABLET_DATA_READY },
+        timeout));
 
     // Tombstone the leader.
     LOG(INFO) << "Tombstoning leader tablet " << tablet_id << " on TS " << leader_ts->uuid();
@@ -631,9 +636,6 @@ TEST_F(RemoteBootstrapITest, TestDisableRemoteBootstrap_NoTightLoopWhenTabletDel
   NO_FATALS(StartCluster(ts_flags, master_flags));
 
   TestWorkload workload(cluster_.get());
-  // TODO(KUDU-1054): the client should handle retrying on different replicas
-  // if the tablet isn't found, rather than giving us this error.
-  workload.set_not_found_allowed(true);
   workload.set_write_batch_size(1);
   workload.Setup();
 
@@ -679,6 +681,122 @@ TEST_F(RemoteBootstrapITest, TestDisableRemoteBootstrap_NoTightLoopWhenTabletDel
   EXPECT_LT(update_rpcs_per_second, 20);
   int64_t num_logs_per_second = num_logs_after_sleep - num_logs_initial;
   EXPECT_LT(num_logs_per_second, 20);
+}
+
+// Test that if a remote bootstrap is taking a long time but the client peer is still responsive,
+// the leader won't mark it as failed.
+TEST_F(RemoteBootstrapITest, TestSlowBootstrapDoesntFail) {
+  MonoDelta timeout = MonoDelta::FromSeconds(30);
+  vector<string> ts_flags, master_flags;
+  ts_flags.push_back("--enable_leader_failure_detection=false");
+  ts_flags.push_back("--remote_bootstrap_dowload_file_inject_latency_ms=5000");
+  ts_flags.push_back("--follower_unavailable_considered_failed_sec=2");
+  master_flags.push_back("--catalog_manager_wait_for_new_tablets_to_elect_leader=false");
+  NO_FATALS(StartCluster(ts_flags, master_flags));
+
+  TestWorkload workload(cluster_.get());
+  workload.set_write_batch_size(1);
+  workload.Setup();
+
+  // Figure out the tablet id of the created tablet.
+  vector<ListTabletsResponsePB::StatusAndSchemaPB> tablets;
+  ExternalTabletServer* replica_ets = cluster_->tablet_server(1);
+  TServerDetails* replica_ts = ts_map_[replica_ets->uuid()];
+  ASSERT_OK(WaitForNumTabletsOnTS(replica_ts, 1, timeout, &tablets));
+  string tablet_id = tablets[0].tablet_status().tablet_id();
+
+  // Wait until all replicas are up and running.
+  for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
+    ASSERT_OK(itest::WaitUntilTabletRunning(ts_map_[cluster_->tablet_server(i)->uuid()],
+                                            tablet_id, timeout));
+  }
+
+  // Elect a leader (TS 0)
+  ExternalTabletServer* leader_ts = cluster_->tablet_server(0);
+  ASSERT_OK(itest::StartElection(ts_map_[leader_ts->uuid()], tablet_id, timeout));
+
+  // Start writing, wait for some rows to be inserted.
+  workload.Start();
+  while (workload.rows_inserted() < 100) {
+    SleepFor(MonoDelta::FromMilliseconds(10));
+  }
+
+
+  // Tombstone the follower.
+  LOG(INFO) << "Tombstoning follower tablet " << tablet_id << " on TS " << replica_ts->uuid();
+  ASSERT_OK(itest::DeleteTablet(replica_ts, tablet_id, TABLET_DATA_TOMBSTONED, boost::none,
+                                timeout));
+
+  // Wait for remote bootstrap to start.
+  ASSERT_OK(inspect_->WaitForTabletDataStateOnTS(1, tablet_id,
+                                                 { tablet::TABLET_DATA_COPYING }, timeout));
+
+  workload.StopAndJoin();
+  ASSERT_OK(WaitForServersToAgree(timeout, ts_map_, tablet_id, 1));
+
+  ClusterVerifier v(cluster_.get());
+  NO_FATALS(v.CheckCluster());
+  NO_FATALS(v.CheckRowCount(workload.table_name(), ClusterVerifier::AT_LEAST,
+                            workload.rows_inserted()));
+}
+
+// Attempting to start remote bootstrap on a tablet that was deleted with
+// TABLET_DATA_DELETED should fail. This behavior helps avoid thrashing when
+// a follower tablet is deleted and the leader notices before it has processed
+// its own DeleteTablet RPC, thinking that it needs to bring its follower back.
+TEST_F(RemoteBootstrapITest, TestRemoteBootstrappingDeletedTabletFails) {
+  // Delete the leader with TABLET_DATA_DELETED
+  // Attempt to manually bootstrap the leader from a follower
+  // Should get an error saying it's illegal
+
+  MonoDelta kTimeout = MonoDelta::FromSeconds(30);
+  NO_FATALS(StartCluster({"--enable_leader_failure_detection=false"},
+                         {"--catalog_manager_wait_for_new_tablets_to_elect_leader=false"}));
+
+  TestWorkload workload(cluster_.get());
+  workload.set_num_replicas(3);
+  workload.Setup();
+
+  TServerDetails* leader = ts_map_[cluster_->tablet_server(0)->uuid()];
+
+  // Figure out the tablet id of the created tablet.
+  vector<ListTabletsResponsePB::StatusAndSchemaPB> tablets;
+  ASSERT_OK(WaitForNumTabletsOnTS(leader, 1, kTimeout, &tablets));
+  string tablet_id = tablets[0].tablet_status().tablet_id();
+
+  // Wait until all replicas are up and running.
+  for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
+    ASSERT_OK(itest::WaitUntilTabletRunning(ts_map_[cluster_->tablet_server(i)->uuid()],
+                                            tablet_id, kTimeout));
+  }
+
+  // Elect a leader for term 1, then run some data through the cluster.
+  ASSERT_OK(itest::StartElection(leader, tablet_id, kTimeout));
+  ASSERT_OK(WaitForServersToAgree(kTimeout, ts_map_, tablet_id, 1));
+
+  // Now delete the leader with TABLET_DATA_DELETED. We should not be able to
+  // bring back the leader after that until restarting the process.
+  ASSERT_OK(itest::DeleteTablet(leader, tablet_id, TABLET_DATA_DELETED, boost::none, kTimeout));
+
+  Status s = itest::StartRemoteBootstrap(leader, tablet_id,
+                                         cluster_->tablet_server(1)->uuid(),
+                                         HostPort(cluster_->tablet_server(1)->bound_rpc_addr()),
+                                         1, // We are in term 1.
+                                         kTimeout);
+  ASSERT_TRUE(s.IsIllegalState()) << s.ToString();
+  ASSERT_STR_CONTAINS(s.ToString(), "Cannot transition from state TABLET_DATA_DELETED");
+
+  // Restart the server so that it won't remember the tablet was permanently
+  // deleted and we can remote bootstrap the server again.
+  cluster_->tablet_server(0)->Shutdown();
+  ASSERT_OK(cluster_->tablet_server(0)->Restart());
+
+  ASSERT_OK(itest::StartRemoteBootstrap(leader, tablet_id,
+                                        cluster_->tablet_server(1)->uuid(),
+                                        HostPort(cluster_->tablet_server(1)->bound_rpc_addr()),
+                                        1, // We are in term 1.
+                                        kTimeout));
+  ASSERT_OK(WaitForServersToAgree(kTimeout, ts_map_, tablet_id, 1));
 }
 
 } // namespace kudu

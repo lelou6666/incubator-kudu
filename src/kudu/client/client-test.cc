@@ -1,24 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 #include <gflags/gflags.h>
 #include <glog/stl_logging.h>
 
-#include <tr1/memory>
 #include <vector>
 #include <algorithm>
 
@@ -65,34 +65,30 @@ DECLARE_int32(log_inject_latency_ms_mean);
 DECLARE_int32(log_inject_latency_ms_stddev);
 DECLARE_int32(master_inject_latency_on_tablet_lookups_ms);
 DECLARE_int32(max_create_tablets_per_ts);
-DECLARE_int32(rpc_service_queue_length);
 DECLARE_int32(scanner_gc_check_interval_us);
 DECLARE_int32(scanner_inject_latency_on_each_batch_ms);
 DECLARE_int32(scanner_max_batch_size_bytes);
 DECLARE_int32(scanner_ttl_ms);
 DEFINE_int32(test_scan_num_rows, 1000, "Number of rows to insert and scan");
 
-METRIC_DECLARE_counter(scans_started);
 METRIC_DECLARE_counter(rpcs_queue_overflow);
 
-using boost::assign::list_of;
 using std::string;
 using std::set;
-using std::tr1::shared_ptr;
 using std::vector;
 
 namespace kudu {
 namespace client {
 
-
 using base::subtle::Atomic32;
+using base::subtle::NoBarrier_AtomicIncrement;
 using base::subtle::NoBarrier_Load;
 using base::subtle::NoBarrier_Store;
-using base::subtle::NoBarrier_AtomicIncrement;
 using master::CatalogManager;
 using master::GetTableLocationsRequestPB;
 using master::GetTableLocationsResponsePB;
 using master::TabletLocationsPB;
+using sp::shared_ptr;
 using tablet::TabletPeer;
 using tserver::MiniTabletServer;
 
@@ -231,7 +227,7 @@ class ClientTest : public KuduTest {
     CHECK_OK(row->SetInt32(1, index * 2));
     CHECK_OK(row->SetStringCopy(2, Slice(StringPrintf("hello %d", index))));
     CHECK_OK(row->SetInt32(3, index * 3));
-    return insert.Pass();
+    return std::move(insert);
   }
 
   gscoped_ptr<KuduUpdate> UpdateTestRow(KuduTable* table, int index) {
@@ -240,29 +236,28 @@ class ClientTest : public KuduTest {
     CHECK_OK(row->SetInt32(0, index));
     CHECK_OK(row->SetInt32(1, index * 2 + 1));
     CHECK_OK(row->SetStringCopy(2, Slice(StringPrintf("hello again %d", index))));
-    return update.Pass();
+    return std::move(update);
   }
 
   gscoped_ptr<KuduDelete> DeleteTestRow(KuduTable* table, int index) {
     gscoped_ptr<KuduDelete> del(table->NewDelete());
     KuduPartialRow* row = del->mutable_row();
     CHECK_OK(row->SetInt32(0, index));
-    return del.Pass();
+    return std::move(del);
   }
 
   void DoTestScanWithoutPredicates() {
     KuduScanner scanner(client_table_.get());
-    ASSERT_OK(scanner.SetProjectedColumns(list_of<string>("key")));
+    ASSERT_OK(scanner.SetProjectedColumns({ "key" }));
     LOG_TIMING(INFO, "Scanning with no predicates") {
       ASSERT_OK(scanner.Open());
 
       ASSERT_TRUE(scanner.HasMoreRows());
-      vector<KuduRowResult> rows;
+      KuduScanBatch batch;
       uint64_t sum = 0;
       while (scanner.HasMoreRows()) {
-        ASSERT_OK(scanner.NextBatch(&rows));
-
-        BOOST_FOREACH(const KuduRowResult& row, rows) {
+        ASSERT_OK(scanner.NextBatch(&batch));
+        for (const KuduScanBatch::RowPtr& row : batch) {
           int32_t value;
           ASSERT_OK(row.GetInt32(0, &value));
           sum += value;
@@ -289,11 +284,10 @@ class ClientTest : public KuduTest {
       ASSERT_OK(scanner.Open());
 
       ASSERT_TRUE(scanner.HasMoreRows());
-      vector<KuduRowResult> rows;
+      KuduScanBatch batch;
       while (scanner.HasMoreRows()) {
-        ASSERT_OK(scanner.NextBatch(&rows));
-
-        BOOST_FOREACH(const KuduRowResult& row, rows) {
+        ASSERT_OK(scanner.NextBatch(&batch));
+        for (const KuduScanBatch::RowPtr& row : batch) {
           Slice s;
           ASSERT_OK(row.GetString(2, &s));
           if (!s.starts_with("hello 2") && !s.starts_with("hello 3")) {
@@ -317,11 +311,10 @@ class ClientTest : public KuduTest {
       ASSERT_OK(scanner.Open());
 
       ASSERT_TRUE(scanner.HasMoreRows());
-      vector<KuduRowResult> rows;
+      KuduScanBatch batch;
       while (scanner.HasMoreRows()) {
-        ASSERT_OK(scanner.NextBatch(&rows));
-
-        BOOST_FOREACH(const KuduRowResult& row, rows) {
+        ASSERT_OK(scanner.NextBatch(&batch));
+        for (const KuduScanBatch::RowPtr& row : batch) {
           int32_t k;
           ASSERT_OK(row.GetInt32(0, &k));
           if (k < 5 || k > 10) {
@@ -359,10 +352,10 @@ class ClientTest : public KuduTest {
     CHECK_OK(scanner.Open());
 
     int count = 0;
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      CHECK_OK(scanner.NextBatch(&rows));
-      count += rows.size();
+      CHECK_OK(scanner.NextBatch(&batch));
+      count += batch.NumRows();
     }
     return count;
   }
@@ -502,6 +495,8 @@ TEST_F(ClientTest, TestScan) {
   ASSERT_NO_FATAL_FAILURE(InsertTestRows(
       client_table_.get(), FLAGS_test_scan_num_rows));
 
+  ASSERT_EQ(FLAGS_test_scan_num_rows, CountRowsFromClient(client_table_.get()));
+
   // Scan after insert
   DoTestScanWithoutPredicates();
   DoTestScanWithStringPredicate();
@@ -543,16 +538,16 @@ TEST_F(ClientTest, TestScanAtSnapshot) {
 
   KuduScanner scanner(client_table_.get());
   ASSERT_OK(scanner.Open());
-  vector<KuduRowResult> rows;
-  uint64_t sum = 0;
+  uint64_t count = 0;
 
   // Do a "normal", READ_LATEST scan
+  KuduScanBatch batch;
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&rows));
-    sum += rows.size();
+    ASSERT_OK(scanner.NextBatch(&batch));
+    count += batch.NumRows();
   }
 
-  ASSERT_EQ(FLAGS_test_scan_num_rows, sum);
+  ASSERT_EQ(FLAGS_test_scan_num_rows, count);
 
   // Now close the scanner and perform a scan at 'ts'
   scanner.Close();
@@ -560,14 +555,13 @@ TEST_F(ClientTest, TestScanAtSnapshot) {
   ASSERT_OK(scanner.SetSnapshotMicros(ts));
   ASSERT_OK(scanner.Open());
 
-  sum = 0;
-
+  count = 0;
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&rows));
-    sum += rows.size();
+    ASSERT_OK(scanner.NextBatch(&batch));
+    count += batch.NumRows();
   }
 
-  ASSERT_EQ(half_the_rows, sum);
+  ASSERT_EQ(half_the_rows, count);
 }
 
 // Test scanning at a timestamp in the future compared to the
@@ -604,13 +598,8 @@ TEST_F(ClientTest, TestScanMultiTablet) {
     rows.push_back(row);
   }
   gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
-  ASSERT_OK(table_creator->table_name("TestScanMultiTablet")
-            .schema(&schema_)
-            .split_rows(rows)
-            .Create());
-
   shared_ptr<KuduTable> table;
-  ASSERT_OK(client_->OpenTable("TestScanMultiTablet", &table));
+  ASSERT_NO_FATAL_FAILURE(CreateTable("TestScanMultiTablet", 1, rows, &table));
 
   // Insert rows with keys 12, 13, 15, 17, 22, 23, 25, 27...47 into each
   // tablet, except the first which is empty.
@@ -718,9 +707,9 @@ TEST_F(ClientTest, TestScanEmptyTable) {
   // the last tablet, HasMoreRows will return true (because it doesn't
   // know whether there's data in subsequent tablets).
   ASSERT_TRUE(scanner.HasMoreRows());
-  vector<KuduRowResult> rows;
-  ASSERT_OK(scanner.NextBatch(&rows));
-  ASSERT_TRUE(rows.empty());
+  KuduScanBatch batch;
+  ASSERT_OK(scanner.NextBatch(&batch));
+  ASSERT_EQ(0, batch.NumRows());
   ASSERT_FALSE(scanner.HasMoreRows());
 }
 
@@ -732,15 +721,16 @@ TEST_F(ClientTest, TestScanEmptyProjection) {
                                          FLAGS_test_scan_num_rows));
   KuduScanner scanner(client_table_.get());
   ASSERT_OK(scanner.SetProjectedColumns(vector<string>()));
+  ASSERT_EQ(scanner.GetProjectionSchema().num_columns(), 0);
   LOG_TIMING(INFO, "Scanning with no projected columns") {
     ASSERT_OK(scanner.Open());
 
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     uint64_t count = 0;
     while (scanner.HasMoreRows()) {
-      ASSERT_OK(scanner.NextBatch(&rows));
-      count += rows.size();
+      ASSERT_OK(scanner.NextBatch(&batch));
+      count += batch.NumRows();
     }
     ASSERT_EQ(FLAGS_test_scan_num_rows, count);
   }
@@ -748,14 +738,14 @@ TEST_F(ClientTest, TestScanEmptyProjection) {
 
 TEST_F(ClientTest, TestProjectInvalidColumn) {
   KuduScanner scanner(client_table_.get());
-  Status s = scanner.SetProjectedColumns(list_of<string>("column-doesnt-exist"));
+  Status s = scanner.SetProjectedColumns({ "column-doesnt-exist" });
   ASSERT_EQ("Not found: Column: \"column-doesnt-exist\" was not found in the table schema.",
             s.ToString());
 
   // Test trying to use a projection where a column is used multiple times.
   // TODO: consider fixing this to support returning the column multiple
   // times, even though it's not very useful.
-  s = scanner.SetProjectedColumns(list_of<string>("key")("key"));
+  s = scanner.SetProjectedColumns({ "key", "key" });
   ASSERT_EQ("Invalid argument: Duplicate column name: key", s.ToString());
 }
 
@@ -765,7 +755,9 @@ TEST_F(ClientTest, TestScanPredicateKeyColNotProjected) {
   ASSERT_NO_FATAL_FAILURE(InsertTestRows(client_table_.get(),
                                          FLAGS_test_scan_num_rows));
   KuduScanner scanner(client_table_.get());
-  ASSERT_OK(scanner.SetProjectedColumns(list_of<string>("int_val")));
+  ASSERT_OK(scanner.SetProjectedColumns({ "int_val" }));
+  ASSERT_EQ(scanner.GetProjectionSchema().num_columns(), 1);
+  ASSERT_EQ(scanner.GetProjectionSchema().Column(0).type(), KuduColumnSchema::INT32);
   ASSERT_OK(scanner.AddConjunctPredicate(
                 client_table_->NewComparisonPredicate("key", KuduPredicate::GREATER_EQUAL,
                                                       KuduValue::FromInt(5))));
@@ -779,11 +771,10 @@ TEST_F(ClientTest, TestScanPredicateKeyColNotProjected) {
     ASSERT_OK(scanner.Open());
 
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      ASSERT_OK(scanner.NextBatch(&rows));
-
-      BOOST_FOREACH(const KuduRowResult& row, rows) {
+      ASSERT_OK(scanner.NextBatch(&batch));
+      for (const KuduScanBatch::RowPtr& row : batch) {
         int32_t val;
         ASSERT_OK(row.GetInt32(0, &val));
         ASSERT_EQ(curr_key * 2, val);
@@ -811,17 +802,16 @@ TEST_F(ClientTest, TestScanPredicateNonKeyColNotProjected) {
   size_t nrows = 0;
   int32_t curr_key = 10;
 
-  ASSERT_OK(scanner.SetProjectedColumns(list_of<string>("key")));
+  ASSERT_OK(scanner.SetProjectedColumns({ "key" }));
 
   LOG_TIMING(INFO, "Scanning with predicate columns not projected") {
     ASSERT_OK(scanner.Open());
 
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> rows;
+    KuduScanBatch batch;
     while (scanner.HasMoreRows()) {
-      ASSERT_OK(scanner.NextBatch(&rows));
-
-      BOOST_FOREACH(const KuduRowResult& row, rows) {
+      ASSERT_OK(scanner.NextBatch(&batch));
+      for (const KuduScanBatch::RowPtr& row : batch) {
         int32_t val;
         ASSERT_OK(row.GetInt32(0, &val));
         ASSERT_EQ(curr_key / 2, val);
@@ -896,13 +886,20 @@ TEST_F(ClientTest, TestScanCloseProxy) {
 
 namespace internal {
 
+static void ReadBatchToStrings(KuduScanner* scanner, vector<string>* rows) {
+  KuduScanBatch batch;
+  ASSERT_OK(scanner->NextBatch(&batch));
+  for (int i = 0; i < batch.NumRows(); i++) {
+    rows->push_back(batch.Row(i).ToString());
+  }
+}
+
 static void DoScanWithCallback(KuduTable* table,
                                const vector<string>& expected_rows,
                                const boost::function<Status(const string&)>& cb) {
   // Initialize fault-tolerant snapshot scanner.
   KuduScanner scanner(table);
   ASSERT_OK(scanner.SetFaultTolerant());
-  ASSERT_OK(scanner.SetReadMode(KuduScanner::READ_AT_SNAPSHOT));
   // Set a small batch size so it reads in multiple batches.
   ASSERT_OK(scanner.SetBatchSizeBytes(1));
 
@@ -913,12 +910,8 @@ static void DoScanWithCallback(KuduTable* table,
   {
     LOG(INFO) << "Setting up scanner.";
     ASSERT_TRUE(scanner.HasMoreRows());
-    vector<KuduRowResult> result_rows;
-    ASSERT_OK(scanner.NextBatch(&result_rows));
-    ASSERT_GT(result_rows.size(), 0);
-    BOOST_FOREACH(KuduRowResult& r, result_rows) {
-      rows.push_back(r.ToString());
-    }
+    NO_FATALS(ReadBatchToStrings(&scanner, &rows));
+    ASSERT_GT(rows.size(), 0);
     ASSERT_TRUE(scanner.HasMoreRows());
   }
 
@@ -936,11 +929,7 @@ static void DoScanWithCallback(KuduTable* table,
   ASSERT_TRUE(scanner.HasMoreRows());
   ASSERT_OK(scanner.SetBatchSizeBytes(1024*1024));
   while (scanner.HasMoreRows()) {
-    vector<KuduRowResult> result_rows;
-    ASSERT_OK(scanner.NextBatch(&result_rows));
-    BOOST_FOREACH(KuduRowResult& r, result_rows) {
-      rows.push_back(r.ToString());
-    }
+    NO_FATALS(ReadBatchToStrings(&scanner, &rows));
   }
   scanner.Close();
 
@@ -959,7 +948,13 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
   // Create test table and insert test rows.
   const string kScanTable = "TestScanFaultTolerance";
   shared_ptr<KuduTable> table;
-  ASSERT_NO_FATAL_FAILURE(CreateTable(kScanTable, 3, vector<const KuduPartialRow*>(), &table));
+
+  // We use only two replicas in this test so that every write is fully replicated to both
+  // servers (the Raft majority is 2/2). This reduces potential flakiness if the scanner tries
+  // to read from a replica that is lagging for some reason. This won't be necessary once
+  // we implement full support for snapshot consistency (KUDU-430).
+  const int kNumReplicas = 2;
+  ASSERT_NO_FATAL_FAILURE(CreateTable(kScanTable, kNumReplicas, {}, &table));
   ASSERT_NO_FATAL_FAILURE(InsertTestRows(table.get(), FLAGS_test_scan_num_rows));
 
   // Do an initial scan to determine the expected rows for later verification.
@@ -972,7 +967,7 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
     // disk.
     if (with_flush) {
       string tablet_id = GetFirstTabletId(table.get());
-      for (int i = 0; i < 3; i++) {
+      for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
         scoped_refptr<TabletPeer> tablet_peer;
         ASSERT_TRUE(cluster_->mini_tablet_server(i)->server()->tablet_manager()->LookupTablet(
                 tablet_id, &tablet_peer));
@@ -986,17 +981,15 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
     // Restarting and waiting should result in a SCANNER_EXPIRED error.
     LOG(INFO) << "Doing a scan while restarting a tserver and waiting for it to come up...";
     ASSERT_NO_FATAL_FAILURE(internal::DoScanWithCallback(table.get(), expected_rows,
-        boost::bind<Status>(
-            &ClientTest_TestScanFaultTolerance_Test::RestartTServerAndWait,
-            this, _1)));
+        boost::bind(&ClientTest_TestScanFaultTolerance_Test::RestartTServerAndWait,
+                    this, _1)));
 
     // Restarting and not waiting means the tserver is hopefully bootstrapping, leading to
     // a TABLET_NOT_RUNNING error.
     LOG(INFO) << "Doing a scan while restarting a tserver...";
     ASSERT_NO_FATAL_FAILURE(internal::DoScanWithCallback(table.get(), expected_rows,
-        boost::bind<Status>(
-            &ClientTest_TestScanFaultTolerance_Test::RestartTServerAsync,
-            this, _1)));
+        boost::bind(&ClientTest_TestScanFaultTolerance_Test::RestartTServerAsync,
+                    this, _1)));
     for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
       MiniTabletServer* ts = cluster_->mini_tablet_server(i);
       ASSERT_OK(ts->WaitStarted());
@@ -1005,9 +998,8 @@ TEST_F(ClientTest, TestScanFaultTolerance) {
     // Killing the tserver should lead to an RPC timeout.
     LOG(INFO) << "Doing a scan while killing a tserver...";
     ASSERT_NO_FATAL_FAILURE(internal::DoScanWithCallback(table.get(), expected_rows,
-        boost::bind<Status>(
-            &ClientTest_TestScanFaultTolerance_Test::KillTServer,
-            this, _1)));
+        boost::bind(&ClientTest_TestScanFaultTolerance_Test::KillTServer,
+                    this, _1)));
 
     // Restart the server that we killed.
     for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
@@ -1036,13 +1028,13 @@ TEST_F(ClientTest, TestGetTabletServerBlacklist) {
     client_->data_->meta_cache_->LookupTabletByKey(table.get(), "", MonoTime::Max(), &rt,
                                                   sync.AsStatusCallback());
     ASSERT_OK(sync.Wait());
-    ASSERT_TRUE(rt.get() != NULL);
+    ASSERT_TRUE(rt.get() != nullptr);
     vector<internal::RemoteTabletServer*> tservers;
     rt->GetRemoteTabletServers(&tservers);
     if (tservers.size() == 3) {
       break;
     }
-    rt->InvalidateCachedReplicas();
+    rt->MarkStale();
     SleepFor(MonoDelta::FromMilliseconds(10));
   }
 
@@ -1051,25 +1043,25 @@ TEST_F(ClientTest, TestGetTabletServerBlacklist) {
   set<string> blacklist;
   vector<internal::RemoteTabletServer*> candidates;
   vector<internal::RemoteTabletServer*> tservers;
-  ASSERT_OK(client_->data_->GetTabletServer(client_.get(), rt->tablet_id(),
+  ASSERT_OK(client_->data_->GetTabletServer(client_.get(), rt,
                                             KuduClient::LEADER_ONLY,
                                             blacklist, &candidates, &rts));
   tservers.push_back(rts);
   // Blacklist the leader, should not work.
   blacklist.insert(rts->permanent_uuid());
   {
-    Status s = client_->data_->GetTabletServer(client_.get(), rt->tablet_id(),
+    Status s = client_->data_->GetTabletServer(client_.get(), rt,
                                                KuduClient::LEADER_ONLY,
                                                blacklist, &candidates, &rts);
     ASSERT_TRUE(s.IsServiceUnavailable());
   }
   // Keep blacklisting replicas until we run out.
-  ASSERT_OK(client_->data_->GetTabletServer(client_.get(), rt->tablet_id(),
+  ASSERT_OK(client_->data_->GetTabletServer(client_.get(), rt,
                                             KuduClient::CLOSEST_REPLICA,
                                             blacklist, &candidates, &rts));
   tservers.push_back(rts);
   blacklist.insert(rts->permanent_uuid());
-  ASSERT_OK(client_->data_->GetTabletServer(client_.get(), rt->tablet_id(),
+  ASSERT_OK(client_->data_->GetTabletServer(client_.get(), rt,
                                             KuduClient::FIRST_REPLICA,
                                             blacklist, &candidates, &rts));
   tservers.push_back(rts);
@@ -1080,19 +1072,19 @@ TEST_F(ClientTest, TestGetTabletServerBlacklist) {
   selections.push_back(KuduClient::LEADER_ONLY);
   selections.push_back(KuduClient::CLOSEST_REPLICA);
   selections.push_back(KuduClient::FIRST_REPLICA);
-  BOOST_FOREACH(KuduClient::ReplicaSelection selection, selections) {
-    Status s = client_->data_->GetTabletServer(client_.get(), rt->tablet_id(), selection,
+  for (KuduClient::ReplicaSelection selection : selections) {
+    Status s = client_->data_->GetTabletServer(client_.get(), rt, selection,
                                                blacklist, &candidates, &rts);
     ASSERT_TRUE(s.IsServiceUnavailable());
   }
 
   // Make sure none of the modes work when all nodes are dead.
-  BOOST_FOREACH(internal::RemoteTabletServer* rt, tservers) {
+  for (internal::RemoteTabletServer* rt : tservers) {
     client_->data_->meta_cache_->MarkTSFailed(rt, Status::NetworkError("test"));
   }
   blacklist.clear();
-  BOOST_FOREACH(KuduClient::ReplicaSelection selection, selections) {
-    Status s = client_->data_->GetTabletServer(client_.get(), rt->tablet_id(),
+  for (KuduClient::ReplicaSelection selection : selections) {
+    Status s = client_->data_->GetTabletServer(client_.get(), rt,
                                                selection,
                                                blacklist, &candidates, &rts);
     ASSERT_TRUE(s.IsServiceUnavailable());
@@ -1211,9 +1203,9 @@ static void AssertScannersDisappear(const tserver::ScannerManager* manager) {
 
 namespace {
 
-int64_t SumResults(const vector<KuduRowResult>& results) {
+int64_t SumResults(const KuduScanBatch& batch) {
   int64_t sum = 0;
-  BOOST_FOREACH(const KuduRowResult row, results) {
+  for (const KuduScanBatch::RowPtr& row : batch) {
     int32_t val;
     CHECK_OK(row.GetInt32(0, &val));
     sum += val;
@@ -1234,15 +1226,15 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
   ASSERT_OK(scanner.SetBatchSizeBytes(100));
   ASSERT_OK(scanner.Open());
 
-  vector<KuduRowResult> results;
+  KuduScanBatch batch;
   int64_t sum = 0;
 
   ASSERT_TRUE(scanner.HasMoreRows());
-  ASSERT_OK(scanner.NextBatch(&results));
+  ASSERT_OK(scanner.NextBatch(&batch));
 
   // We should get only nine rows back (from the first tablet).
-  ASSERT_EQ(results.size(), 9);
-  sum += SumResults(results);
+  ASSERT_EQ(batch.NumRows(), 9);
+  sum += SumResults(batch);
 
   ASSERT_TRUE(scanner.HasMoreRows());
 
@@ -1253,10 +1245,10 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
   // Start scanning the second tablet, but break as soon as we have some data so that
   // we have a live remote scanner on the second tablet.
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&results));
-    if (results.size() > 0) break;
+    ASSERT_OK(scanner.NextBatch(&batch));
+    if (batch.NumRows() > 0) break;
   }
-  sum += SumResults(results);
+  sum += SumResults(batch);
   ASSERT_TRUE(scanner.HasMoreRows());
 
   // Now loop while keeping the scanner alive. Each time we loop we sleep 1/2 a scanner
@@ -1270,8 +1262,8 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
   // where we would only actually perform a KeepAlive() rpc after the first request and
   // not on subsequent ones.
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&results));
-    if (results.size() > 0) break;
+    ASSERT_OK(scanner.NextBatch(&batch));
+    if (batch.NumRows() > 0) break;
   }
 
   ASSERT_TRUE(scanner.HasMoreRows());
@@ -1279,12 +1271,12 @@ TEST_F(ClientTest, TestScannerKeepAlive) {
     SleepFor(MonoDelta::FromMilliseconds(50));
     ASSERT_OK(scanner.KeepAlive());
   }
-  sum += SumResults(results);
+  sum += SumResults(batch);
 
   // Loop to get the remaining rows.
   while (scanner.HasMoreRows()) {
-    ASSERT_OK(scanner.NextBatch(&results));
-    sum += SumResults(results);
+    ASSERT_OK(scanner.NextBatch(&batch));
+    sum += SumResults(batch);
   }
   ASSERT_FALSE(scanner.HasMoreRows());
   ASSERT_EQ(sum, 499500);
@@ -1375,7 +1367,7 @@ TEST_F(ClientTest, TestScanTimeout) {
     ASSERT_OK(scanner.Open());
     ASSERT_TRUE(scanner.HasMoreRows());
     while (scanner.HasMoreRows()) {
-      vector<KuduRowResult> batch;
+      KuduScanBatch batch;
       ASSERT_OK(scanner.NextBatch(&batch));
     }
   }
@@ -1423,10 +1415,37 @@ TEST_F(ClientTest, TestInsertSingleRowManualBatch) {
   // Retry
   ASSERT_OK(insert->mutable_row()->SetInt32("key", 12345));
   ASSERT_OK(session->Apply(insert.release()));
-  ASSERT_TRUE(insert == NULL) << "Successful insert should take ownership";
+  ASSERT_TRUE(insert == nullptr) << "Successful insert should take ownership";
   ASSERT_TRUE(session->HasPendingOperations()) << "Should be pending until we Flush";
 
   FlushSessionOrDie(session);
+}
+
+TEST_F(ClientTest, TestInsertAutoFlushSync) {
+  shared_ptr<KuduSession> session = client_->NewSession();
+  ASSERT_FALSE(session->HasPendingOperations());
+
+  session->SetTimeoutMillis(10000);
+  ASSERT_OK(session->SetFlushMode(KuduSession::AUTO_FLUSH_SYNC));
+
+  // Test in Flush() is called implicitly,
+  // so there is no pending operations.
+  gscoped_ptr<KuduInsert> insert(client_table_->NewInsert());
+  ASSERT_OK(insert->mutable_row()->SetInt32("key", 12345));
+  ASSERT_OK(insert->mutable_row()->SetInt32("int_val", 54321));
+  ASSERT_OK(insert->mutable_row()->SetStringCopy("string_val", "hello world"));
+  ASSERT_OK(session->Apply(insert.release()));
+  ASSERT_TRUE(insert == nullptr) << "Successful insert should take ownership";
+  ASSERT_FALSE(session->HasPendingOperations()) << "Should not have pending operation";
+
+  // Test multiple inserts.
+  for (int i = 0; i < 100; i++) {
+    gscoped_ptr<KuduInsert> insert(client_table_->NewInsert());
+    ASSERT_OK(insert->mutable_row()->SetInt32("key", i));
+    ASSERT_OK(insert->mutable_row()->SetInt32("int_val", 54321));
+    ASSERT_OK(insert->mutable_row()->SetStringCopy("string_val", "hello world"));
+    ASSERT_OK(session->Apply(insert.release()));
+  }
 }
 
 static Status ApplyInsertToSession(KuduSession* session,
@@ -1475,7 +1494,7 @@ TEST_F(ClientTest, TestWriteTimeout) {
     ASSERT_TRUE(error->status().IsTimedOut()) << error->status().ToString();
     ASSERT_STR_CONTAINS(error->status().ToString(),
                         "GetTableLocations(client-testtb, int32 key=1, 1) "
-                        "failed: GetTableLocations RPC");
+                        "failed: timed out after deadline expired");
   }
 
   // Next time out the actual write on the tablet server.
@@ -1645,6 +1664,7 @@ void ClientTest::DoTestWriteWithDeadServer(WhichServerToKill which) {
       break;
     case DEAD_TSERVER:
       ASSERT_TRUE(error->status().IsTimedOut());
+      ASSERT_STR_CONTAINS(error->status().ToString(), "Connection refused");
       break;
   }
 
@@ -2163,7 +2183,7 @@ TEST_F(ClientTest, TestReplicatedTabletWritesWithLeaderElection) {
   set<string> blacklist;
   vector<internal::RemoteTabletServer*> candidates;
   ASSERT_OK(client_->data_->GetTabletServer(client_.get(),
-                                            rt->tablet_id(),
+                                            rt,
                                             KuduClient::LEADER_ONLY,
                                             blacklist,
                                             &candidates,
@@ -2175,7 +2195,7 @@ TEST_F(ClientTest, TestReplicatedTabletWritesWithLeaderElection) {
 
   // Since we waited before, hopefully all replicas will be up to date
   // and we can just promote another replica.
-  shared_ptr<rpc::Messenger> client_messenger;
+  std::shared_ptr<rpc::Messenger> client_messenger;
   rpc::MessengerBuilder bld("client");
   ASSERT_OK(bld.Build(&client_messenger));
   gscoped_ptr<consensus::ConsensusServiceProxy> new_leader_proxy;
@@ -2194,7 +2214,7 @@ TEST_F(ClientTest, TestReplicatedTabletWritesWithLeaderElection) {
   ASSERT_NE(-1, new_leader_idx);
 
   MiniTabletServer* new_leader = cluster_->mini_tablet_server(new_leader_idx);
-  ASSERT_TRUE(new_leader != NULL);
+  ASSERT_TRUE(new_leader != nullptr);
   new_leader_proxy.reset(
       new consensus::ConsensusServiceProxy(client_messenger,
                                            new_leader->bound_rpc_addr()));
@@ -2233,7 +2253,7 @@ namespace {
 void CheckCorrectness(KuduScanner* scanner, int expected[], int nrows) {
   scanner->Open();
   int readrows = 0;
-  vector<KuduRowResult> rows;
+  KuduScanBatch batch;
   if (nrows) {
     ASSERT_TRUE(scanner->HasMoreRows());
   } else {
@@ -2241,8 +2261,8 @@ void CheckCorrectness(KuduScanner* scanner, int expected[], int nrows) {
   }
 
   while (scanner->HasMoreRows()) {
-    ASSERT_OK(scanner->NextBatch(&rows));
-    BOOST_FOREACH(const KuduRowResult& r, rows) {
+    ASSERT_OK(scanner->NextBatch(&batch));
+    for (const KuduScanBatch::RowPtr& r : batch) {
       int32_t key;
       int32_t val;
       Slice strval;
@@ -2398,78 +2418,78 @@ TEST_F(ClientTest, TestMasterLookupPermits) {
 
 // Define callback for deadlock simulation, as well as various helper methods.
 namespace {
-  class DLSCallback : public KuduStatusCallback {
-   public:
-    explicit DLSCallback(Atomic32* i) : i(i) {
-    }
-
-    virtual void Run(const Status& s) OVERRIDE {
-      CHECK_OK(s);
-      NoBarrier_AtomicIncrement(i, 1);
-      delete this;
-    }
-   private:
-    Atomic32* const i;
-  };
-
-  // Returns col1 value of first row.
-  int32_t ReadFirstRowKeyFirstCol(const shared_ptr<KuduTable>& tbl) {
-    KuduScanner scanner(tbl.get());
-
-    scanner.Open();
-    vector<KuduRowResult> rows;
-    CHECK(scanner.HasMoreRows());
-    CHECK_OK(scanner.NextBatch(&rows));
-    KuduRowResult& row = rows.front();
-    int32_t val;
-    CHECK_OK(row.GetInt32(1, &val));
-    return val;
+class DLSCallback : public KuduStatusCallback {
+ public:
+  explicit DLSCallback(Atomic32* i) : i(i) {
   }
 
-  // Checks that all rows have value equal to expected, return number of rows.
-  int CheckRowsEqual(const shared_ptr<KuduTable>& tbl, int32_t expected) {
-    KuduScanner scanner(tbl.get());
-    scanner.Open();
-    vector<KuduRowResult> rows;
-    int cnt = 0;
-    while (scanner.HasMoreRows()) {
-      CHECK_OK(scanner.NextBatch(&rows));
-      BOOST_FOREACH(const KuduRowResult& row, rows) {
-        // Check that for every key:
-        // 1. Column 1 int32_t value == expected
-        // 2. Column 2 string value is empty
-        // 3. Column 3 int32_t value is default, 12345
-        int32_t key;
-        int32_t val;
-        Slice strval;
-        int32_t val2;
-        CHECK_OK(row.GetInt32(0, &key));
-        CHECK_OK(row.GetInt32(1, &val));
-        CHECK_OK(row.GetString(2, &strval));
-        CHECK_OK(row.GetInt32(3, &val2));
-        CHECK_EQ(expected, val) << "Incorrect int value for key " << key;
-        CHECK_EQ(strval.size(), 0) << "Incorrect string value for key " << key;
-        CHECK_EQ(12345, val2);
-        ++cnt;
-      }
-    }
-    return cnt;
+  virtual void Run(const Status& s) OVERRIDE {
+    CHECK_OK(s);
+    NoBarrier_AtomicIncrement(i, 1);
+    delete this;
   }
+ private:
+  Atomic32* const i;
+};
 
-  // Return a session "loaded" with updates. Sets the session timeout
-  // to the parameter value. Larger timeouts decrease false positives.
-  shared_ptr<KuduSession> LoadedSession(const shared_ptr<KuduClient>& client,
-                                        const shared_ptr<KuduTable>& tbl,
-                                        bool fwd, int max, int timeout) {
-    shared_ptr<KuduSession> session = client->NewSession();
-    session->SetTimeoutMillis(timeout);
-    CHECK_OK(session->SetFlushMode(KuduSession::MANUAL_FLUSH));
-    for (int i = 0; i < max; ++i) {
-      int key = fwd ? i : max - i;
-      CHECK_OK(ApplyUpdateToSession(session.get(), tbl, key, fwd));
+// Returns col1 value of first row.
+int32_t ReadFirstRowKeyFirstCol(const shared_ptr<KuduTable>& tbl) {
+  KuduScanner scanner(tbl.get());
+
+  scanner.Open();
+  KuduScanBatch batch;
+  CHECK(scanner.HasMoreRows());
+  CHECK_OK(scanner.NextBatch(&batch));
+  KuduRowResult row = batch.Row(0);
+  int32_t val;
+  CHECK_OK(row.GetInt32(1, &val));
+  return val;
+}
+
+// Checks that all rows have value equal to expected, return number of rows.
+int CheckRowsEqual(const shared_ptr<KuduTable>& tbl, int32_t expected) {
+  KuduScanner scanner(tbl.get());
+  scanner.Open();
+  KuduScanBatch batch;
+  int cnt = 0;
+  while (scanner.HasMoreRows()) {
+    CHECK_OK(scanner.NextBatch(&batch));
+    for (const KuduScanBatch::RowPtr& row : batch) {
+      // Check that for every key:
+      // 1. Column 1 int32_t value == expected
+      // 2. Column 2 string value is empty
+      // 3. Column 3 int32_t value is default, 12345
+      int32_t key;
+      int32_t val;
+      Slice strval;
+      int32_t val2;
+      CHECK_OK(row.GetInt32(0, &key));
+      CHECK_OK(row.GetInt32(1, &val));
+      CHECK_OK(row.GetString(2, &strval));
+      CHECK_OK(row.GetInt32(3, &val2));
+      CHECK_EQ(expected, val) << "Incorrect int value for key " << key;
+      CHECK_EQ(strval.size(), 0) << "Incorrect string value for key " << key;
+      CHECK_EQ(12345, val2);
+      ++cnt;
     }
-    return session;
   }
+  return cnt;
+}
+
+// Return a session "loaded" with updates. Sets the session timeout
+// to the parameter value. Larger timeouts decrease false positives.
+shared_ptr<KuduSession> LoadedSession(const shared_ptr<KuduClient>& client,
+                                      const shared_ptr<KuduTable>& tbl,
+                                      bool fwd, int max, int timeout) {
+  shared_ptr<KuduSession> session = client->NewSession();
+  session->SetTimeoutMillis(timeout);
+  CHECK_OK(session->SetFlushMode(KuduSession::MANUAL_FLUSH));
+  for (int i = 0; i < max; ++i) {
+    int key = fwd ? i : max - i;
+    CHECK_OK(ApplyUpdateToSession(session.get(), tbl, key, fwd));
+  }
+  return session;
+}
 } // anonymous namespace
 
 // Starts many clients which update a table in parallel.
@@ -2554,6 +2574,7 @@ TEST_F(ClientTest, TestCreateDuplicateTable) {
   gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
   ASSERT_TRUE(table_creator->table_name(kTableName)
               .schema(&schema_)
+              .num_replicas(1)
               .Create().IsAlreadyPresent());
 }
 
@@ -2569,7 +2590,7 @@ TEST_F(ClientTest, TestCreateTableWithTooManyTablets) {
   gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
   Status s = table_creator->table_name("foobar")
       .schema(&schema_)
-      .split_rows(list_of(split1)(split2))
+      .split_rows({ split1, split2 })
       .num_replicas(3)
       .Create();
   ASSERT_TRUE(s.IsInvalidArgument());
@@ -2587,7 +2608,7 @@ TEST_F(ClientTest, TestCreateTableWithTooManyReplicas) {
   gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
   Status s = table_creator->table_name("foobar")
       .schema(&schema_)
-      .split_rows(list_of(split1)(split2))
+      .split_rows({ split1, split2 })
       .num_replicas(3)
       .Create();
   ASSERT_TRUE(s.IsInvalidArgument());
@@ -2635,10 +2656,10 @@ TEST_F(ClientTest, TestClonePredicates) {
   ASSERT_OK(scanner->Open());
 
   int count = 0;
-  vector<KuduRowResult> rows;
+  KuduScanBatch batch;
   while (scanner->HasMoreRows()) {
-    ASSERT_OK(scanner->NextBatch(&rows));
-    count += rows.size();
+    ASSERT_OK(scanner->NextBatch(&batch));
+    count += batch.NumRows();
   }
 
   ASSERT_EQ(count, 1);
@@ -2649,8 +2670,8 @@ TEST_F(ClientTest, TestClonePredicates) {
 
   count = 0;
   while (scanner->HasMoreRows()) {
-    ASSERT_OK(scanner->NextBatch(&rows));
-    count += rows.size();
+    ASSERT_OK(scanner->NextBatch(&batch));
+    count += batch.NumRows();
   }
 
   ASSERT_EQ(count, 1);
@@ -2691,8 +2712,38 @@ TEST_F(ClientTest, TestServerTooBusyRetry) {
     }
   }
 
-  BOOST_FOREACH(const scoped_refptr<kudu::Thread>& thread, threads) {
+  for (const scoped_refptr<kudu::Thread>& thread : threads) {
     thread->Join();
+  }
+}
+
+TEST_F(ClientTest, TestLastErrorEmbeddedInScanTimeoutStatus) {
+  // For the random() calls that take place during scan retries.
+  SeedRandom();
+
+  NO_FATALS(InsertTestRows(client_table_.get(), FLAGS_test_scan_num_rows));
+
+  {
+    // Revert the latency injection flags at the end so the test exits faster.
+    google::FlagSaver saver;
+
+    // Restart, but inject latency so that startup is very slow.
+    FLAGS_log_inject_latency = true;
+    FLAGS_log_inject_latency_ms_mean = 5000;
+    FLAGS_log_inject_latency_ms_stddev = 0;
+    for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
+      MiniTabletServer* ts = cluster_->mini_tablet_server(i);
+      ASSERT_OK(ts->Restart());
+    }
+
+    // As the tservers are still starting up, the scan will retry until it
+    // times out. The actual error should be embedded in the returned status.
+    KuduScanner scan(client_table_.get());
+    ASSERT_OK(scan.SetTimeoutMillis(1000));
+    Status s = scan.Open();
+    SCOPED_TRACE(s.ToString());
+    ASSERT_TRUE(s.IsTimedOut());
+    ASSERT_STR_CONTAINS(s.ToString(), "Illegal state: Tablet not RUNNING");
   }
 }
 

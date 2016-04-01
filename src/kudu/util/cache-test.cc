@@ -1,24 +1,11 @@
-// Copyright 2013 Cloudera, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
 // Some portions Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file. See the AUTHORS file for names of contributors.
+// found in the LICENSE file.
 
 #include <glog/logging.h>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include <vector>
 #include "kudu/util/cache.h"
@@ -27,7 +14,9 @@
 #include "kudu/util/metrics.h"
 #include "kudu/util/test_util.h"
 
+#if defined(__linux__)
 DECLARE_string(nvm_cache_path);
+#endif // defined(__linux__)
 
 namespace kudu {
 
@@ -56,17 +45,20 @@ class CacheTest : public KuduTest,
   }
   std::vector<int> deleted_keys_;
   std::vector<int> deleted_values_;
-  std::tr1::shared_ptr<MemTracker> mem_tracker_;
+  std::shared_ptr<MemTracker> mem_tracker_;
   gscoped_ptr<Cache> cache_;
   MetricRegistry metric_registry_;
 
   static const int kCacheSize = 14*1024*1024;
 
   virtual void SetUp() OVERRIDE {
+
+#if defined(__linux__)
     if (google::GetCommandLineFlagInfoOrDie("nvm_cache_path").is_default) {
       FLAGS_nvm_cache_path = GetTestPath("nvm-cache");
       ASSERT_OK(Env::Default()->CreateDir(FLAGS_nvm_cache_path));
     }
+#endif // defined(__linux__)
 
     cache_.reset(NewLRUCache(GetParam(), kCacheSize, "cache_test"));
 
@@ -74,7 +66,7 @@ class CacheTest : public KuduTest,
     // Since nvm cache does not have memtracker due to the use of
     // tcmalloc for this we only check for it in the DRAM case.
     if (GetParam() == DRAM_CACHE) {
-      ASSERT_TRUE(mem_tracker_);
+      ASSERT_TRUE(mem_tracker_.get());
     }
 
     scoped_refptr<MetricEntity> entity = METRIC_ENTITY_server.Instantiate(
@@ -84,8 +76,8 @@ class CacheTest : public KuduTest,
 
   int Lookup(int key) {
     Cache::Handle* handle = cache_->Lookup(EncodeKey(key), Cache::EXPECT_IN_CACHE);
-    const int r = (handle == NULL) ? -1 : DecodeValue(cache_->Value(handle));
-    if (handle != NULL) {
+    const int r = (handle == nullptr) ? -1 : DecodeValue(cache_->Value(handle));
+    if (handle != nullptr) {
       cache_->Release(handle);
     }
     return r;
@@ -100,7 +92,12 @@ class CacheTest : public KuduTest,
     cache_->Erase(EncodeKey(key));
   }
 };
+
+#if defined(__linux__)
 INSTANTIATE_TEST_CASE_P(CacheTypes, CacheTest, ::testing::Values(DRAM_CACHE, NVM_CACHE));
+#else
+INSTANTIATE_TEST_CASE_P(CacheTypes, CacheTest, ::testing::Values(DRAM_CACHE));
+#endif // defined(__linux__)
 
 TEST_P(CacheTest, TrackMemory) {
   if (mem_tracker_) {

@@ -1,17 +1,21 @@
 #!/bin/bash
-# Copyright 2014 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 #
 # Script which wraps running a test and redirects its output to a
 # test log directory.
@@ -28,18 +32,27 @@
 # If KUDU_REPORT_TEST_RESULTS is non-zero, then tests are reported to the
 # central test server.
 
-ME=$(dirname $BASH_SOURCE)
-ROOT=$(readlink -f $ME/..)
+# Path to the test executable or script to be run.
+# May be relative or absolute.
+TEST_PATH=$1
 
-TEST_LOGDIR=$ROOT/build/test-logs
+# Absolute path to the root source directory. This script is expected to live within it.
+SOURCE_ROOT=$(cd $(dirname "$BASH_SOURCE")/.. ; pwd)
+
+# Absolute path to the root build directory. The test path is expected to be within it.
+BUILD_ROOT=$(cd $(dirname "$TEST_PATH")/.. ; pwd)
+
+TEST_LOGDIR=$BUILD_ROOT/test-logs
 mkdir -p $TEST_LOGDIR
 
-TEST_DEBUGDIR=$ROOT/build/test-debug
+TEST_DEBUGDIR=$BUILD_ROOT/test-debug
 mkdir -p $TEST_DEBUGDIR
 
-TEST_EXECUTABLE=$(readlink -f $1)
+TEST_DIRNAME=$(cd $(dirname $TEST_PATH); pwd)
+TEST_FILENAME=$(basename $TEST_PATH)
+ABS_TEST_PATH=$TEST_DIRNAME/$TEST_FILENAME
 shift
-TEST_NAME=$(basename $TEST_EXECUTABLE | perl -pe 's/\..+?$//') # Remove path and extension (if any).
+TEST_NAME=$(echo $TEST_FILENAME | perl -pe 's/\..+?$//') # Remove path and extension (if any).
 
 # Determine whether the test is a known flaky by comparing against the user-specified
 # list.
@@ -60,7 +73,7 @@ fi
 
 
 # We run each test in its own subdir to avoid core file related races.
-TEST_WORKDIR=$ROOT/build/test-work/$TEST_NAME
+TEST_WORKDIR=$BUILD_ROOT/test-work/$TEST_NAME
 mkdir -p $TEST_WORKDIR
 pushd $TEST_WORKDIR >/dev/null || exit 1
 rm -f *
@@ -82,32 +95,21 @@ else
   pipe_cmd=cat
 fi
 
-# Configure TSAN (ignored if this isn't a TSAN build).
-#
-# Deadlock detection (new in clang 3.5) is disabled because:
-# 1. The clang 3.5 deadlock detector crashes in some Kudu unit tests. It
-#    needs compiler-rt commits c4c3dfd, 9a8efe3, and possibly others.
-# 2. Many unit tests report lock-order-inversion warnings; they should be
-#    fixed before reenabling the detector.
-TSAN_OPTIONS="$TSAN_OPTIONS detect_deadlocks=0"
-TSAN_OPTIONS="$TSAN_OPTIONS suppressions=$ROOT/build-support/tsan-suppressions.txt"
-TSAN_OPTIONS="$TSAN_OPTIONS history_size=7"
-export TSAN_OPTIONS
-
-# Enable leak detection even under LLVM 3.4, where it was disabled by default.
-# This flag only takes effect when running an ASAN build.
-ASAN_OPTIONS="$ASAN_OPTIONS detect_leaks=1"
-export ASAN_OPTIONS
-
-# Set up suppressions for LeakSanitizer
-LSAN_OPTIONS="$LSAN_OPTIONS suppressions=$ROOT/build-support/lsan-suppressions.txt"
-export LSAN_OPTIONS
-
 # Suppressions require symbolization. We'll default to using the symbolizer in
 # thirdparty.
 if [ -z "$ASAN_SYMBOLIZER_PATH" ]; then
-  export ASAN_SYMBOLIZER_PATH=$ROOT/thirdparty/installed/bin/llvm-symbolizer
+  export ASAN_SYMBOLIZER_PATH=$SOURCE_ROOT/thirdparty/clang-toolchain/bin/llvm-symbolizer
 fi
+
+# Configure TSAN (ignored if this isn't a TSAN build).
+TSAN_OPTIONS="$TSAN_OPTIONS suppressions=$SOURCE_ROOT/build-support/tsan-suppressions.txt"
+TSAN_OPTIONS="$TSAN_OPTIONS history_size=7"
+TSAN_OPTIONS="$TSAN_OPTIONS external_symbolizer_path=$ASAN_SYMBOLIZER_PATH"
+export TSAN_OPTIONS
+
+# Set up suppressions for LeakSanitizer
+LSAN_OPTIONS="$LSAN_OPTIONS suppressions=$SOURCE_ROOT/build-support/lsan-suppressions.txt"
+export LSAN_OPTIONS
 
 # Set a 15-minute timeout for tests run via 'make test'.
 # This keeps our jenkins builds from hanging in the case that there's
@@ -136,10 +138,8 @@ for ATTEMPT_NUMBER in $(seq 1 $TEST_EXECUTION_ATTEMPTS) ; do
 
   echo "Running $TEST_NAME, redirecting output into $LOGFILE" \
     "(attempt ${ATTEMPT_NUMBER}/$TEST_EXECUTION_ATTEMPTS)"
-  $TEST_EXECUTABLE "$@" --test_timeout_after $KUDU_TEST_TIMEOUT 2>&1 \
-    | $ROOT/thirdparty/asan_symbolize.py \
-    | c++filt \
-    | $ROOT/build-support/stacktrace_addr2line.pl $TEST_EXECUTABLE \
+  $ABS_TEST_PATH "$@" --test_timeout_after $KUDU_TEST_TIMEOUT 2>&1 \
+    | $SOURCE_ROOT/build-support/stacktrace_addr2line.pl $ABS_TEST_PATH \
     | $pipe_cmd > $LOGFILE
   STATUS=$?
 
@@ -179,7 +179,7 @@ for ATTEMPT_NUMBER in $(seq 1 $TEST_EXECUTION_ATTEMPTS) ; do
 
   if [ -n "$KUDU_REPORT_TEST_RESULTS" ]; then
     echo Reporting results
-    $ROOT/build-support/report-test.sh "$TEST_EXECUTABLE" "$LOGFILE" "$STATUS" &
+    $SOURCE_ROOT/build-support/report-test.sh "$ABS_TEST_PATH" "$LOGFILE" "$STATUS" &
 
     # On success, we'll do "best effort" reporting, and disown the subprocess.
     # On failure, we want to upload the failed test log. So, in that case,
@@ -219,12 +219,12 @@ fi
 COREFILES=$(ls | grep ^core)
 if [ -n "$COREFILES" ]; then
   echo Found core dump. Saving executable and core files.
-  gzip < $TEST_EXECUTABLE > "$TEST_DEBUGDIR/$TEST_NAME.gz" || exit $?
+  gzip < $ABS_TEST_PATH > "$TEST_DEBUGDIR/$TEST_NAME.gz" || exit $?
   for COREFILE in $COREFILES; do
     gzip < $COREFILE > "$TEST_DEBUGDIR/$TEST_NAME.$COREFILE.gz" || exit $?
   done
   # Pull in any .so files as well.
-  for LIB in $(ldd $TEST_EXECUTABLE | grep $ROOT | awk '{print $3}'); do
+  for LIB in $(ldd $ABS_TEST_PATH | grep $BUILD_ROOT | awk '{print $3}'); do
     LIB_NAME=$(basename $LIB)
     gzip < $LIB > "$TEST_DEBUGDIR/$LIB_NAME.gz" || exit $?
   done

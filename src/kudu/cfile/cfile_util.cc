@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/cfile/cfile_util.h"
 
@@ -40,10 +43,10 @@ Status DumpIterator(const CFileReader& reader,
   const TypeInfo *type = reader.type_info();
   size_t max_rows = kBufSize/type->size();
   uint8_t nulls[BitmapSize(max_rows)];
-  ColumnBlock cb(type, reader.is_nullable() ? nulls : NULL, buf, max_rows, &arena);
+  ColumnBlock cb(type, reader.is_nullable() ? nulls : nullptr, buf, max_rows, &arena);
 
   string strbuf;
-  uint64_t count = 0;
+  size_t count = 0;
   while (it->HasNext()) {
     size_t n = opts.nrows == 0 ? max_rows : std::min(max_rows, opts.nrows - count);
     if (n == 0) break;
@@ -55,7 +58,7 @@ Status DumpIterator(const CFileReader& reader,
         for (size_t i = 0; i < n; i++) {
           strbuf.append(indent, ' ');
           const void *ptr = cb.nullable_cell_ptr(i);
-          if (ptr != NULL) {
+          if (ptr != nullptr) {
             type->AppendDebugStringForValue(ptr, &strbuf);
           } else {
             strbuf.append("NULL");

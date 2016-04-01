@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/delta_applier.h"
 
@@ -21,18 +24,18 @@
 #include "kudu/tablet/delta_store.h"
 #include "kudu/util/status.h"
 
+using std::shared_ptr;
 using std::string;
 
 namespace kudu {
 namespace tablet {
 
   // Construct. The base_iter and delta_iter should not be Initted.
-DeltaApplier::DeltaApplier(const shared_ptr<CFileSet::Iterator>& base_iter,
-                           const shared_ptr<DeltaIterator>& delta_iter)
-  : base_iter_(base_iter),
-    delta_iter_(delta_iter),
-    first_prepare_(true) {
-}
+DeltaApplier::DeltaApplier(shared_ptr<CFileSet::Iterator> base_iter,
+                           shared_ptr<DeltaIterator> delta_iter)
+    : base_iter_(std::move(base_iter)),
+      delta_iter_(std::move(delta_iter)),
+      first_prepare_(true) {}
 
 DeltaApplier::~DeltaApplier() {
 }

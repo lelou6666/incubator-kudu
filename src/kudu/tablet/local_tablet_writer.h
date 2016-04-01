@@ -1,20 +1,22 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_LOCAL_TABLET_WRITER_H
 #define KUDU_TABLET_LOCAL_TABLET_WRITER_H
 
-#include <boost/foreach.hpp>
 #include <vector>
 
 #include "kudu/common/partial_row.h"
@@ -82,7 +84,7 @@ class LocalTabletWriter {
     req_.mutable_row_operations()->Clear();
     RowOperationsPBEncoder encoder(req_.mutable_row_operations());
 
-    BOOST_FOREACH(const Op& op, ops) {
+    for (const Op& op : ops) {
       encoder.Add(op.type, *op.row);
     }
 
@@ -97,13 +99,11 @@ class LocalTabletWriter {
     tablet_->ApplyRowOperations(tx_state_.get());
 
     tx_state_->ReleaseTxResultPB(&result_);
-    tx_state_->Commit();
-    tx_state_->release_row_locks();
-    tx_state_->ReleaseSchemaLock();
+    tx_state_->CommitOrAbort(Transaction::COMMITTED);
 
     // Return the status of first failed op.
     int op_idx = 0;
-    BOOST_FOREACH(const OperationResultPB& result, result_.ops()) {
+    for (const OperationResultPB& result : result_.ops()) {
       if (result.has_failed_status()) {
         return StatusFromPB(result.failed_status())
           .CloneAndPrepend(ops[op_idx].row->ToString());

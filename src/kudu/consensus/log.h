@@ -1,22 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_CONSENSUS_LOG_H_
 #define KUDU_CONSENSUS_LOG_H_
 
 #include <boost/thread/shared_mutex.hpp>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -40,11 +44,11 @@ class ThreadPool;
 
 namespace log {
 
+struct LogEntryBatchLogicalSize;
+struct LogMetrics;
+class LogEntryBatch;
 class LogIndex;
 class LogReader;
-class LogEntryBatch;
-struct LogMetrics;
-struct LogEntryBatchLogicalSize;
 
 typedef BlockingQueue<LogEntryBatch*, LogEntryBatchLogicalSize> LogEntryBatchQueue;
 
@@ -147,10 +151,11 @@ class Log : public RefCountedThreadSafe<Log> {
   // REQUIRES: The Log must be closed.
   static Status DeleteOnDiskData(FsManager* fs_manager, const std::string& tablet_id);
 
-  // Returns a reader that is able to read through the previous
-  // segments. The reader pointer is guaranteed to be live as long
-  // as the log itself is initialized and live.
-  LogReader* GetLogReader() const;
+  // Returns a reader that is able to read through the previous segments,
+  // provided the log is initialized and not yet closed. After being closed,
+  // this function will return NULL, but existing reader references will
+  // remain live.
+  std::shared_ptr<LogReader> reader() const { return reader_; }
 
   void SetMaxSegmentSizeForTests(uint64_t max_segment_size) {
     max_segment_size_ = max_segment_size;
@@ -215,7 +220,7 @@ class Log : public RefCountedThreadSafe<Log> {
   // Returns this Log's FsManager.
   FsManager* GetFsManager();
 
-  void SetLogFaultHooksForTests(const std::tr1::shared_ptr<LogFaultHooks> &hooks) {
+  void SetLogFaultHooksForTests(const std::shared_ptr<LogFaultHooks> &hooks) {
     log_hooks_ = hooks;
   }
 
@@ -247,12 +252,8 @@ class Log : public RefCountedThreadSafe<Log> {
     kAllocationFinished // Next segment ready
   };
 
-  Log(const LogOptions &options,
-      FsManager *fs_manager,
-      const std::string& log_path,
-      const std::string& tablet_id,
-      const Schema& schema,
-      uint32_t schema_version,
+  Log(LogOptions options, FsManager* fs_manager, std::string log_path,
+      std::string tablet_id, const Schema& schema, uint32_t schema_version,
       const scoped_refptr<MetricEntity>& metric_entity);
 
   // Initializes a new one or continues an existing log.
@@ -270,7 +271,7 @@ class Log : public RefCountedThreadSafe<Log> {
   // created for the segment.
   Status CreatePlaceholderSegment(const WritableFileOptions& opts,
                                   std::string* result_path,
-                                  std::tr1::shared_ptr<WritableFile>* out);
+                                  std::shared_ptr<WritableFile>* out);
 
   // Creates a new WAL segment on disk, writes the next_segment_header_ to
   // disk as the header, and sets active_segment_ to point to this new segment.
@@ -336,7 +337,7 @@ class Log : public RefCountedThreadSafe<Log> {
   uint64_t active_segment_sequence_number_;
 
   // The writable file for the next allocated segment
-  std::tr1::shared_ptr<WritableFile> next_segment_file_;
+  std::shared_ptr<WritableFile> next_segment_file_;
 
   // The path for the next allocated segment.
   std::string next_segment_path_;
@@ -347,7 +348,9 @@ class Log : public RefCountedThreadSafe<Log> {
   LogState log_state_;
 
   // A reader for the previous segments that were not yet GC'd.
-  gscoped_ptr<LogReader> reader_;
+  //
+  // Will be NULL after the log is Closed().
+  std::shared_ptr<LogReader> reader_;
 
   // Index which translates between operation indexes and the position
   // of the operation in the log.
@@ -394,7 +397,7 @@ class Log : public RefCountedThreadSafe<Log> {
   scoped_refptr<MetricEntity> metric_entity_;
   gscoped_ptr<LogMetrics> metrics_;
 
-  std::tr1::shared_ptr<LogFaultHooks> log_hooks_;
+  std::shared_ptr<LogFaultHooks> log_hooks_;
 
   DISALLOW_COPY_AND_ASSIGN(Log);
 };

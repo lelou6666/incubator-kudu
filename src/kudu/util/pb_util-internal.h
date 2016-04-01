@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Classes used internally by pb_util.h.
 // This header should not be included by anything but pb_util and its tests.
@@ -28,7 +31,8 @@ namespace internal {
 // Input Stream used by ParseFromSequentialFile()
 class SequentialFileFileInputStream : public google::protobuf::io::ZeroCopyInputStream {
  public:
-  SequentialFileFileInputStream(SequentialFile *rfile, size_t buffer_size = kDefaultBufferSize)
+  explicit SequentialFileFileInputStream(SequentialFile *rfile,
+                                         size_t buffer_size = kDefaultBufferSize)
     : buffer_used_(0), buffer_offset_(0),
       buffer_size_(buffer_size), buffer_(new uint8[buffer_size_]),
       total_read_(0), rfile_(rfile) {
@@ -48,7 +52,7 @@ class SequentialFileFileInputStream : public google::protobuf::io::ZeroCopyInput
     total_read_ -= count;
   }
 
-  long ByteCount() const OVERRIDE { // NOLINT(runtime/int)
+  int64 ByteCount() const OVERRIDE {
     return total_read_;
   }
 
@@ -69,7 +73,7 @@ class SequentialFileFileInputStream : public google::protobuf::io::ZeroCopyInput
 // Output Stream used by SerializeToWritableFile()
 class WritableFileOutputStream : public google::protobuf::io::ZeroCopyOutputStream {
  public:
-  WritableFileOutputStream(WritableFile *wfile, size_t buffer_size = kDefaultBufferSize)
+  explicit WritableFileOutputStream(WritableFile *wfile, size_t buffer_size = kDefaultBufferSize)
     : buffer_offset_(0), buffer_size_(buffer_size), buffer_(new uint8[buffer_size_]),
       flushed_(0), wfile_(wfile) {
     CHECK_GT(buffer_size, 0);
@@ -96,7 +100,7 @@ class WritableFileOutputStream : public google::protobuf::io::ZeroCopyOutputStre
     buffer_offset_ -= count;
   }
 
-  long ByteCount() const OVERRIDE { // NOLINT(runtime/int)
+  int64 ByteCount() const OVERRIDE {
     return flushed_ + buffer_offset_;
   }
 

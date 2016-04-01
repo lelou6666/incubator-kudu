@@ -1,16 +1,21 @@
 // Copyright 2010 Google Inc.  All Rights Reserved
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 //
 // Classes for memory management, used by materializations
@@ -27,37 +32,34 @@
 #ifndef KUDU_UTIL_MEMORY_MEMORY_H_
 #define KUDU_UTIL_MEMORY_MEMORY_H_
 
-#include <stddef.h>
-
-#include <glog/logging.h>
-#include <tr1/memory>
-
 #include <algorithm>
-using std::copy;
-using std::max;
-using std::min;
-using std::reverse;
-using std::sort;
-using std::swap;
+#include <glog/logging.h>
 #include <limits>
-using std::numeric_limits;
+#include <memory>
+#include <stddef.h>
 #include <vector>
-using std::vector;
 
 #include "kudu/util/boost_mutex_utils.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/mutex.h"
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/gutil/logging-inl.h"
 #include "kudu/gutil/macros.h"
-#include "kudu/gutil/strings/stringpiece.h"
 #include "kudu/gutil/singleton.h"
+
+using std::copy;
+using std::max;
+using std::min;
+using std::numeric_limits;
+using std::reverse;
+using std::sort;
+using std::swap;
+using std::vector;
 
 namespace kudu {
 
 class BufferAllocator;
 class MemTracker;
-
-void OverwriteWithPattern(char* p, size_t len, StringPiece pattern);
 
 // Wrapper for a block of data allocated by a BufferAllocator. Owns the block.
 // (To release the block, destroy the buffer - it will then return it via the
@@ -472,7 +474,7 @@ class MemoryLimit : public BufferAllocator {
  public:
   // Creates a limiter based on the default, heap allocator. Quota is infinite.
   // (Can be set using SetQuota).
-  explicit MemoryLimit()
+  MemoryLimit()
       : quota_(std::numeric_limits<size_t>::max()),
         allocator_(HeapBufferAllocator::Get(), &quota_) {}
 
@@ -669,12 +671,11 @@ class MemoryTrackingBufferAllocator : public BufferAllocator {
   // through an Arena) must be able to handle the case when allocation
   // fails. If 'enforce_limit' is false (this is the default), then
   // allocation will always succeed.
-  MemoryTrackingBufferAllocator(
-      BufferAllocator* const delegate,
-      const std::tr1::shared_ptr<MemTracker>& mem_tracker,
-      bool enforce_limit = false)
+  MemoryTrackingBufferAllocator(BufferAllocator* const delegate,
+                                std::shared_ptr<MemTracker> mem_tracker,
+                                bool enforce_limit = false)
       : delegate_(delegate),
-        mem_tracker_(mem_tracker),
+        mem_tracker_(std::move(mem_tracker)),
         enforce_limit_(enforce_limit) {}
 
   virtual ~MemoryTrackingBufferAllocator() {}
@@ -704,7 +705,7 @@ class MemoryTrackingBufferAllocator : public BufferAllocator {
   virtual void FreeInternal(Buffer* buffer) OVERRIDE;
 
   BufferAllocator* delegate_;
-  std::tr1::shared_ptr<MemTracker> mem_tracker_;
+  std::shared_ptr<MemTracker> mem_tracker_;
   bool enforce_limit_;
 };
 

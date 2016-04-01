@@ -1,16 +1,19 @@
-# Copyright 2014 Cloudera, Inc.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 # Find LLVM
 #
 # It defines the following variables
@@ -25,13 +28,9 @@ if(NOT DEFINED CLANG_ROOT)
   set(CLANG_ROOT $ENV{CLANG_ROOT})
 endif()
 
-foreach(prog_name llvm-config llvm-config-3.4)
-  find_program(LLVM_CONFIG_EXECUTABLE ${prog_name} DOC "${prog_name} executable"
-    HINTS ${CLANG_ROOT}/bin)
-  if(LLVM_CONFIG_EXECUTABLE)
-    break()
-  endif()
-endforeach(prog_name)
+find_program(LLVM_CONFIG_EXECUTABLE llvm-config
+  DOC "llvm-config executable"
+  HINTS ${CLANG_ROOT}/bin)
 
 if(LLVM_CONFIG_EXECUTABLE)
   message(STATUS "LLVM llvm-config found at: ${LLVM_CONFIG_EXECUTABLE}")
@@ -45,11 +44,8 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-string(REGEX REPLACE "^([0-9]+)\\.([0-9]+).*" "\\1" LLVM_VERSION_MAJOR
-	     "${LLVM_VERSION}")
-
-string(REGEX REPLACE "^([0-9]+)\\.([0-9]+).*" "\\2" LLVM_VERSION_MINOR
-	     "${LLVM_VERSION}")
+string(REGEX REPLACE "^([0-9]+)\\.([0-9]+).*" "\\1" LLVM_VERSION_MAJOR ${LLVM_VERSION})
+string(REGEX REPLACE "^([0-9]+)\\.([0-9]+).*" "\\2" LLVM_VERSION_MINOR ${LLVM_VERSION})
 
 execute_process(
   COMMAND ${LLVM_CONFIG_EXECUTABLE} --includedir
@@ -79,6 +75,6 @@ execute_process(
   COMMAND ${LLVM_CONFIG_EXECUTABLE} --libs ${LLVM_FIND_COMPONENTS}
   OUTPUT_VARIABLE LLVM_LIBS
   OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
+)
 
 set(LLVM_FOUND TRUE)

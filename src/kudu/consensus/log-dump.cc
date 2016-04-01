@@ -1,21 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 #include "kudu/common/row_operations.h"
@@ -48,6 +51,7 @@ using consensus::CommitMsg;
 using consensus::OperationType;
 using consensus::ReplicateMsg;
 using tserver::WriteRequestPB;
+using std::shared_ptr;
 using std::string;
 using std::vector;
 using std::cout;
@@ -117,7 +121,7 @@ Status PrintDecodedWriteRequestPB(const string& indent,
   }
 
   int i = 0;
-  BOOST_FOREACH(const DecodedRowOperation& op, ops) {
+  for (const DecodedRowOperation& op : ops) {
     // TODO (KUDU-515): Handle the case when a tablet's schema changes
     // mid-segment.
     cout << indent << "op " << (i++) << ": " << op.ToString(tablet_schema) << endl;
@@ -160,7 +164,7 @@ Status PrintSegment(const scoped_refptr<ReadableLogSegment>& segment) {
   Schema tablet_schema;
   RETURN_NOT_OK(SchemaFromPB(segment->header().schema(), &tablet_schema));
 
-  BOOST_FOREACH(LogEntryPB* entry, entries) {
+  for (LogEntryPB* entry : entries) {
 
     if (print_type == PRINT_PB) {
       if (FLAGS_truncate_data > 0) {
@@ -181,23 +185,23 @@ Status PrintSegment(const scoped_refptr<ReadableLogSegment>& segment) {
   return Status::OK();
 }
 
-Status DumpLog(const string& tablet_oid) {
+Status DumpLog(const string& tablet_id) {
   Env *env = Env::Default();
-  gscoped_ptr<LogReader> reader;
+  shared_ptr<LogReader> reader;
   FsManagerOpts fs_opts;
   fs_opts.read_only = true;
   FsManager fs_manager(env, fs_opts);
   RETURN_NOT_OK(fs_manager.Open());
   RETURN_NOT_OK(LogReader::Open(&fs_manager,
                                 scoped_refptr<LogIndex>(),
-                                tablet_oid,
+                                tablet_id,
                                 scoped_refptr<MetricEntity>(),
                                 &reader));
 
   SegmentSequence segments;
   RETURN_NOT_OK(reader->GetSegmentsSnapshot(&segments));
 
-  BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments) {
+  for (const scoped_refptr<ReadableLogSegment>& segment : segments) {
     RETURN_NOT_OK(PrintSegment(segment));
   }
 

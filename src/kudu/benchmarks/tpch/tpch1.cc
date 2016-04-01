@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This utility will first try to load the data from the given path if the
 // tablet doesn't already exist at the given location. It will then run
@@ -54,8 +57,7 @@
 // 'R','F',37719753,56568041380.90,53741292684.6,55889619119.8,25.5,38250.9,0.1,1478870
 // ====
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <stdlib.h>
 
 #include <glog/logging.h>
@@ -96,7 +98,7 @@ using client::KuduColumnSchema;
 using client::KuduRowResult;
 using client::KuduSchema;
 
-using std::tr1::unordered_map;
+using std::unordered_map;
 
 struct Result {
   int32_t l_quantity;
@@ -115,7 +117,7 @@ struct SliceMapKey {
 
   // This copies the string out of the result buffer
   void RelocateSlice() {
-    uint8_t *buf = new uint8_t[slice.size()];
+    auto buf = new uint8_t[slice.size()];
     slice.relocate(buf);
   }
 
@@ -161,7 +163,7 @@ void Tpch1(RpcLineItemDAO *dao) {
   vector<KuduRowResult> rows;
   while (scanner->HasMore()) {
     scanner->GetNext(&rows);
-    BOOST_FOREACH(const KuduRowResult& row, rows) {
+    for (const KuduRowResult& row : rows) {
       matching_rows++;
 
       SliceMapKey l_returnflag;
@@ -178,7 +180,7 @@ void Tpch1(RpcLineItemDAO *dao) {
       CHECK_OK(row.GetDouble(6, &l_tax));
 
       slice_map *linestatus_map;
-      slice_map_map::iterator it = results.find(l_returnflag);
+      auto it = results.find(l_returnflag);
       if (it == results.end()) {
         linestatus_map = new slice_map;
         l_returnflag.RelocateSlice();
@@ -187,7 +189,7 @@ void Tpch1(RpcLineItemDAO *dao) {
         linestatus_map = it->second;
       }
 
-      slice_map::iterator inner_it = linestatus_map->find(l_linestatus);
+      auto inner_it = linestatus_map->find(l_linestatus);
       if (inner_it == linestatus_map->end()) {
         r = new Result();
         l_linestatus.RelocateSlice();
@@ -203,13 +205,12 @@ void Tpch1(RpcLineItemDAO *dao) {
     }
   }
   LOG(INFO) << "Result: ";
-  for (slice_map_map::iterator ii = results.begin();
-       ii != results.end(); ++ii) {
-    const SliceMapKey returnflag = ii->first;
-    slice_map *maps = ii->second;
-    for (slice_map::iterator jj = maps->begin(); jj != maps->end(); ++jj) {
-      const SliceMapKey linestatus = jj->first;
-      Result *r = jj->second;
+  for (const auto& result : results) {
+    const SliceMapKey returnflag = result.first;
+    const auto* maps = result.second;
+    for (const auto& map : *maps) {
+      const SliceMapKey linestatus = map.first;
+      Result* r = map.second;
       double avg_q = static_cast<double>(r->l_quantity) / r->count;
       double avg_ext_p = r->l_extendedprice / r->count;
       double avg_discount = r->l_discount / r->count;
@@ -217,7 +218,7 @@ void Tpch1(RpcLineItemDAO *dao) {
                    linestatus.slice.ToString() << ", " <<
                    r->l_quantity << ", " <<
                    StringPrintf("%.2f", r->l_extendedprice) << ", " <<
-                   // TODO those two are missing at the moment, might want to chagne Result
+                   // TODO those two are missing at the moment, might want to change Result
                    // sum(l_extendedprice * (1 - l_discount))
                    // sum(l_extendedprice * (1 - l_discount) * (1 + l_tax))
                    StringPrintf("%.2f", avg_q) << ", " <<

@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/master/ts_manager.h"
 
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <boost/thread/mutex.hpp>
 #include <vector>
@@ -30,8 +32,8 @@ DEFINE_int32(tserver_unresponsive_timeout_ms, 60 * 1000,
              "selected when assigning replicas during table creation or re-replication.");
 TAG_FLAG(tserver_unresponsive_timeout_ms, advanced);
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 
 namespace kudu {
@@ -62,14 +64,14 @@ Status TSManager::LookupTS(const NodeInstancePB& instance,
 }
 
 bool TSManager::LookupTSByUUID(const string& uuid,
-                               std::tr1::shared_ptr<TSDescriptor>* ts_desc) {
+                               std::shared_ptr<TSDescriptor>* ts_desc) {
   boost::shared_lock<rw_spinlock> l(lock_);
   return FindCopy(servers_by_id_, uuid, ts_desc);
 }
 
 Status TSManager::RegisterTS(const NodeInstancePB& instance,
                              const TSRegistrationPB& registration,
-                             std::tr1::shared_ptr<TSDescriptor>* desc) {
+                             std::shared_ptr<TSDescriptor>* desc) {
   boost::lock_guard<rw_spinlock> l(lock_);
   const string& uuid = instance.permanent_uuid();
 
@@ -100,7 +102,7 @@ void TSManager::GetAllLiveDescriptors(vector<shared_ptr<TSDescriptor> > *descs) 
 
   boost::shared_lock<rw_spinlock> l(lock_);
   descs->reserve(servers_by_id_.size());
-  BOOST_FOREACH(const TSDescriptorMap::value_type& entry, servers_by_id_) {
+  for (const TSDescriptorMap::value_type& entry : servers_by_id_) {
     const shared_ptr<TSDescriptor>& ts = entry.second;
     if (ts->TimeSinceHeartbeat().ToMilliseconds() < FLAGS_tserver_unresponsive_timeout_ms) {
       descs->push_back(ts);

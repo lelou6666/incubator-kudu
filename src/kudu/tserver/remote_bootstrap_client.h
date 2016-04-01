@@ -1,21 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TSERVER_REMOTE_BOOTSTRAP_CLIENT_H
 #define KUDU_TSERVER_REMOTE_BOOTSTRAP_CLIENT_H
 
 #include <string>
-#include <tr1/memory>
+#include <memory>
 #include <vector>
 
 #include <gtest/gtest_prod.h>
@@ -69,10 +72,9 @@ class RemoteBootstrapClient {
   // Construct the remote bootstrap client.
   // 'fs_manager' and 'messenger' must remain valid until this object is destroyed.
   // 'client_permanent_uuid' is the permanent UUID of the caller server.
-  RemoteBootstrapClient(const std::string& tablet_id,
-                        FsManager* fs_manager,
-                        const std::tr1::shared_ptr<rpc::Messenger>& messenger,
-                        const std::string& client_permanent_uuid);
+  RemoteBootstrapClient(std::string tablet_id, FsManager* fs_manager,
+                        std::shared_ptr<rpc::Messenger> messenger,
+                        std::string client_permanent_uuid);
 
   // Attempt to clean up resources on the remote end by sending an
   // EndRemoteBootstrapSession() RPC
@@ -177,7 +179,7 @@ class RemoteBootstrapClient {
   // Set-once members.
   const std::string tablet_id_;
   FsManager* const fs_manager_;
-  const std::tr1::shared_ptr<rpc::Messenger> messenger_;
+  const std::shared_ptr<rpc::Messenger> messenger_;
   const std::string permanent_uuid_;
 
   // State flags that enforce the progress of remote bootstrap.
@@ -196,13 +198,14 @@ class RemoteBootstrapClient {
   gscoped_ptr<consensus::ConsensusMetadata> cmeta_;
 
   tablet::TabletStatusListener* status_listener_;
-  std::tr1::shared_ptr<RemoteBootstrapServiceProxy> proxy_;
+  std::shared_ptr<RemoteBootstrapServiceProxy> proxy_;
   std::string session_id_;
   uint64_t session_idle_timeout_millis_;
   gscoped_ptr<tablet::TabletSuperBlockPB> superblock_;
   gscoped_ptr<tablet::TabletSuperBlockPB> new_superblock_;
   gscoped_ptr<consensus::ConsensusStatePB> remote_committed_cstate_;
   std::vector<uint64_t> wal_seqnos_;
+  int64_t start_time_micros_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteBootstrapClient);
 };

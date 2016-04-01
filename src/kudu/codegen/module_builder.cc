@@ -1,16 +1,20 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 #include "kudu/codegen/module_builder.h"
 
 #include <cstdlib>
@@ -18,27 +22,26 @@
 #include <string>
 #include <vector>
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
-#include <llvm/LinkAllPasses.h>
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/Passes.h>
-#include <llvm/ExecutionEngine/MCJIT.h>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
-#include <llvm/IR/IRBuilder.h>
+#include <llvm/ExecutionEngine/MCJIT.h>
+#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
-#include <llvm/PassManager.h>
 #include <llvm/IR/Type.h>
-#include <llvm/IR/DerivedTypes.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/Support/MemoryBuffer.h>
-#include <llvm/Support/SourceMgr.h>
 #include <llvm/Support/raw_os_ostream.h>
+#include <llvm/Support/SourceMgr.h>
 #include <llvm/Transforms/IPO.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
 
+#include "kudu/codegen/precompiled.ll.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/status.h"
@@ -57,12 +60,12 @@ using llvm::ConstantInt;
 using llvm::EngineBuilder;
 using llvm::ExecutionEngine;
 using llvm::Function;
-using llvm::FunctionPassManager;
 using llvm::FunctionType;
 using llvm::IntegerType;
+using llvm::legacy::FunctionPassManager;
+using llvm::legacy::PassManager;
 using llvm::LLVMContext;
 using llvm::Module;
-using llvm::PassManager;
 using llvm::PassManagerBuilder;
 using llvm::PointerType;
 using llvm::raw_os_ostream;
@@ -70,18 +73,13 @@ using llvm::SMDiagnostic;
 using llvm::TargetMachine;
 using llvm::Type;
 using llvm::Value;
+using std::move;
 using std::ostream;
 using std::string;
 using std::stringstream;
+using std::unique_ptr;
 using std::vector;
 using strings::Substitute;
-
-// These symbols are the beginning and end of the precompiled IR code
-// which is linked into this library. Taking the address of them results
-// in a pointer to the beginning or end of the IR code itself. The IR
-// code is precompiled and converted to an ELF object in CMakeLists.txt.
-extern "C" char _binary_precompiled_ll_start;
-extern "C" char _binary_precompiled_ll_end;
 
 namespace kudu {
 namespace codegen {
@@ -112,8 +110,8 @@ string ToString(const Function* f) {
 }
 
 bool ModuleContains(const Module& m, const Function* fptr) {
-  for (Module::const_iterator it = m.begin(); it != m.end(); ++it) {
-    if (&*it == fptr) return true;
+  for (const auto& function : m) {
+    if (&function == fptr) return true;
   }
   return false;
 }
@@ -130,14 +128,11 @@ ModuleBuilder::~ModuleBuilder() {}
 Status ModuleBuilder::Init() {
   CHECK_EQ(state_, kUninitialized) << "Cannot Init() twice";
 
-  const char* ir_data_buf = &_binary_precompiled_ll_start;
-  ptrdiff_t ir_data_len = &_binary_precompiled_ll_end - &_binary_precompiled_ll_start;
-
   // Even though the LLVM API takes an explicit length for the input IR,
   // it appears to actually depend on NULL termination. We assert for it
   // here because otherwise we end up with very strange LLVM errors which
   // are tough to debug.
-  CHECK_EQ('\0', ir_data_buf[ir_data_len - 1]) << "IR not properly NULL-terminated";
+  CHECK_EQ('\0', precompiled_ll_data[precompiled_ll_len]) << "IR not properly NULL-terminated";
 
   // However, despite depending on the buffer being null terminated, it doesn't
   // expect the null terminator to be included in the length of the buffer.
@@ -145,13 +140,13 @@ Status ModuleBuilder::Init() {
   //   > In addition to basic access to the characters in the file, this interface
   //   > guarantees you can read one character past the end of the file, and that this
   //   > character will read as '\0'.
-  llvm::StringRef ir_data(ir_data_buf, ir_data_len - 1);
+  llvm::StringRef ir_data(precompiled_ll_data, precompiled_ll_len);
   CHECK_GT(ir_data.size(), 0) << "IR not properly linked";
 
   // Parse IR.
   SMDiagnostic err;
-  gscoped_ptr<llvm::MemoryBuffer> ir_buf(llvm::MemoryBuffer::getMemBuffer(ir_data));
-  module_.reset(llvm::ParseIR(ir_buf.release(), err, *context_));
+  unique_ptr<llvm::MemoryBuffer> ir_buf(llvm::MemoryBuffer::getMemBuffer(ir_data));
+  module_ = llvm::parseIR(ir_buf->getMemBufferRef(), err, *context_);
   if (!module_) {
     return Status::ConfigurationError("Could not parse IR", ToString(err));
   }
@@ -226,7 +221,7 @@ void DoOptimizations(ExecutionEngine* engine,
   fpm.doInitialization();
 
   // For each function in the module, optimize it
-  BOOST_FOREACH(Function& f, *module) {
+  for (Function& f : *module) {
     // The bool return value here just indicates whether the passes did anything.
     // We can safely expect that many functions are too small to do any optimization.
     ignore_result(fpm.run(f));
@@ -235,10 +230,6 @@ void DoOptimizations(ExecutionEngine* engine,
 
   PassManager module_passes;
 
-  // Specifying the data layout is necessary for some optimizations (e.g. removing many of
-  // the loads/stores produced by structs).
-  // Transfers ownership of the data layout to module_passes.
-  module_passes.add(new llvm::DataLayout(module->getDataLayout()));
   // Internalize all functions that aren't explicitly specified with external linkage.
   module_passes.add(llvm::createInternalizePass(external_functions));
   pass_builder.populateModulePassManager(module_passes);
@@ -250,9 +241,22 @@ void DoOptimizations(ExecutionEngine* engine,
 
 #endif
 
+vector<string> GetHostCPUAttrs() {
+  // LLVM's ExecutionEngine expects features to be enabled or disabled with a list
+  // of strings like ["+feature1", "-feature2"].
+  vector<string> attrs;
+  llvm::StringMap<bool> cpu_features;
+  llvm::sys::getHostCPUFeatures(cpu_features);
+  for (const auto& entry : cpu_features) {
+    attrs.emplace_back(
+        Substitute("$0$1", entry.second ? "+" : "-", entry.first().data()));
+  }
+  return attrs;
+}
+
 } // anonymous namespace
 
-Status ModuleBuilder::Compile(gscoped_ptr<ExecutionEngine>* out) {
+Status ModuleBuilder::Compile(unique_ptr<ExecutionEngine>* out) {
   CHECK_EQ(state_, kBuilding);
 
   // Attempt to generate the engine
@@ -262,43 +266,47 @@ Status ModuleBuilder::Compile(gscoped_ptr<ExecutionEngine>* out) {
 #else
   Level opt_level = llvm::CodeGenOpt::None;
 #endif
-  EngineBuilder ebuilder(module_.get());
+  Module* module = module_.get();
+  EngineBuilder ebuilder(move(module_));
   ebuilder.setErrorStr(&str);
-  ebuilder.setUseMCJIT(true);
   ebuilder.setOptLevel(opt_level);
+  ebuilder.setMCPU(llvm::sys::getHostCPUName());
+  ebuilder.setMAttrs(GetHostCPUAttrs());
   target_ = ebuilder.selectTarget();
-  gscoped_ptr<ExecutionEngine> local_engine(ebuilder.create(target_));
+  unique_ptr<ExecutionEngine> local_engine(ebuilder.create(target_));
   if (!local_engine) {
     return Status::ConfigurationError("Code generation for module failed. "
                                       "Could not start ExecutionEngine",
                                       str);
   }
+  module->setDataLayout(target_->createDataLayout());
 
 #if CODEGEN_MODULE_BUILDER_DO_OPTIMIZATIONS
-  DoOptimizations(local_engine.get(), module_.get(), GetFunctionNames());
+  DoOptimizations(local_engine.get(), module, GetFunctionNames());
 #endif
 
   // Compile the module
   local_engine->finalizeObject();
 
   // Satisfy the promises
-  BOOST_FOREACH(JITFuture& fut, futures_) {
+  for (JITFuture& fut : futures_) {
     *fut.actual_f_ = local_engine->getPointerToFunction(fut.llvm_f_);
-    if (*fut.actual_f_ == NULL) {
+    if (*fut.actual_f_ == nullptr) {
       return Status::NotFound(
         "Code generation for module failed. Could not find function \""
         + ToString(fut.llvm_f_) + "\".");
     }
   }
 
-  // For LLVM 3.4, generated code lasts exactly as long as the execution engine
+  // For LLVM 3.7, generated code lasts exactly as long as the execution engine
   // that created it does. Furthermore, if the module is removed from the
   // engine's ownership, neither the context nor the module have to stick
-  // around for the jitted code to run. NOTE: this may change in LLVM 3.5
-  CHECK(local_engine->removeModule(module_.get())); // releases ownership
+  // around for the jitted code to run.
+  CHECK(local_engine->removeModule(module)); // releases ownership
+  module_.reset(module);
 
   // Upon success write to the output parameter
-  *out = local_engine.Pass();
+  out->swap(local_engine);
   state_ = kCompiled;
   return Status::OK();
 }
@@ -310,7 +318,7 @@ TargetMachine* ModuleBuilder::GetTargetMachine() const {
 
 vector<const char*> ModuleBuilder::GetFunctionNames() const {
   vector<const char*> ret;
-  BOOST_FOREACH(const JITFuture& fut, futures_) {
+  for (const JITFuture& fut : futures_) {
     const char* name = CHECK_NOTNULL(fut.llvm_f_)->getName().data();
     ret.push_back(name);
   }

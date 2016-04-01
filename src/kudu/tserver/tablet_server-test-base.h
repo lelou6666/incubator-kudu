@@ -1,35 +1,35 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_TSERVER_TABLET_SERVER_TEST_BASE_H_
 #define KUDU_TSERVER_TABLET_SERVER_TEST_BASE_H_
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
-#include <gtest/gtest.h>
-
 #include <algorithm>
-#include <tr1/memory>
-#include <vector>
-#include <string>
 #include <assert.h>
-#include <stdint.h>
-#include <sys/mman.h>
+#include <gtest/gtest.h>
 #include <iostream>
-#include <sys/types.h>
+#include <memory>
 #include <signal.h>
+#include <stdint.h>
+#include <string>
+#include <sys/mman.h>
+#include <sys/types.h>
 #include <utility>
+#include <vector>
 
 #include "kudu/common/wire_protocol-test-util.h"
 #include "kudu/consensus/consensus.proxy.h"
@@ -325,7 +325,7 @@ class TabletServerTestBase : public KuduTest {
     ASSERT_OK(ExtractRowsFromRowBlockPB(projection, *rrpb,
                                         indirect, &direct, &rows));
     VLOG(1) << "Round trip got " << rows.size() << " rows";
-    BOOST_FOREACH(const uint8_t* row_ptr, rows) {
+    for (const uint8_t* row_ptr : rows) {
       ConstContiguousRow row(&projection, row_ptr);
       results->push_back(projection.DebugRow(row));
     }
@@ -450,7 +450,7 @@ class TabletServerTestBase : public KuduTest {
   Schema key_schema_;
   gscoped_ptr<RowBuilder> rb_;
 
-  shared_ptr<rpc::Messenger> client_messenger_;
+  std::shared_ptr<rpc::Messenger> client_messenger_;
 
   gscoped_ptr<MiniTabletServer> mini_server_;
   scoped_refptr<tablet::TabletPeer> tablet_peer_;

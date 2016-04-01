@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/consensus.h"
 
-#include <boost/foreach.hpp>
 #include <set>
 
 #include "kudu/consensus/log_util.h"
@@ -25,7 +27,7 @@
 namespace kudu {
 namespace consensus {
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
 
 ConsensusBootstrapInfo::ConsensusBootstrapInfo()
@@ -39,12 +41,11 @@ ConsensusBootstrapInfo::~ConsensusBootstrapInfo() {
 
 ConsensusRound::ConsensusRound(Consensus* consensus,
                                gscoped_ptr<ReplicateMsg> replicate_msg,
-                               const ConsensusReplicatedCallback& replicated_cb)
+                               ConsensusReplicatedCallback replicated_cb)
     : consensus_(consensus),
       replicate_msg_(new RefCountedReplicate(replicate_msg.release())),
-      replicated_cb_(replicated_cb),
-      bound_term_(-1) {
-}
+      replicated_cb_(std::move(replicated_cb)),
+      bound_term_(-1) {}
 
 ConsensusRound::ConsensusRound(Consensus* consensus,
                                const ReplicateRefPtr& replicate_msg)
@@ -73,19 +74,19 @@ Status ConsensusRound::CheckBoundTerm(int64_t current_term) const {
 scoped_refptr<ConsensusRound> Consensus::NewRound(
     gscoped_ptr<ReplicateMsg> replicate_msg,
     const ConsensusReplicatedCallback& replicated_cb) {
-  return make_scoped_refptr(new ConsensusRound(this, replicate_msg.Pass(), replicated_cb));
+  return make_scoped_refptr(new ConsensusRound(this, std::move(replicate_msg), replicated_cb));
 }
 
-void Consensus::SetFaultHooks(const std::tr1::shared_ptr<ConsensusFaultHooks>& hooks) {
+void Consensus::SetFaultHooks(const shared_ptr<ConsensusFaultHooks>& hooks) {
   fault_hooks_ = hooks;
 }
 
-const std::tr1::shared_ptr<Consensus::ConsensusFaultHooks>& Consensus::GetFaultHooks() const {
+const shared_ptr<Consensus::ConsensusFaultHooks>& Consensus::GetFaultHooks() const {
   return fault_hooks_;
 }
 
 Status Consensus::ExecuteHook(HookPoint point) {
-  if (PREDICT_FALSE(fault_hooks_.get() != NULL)) {
+  if (PREDICT_FALSE(fault_hooks_.get() != nullptr)) {
     switch (point) {
       case Consensus::PRE_START: return fault_hooks_->PreStart();
       case Consensus::POST_START: return fault_hooks_->PostStart();

@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -54,6 +57,8 @@ import static org.kududb.client.ExternalConsistencyMode.CLIENT_PROPAGATED;
  * transaction. Meanwhile another concurrent Session object can safely run
  * non-transactional work or other transactions without interfering.<p>
  *
+ * Therefore, this class is <b>not</b> thread-safe.<p>
+ *
  * Additionally, there is a guarantee that writes from different sessions do not
  * get batched together into the same RPCs -- this means that latency-sensitive
  * clients can run through the same AsyncKuduClient object as throughput-oriented
@@ -82,6 +87,7 @@ public class AsyncKuduSession implements SessionConfiguration {
 
   private final AsyncKuduClient client;
   private final Random randomizer = new Random();
+  private final ErrorCollector errorCollector;
   private int interval = 1000;
   private int mutationBufferSpace = 1000; // TODO express this in terms of data size.
   private float mutationBufferLowWatermarkPercentage = 0.5f;
@@ -138,6 +144,7 @@ public class AsyncKuduSession implements SessionConfiguration {
     this.consistencyMode = CLIENT_PROPAGATED;
     this.timeoutMs = client.getDefaultOperationTimeoutMs();
     setMutationBufferLowWatermark(this.mutationBufferLowWatermarkPercentage);
+    errorCollector = new ErrorCollector(mutationBufferSpace);
   }
 
   @Override
@@ -225,6 +232,16 @@ public class AsyncKuduSession implements SessionConfiguration {
     this.ignoreAllDuplicateRows = ignoreAllDuplicateRows;
   }
 
+  @Override
+  public int countPendingErrors() {
+    return errorCollector.countErrors();
+  }
+
+  @Override
+  public RowErrorsAndOverflowStatus getPendingErrors() {
+    return errorCollector.getErrors();
+  }
+
   /**
    * Flushes the buffered operations and marks this sessions as closed.
    * See the javadoc on {@link #flush()} on how to deal with exceptions coming out of this method.
@@ -274,14 +291,28 @@ public class AsyncKuduSession implements SessionConfiguration {
     public Deferred<List<OperationResponse>> call(ArrayList<BatchResponse> batchResponsesList)
         throws Exception {
       Deferred<List<OperationResponse>> deferred = new Deferred<>();
-      if (batchResponsesList == null || batchResponsesList.isEmpty()) {
+      if (batchResponsesList == null) {
         deferred.callback(null);
         return deferred;
       }
 
-      // TODO scan the batch responses first to determine the real size instead of guessing.
-      ArrayList<OperationResponse> responsesList =
-          new ArrayList<>(batchResponsesList.size() * mutationBufferSpace);
+      // flushTablet() can return null when a tablet we wanted to flush was already flushed. Those
+      // nulls along with BatchResponses are then put in a list by Deferred.group(). We first need
+      // to filter the nulls out.
+      batchResponsesList.removeAll(Collections.singleton(null));
+      if (batchResponsesList.isEmpty()) {
+        deferred.callback(null);
+        return deferred;
+      }
+
+      // First compute the size of the union of all the lists so that we don't trigger expensive
+      // list growths while adding responses to it.
+      int size = 0;
+      for (BatchResponse batchResponse : batchResponsesList) {
+        size += batchResponse.getIndividualResponses().size();
+      }
+
+      ArrayList<OperationResponse> responsesList = new ArrayList<>(size);
       for (BatchResponse batchResponse : batchResponsesList) {
         responsesList.addAll(batchResponse.getIndividualResponses());
       }
@@ -294,12 +325,12 @@ public class AsyncKuduSession implements SessionConfiguration {
    * This will flush all the batches but not the operations that are currently in lookup.
    */
   private Deferred<ArrayList<BatchResponse>> flushAllBatches() {
-    HashMap<Slice, Batch> copyOfOps;
-    final ArrayList<Deferred<BatchResponse>> d = new ArrayList<>(operations.size());
+    Map<Slice, Batch> copyOfOps;
+    final List<Deferred<BatchResponse>> d = new ArrayList<>(operations.size());
     synchronized (this) {
       copyOfOps = new HashMap<>(operations);
     }
-    for (Map.Entry<Slice, Batch> entry: copyOfOps.entrySet()) {
+    for (Map.Entry<Slice, Batch> entry : copyOfOps.entrySet()) {
       d.add(flushTablet(entry.getKey(), entry.getValue()));
     }
     return Deferred.group(d);
@@ -330,12 +361,16 @@ public class AsyncKuduSession implements SessionConfiguration {
       return AsyncKuduClient.tooManyAttemptsOrTimeout(operation, null);
     }
 
+    // This can be called multiple times but it's fine, we don't allow "thawing".
+    operation.getRow().freeze();
+
     // If we autoflush, just send it to the TS
     if (flushMode == FlushMode.AUTO_FLUSH_SYNC) {
       if (timeoutMs != 0) {
         operation.setTimeoutMillis(timeoutMs);
       }
       operation.setExternalConsistencyMode(this.consistencyMode);
+      operation.setIgnoreAllDuplicateRows(ignoreAllDuplicateRows);
       return client.sendRpcToTablet(operation);
     }
 
@@ -537,7 +572,7 @@ public class AsyncKuduSession implements SessionConfiguration {
 
   /**
    * Creates callbacks to handle a multi-put and adds them to the request.
-   * @param request The request for which we must handle the response.
+   * @param request the request for which we must handle the response
    */
   private void addBatchCallbacks(final Batch request) {
     final class BatchCallback implements
@@ -551,7 +586,11 @@ public class AsyncKuduSession implements SessionConfiguration {
         // Send individualized responses to all the operations in this batch.
         for (OperationResponse operationResponse : response.getIndividualResponses()) {
           operationResponse.getOperation().callback(operationResponse);
+          if (flushMode == FlushMode.AUTO_FLUSH_BACKGROUND && operationResponse.hasRowError()) {
+            errorCollector.addError(operationResponse.getRowError());
+          }
         }
+
         return response;
       }
 
@@ -608,14 +647,27 @@ public class AsyncKuduSession implements SessionConfiguration {
       // was already flushed.
       if (operations.get(tablet) != expectedBatch) {
         LOG.trace("Had to flush a tablet but it was already flushed: " + Bytes.getString(tablet));
+        // It is OK to return null here, since we currently do not use the returned value
+        // when doing background flush or auto flushing when buffer is full.
+        // The returned value is used when doing manual flush, but it will not run into this
+        // condition, or there is a bug.
         return Deferred.fromResult(null);
       }
 
       if (operationsInFlight.containsKey(tablet)) {
-        LOG.trace("This tablet is already in flight, attaching a callback to retry later: " +
-            Bytes.getString(tablet));
-        return operationsInFlight.get(tablet).addCallbackDeferring(
-            new FlushRetryCallback(tablet, operations.get(tablet)));
+        if (LOG.isTraceEnabled()) {
+          LOG.trace("Tablet " + Bytes.getString(tablet)
+              + " is already in flight, attaching a callback to retry "
+              + expectedBatch.toDebugString() + " later.");
+        }
+        // No matter previous batch get error or not, we still have to flush this batch.
+        FlushRetryCallback retryCallback = new FlushRetryCallback(tablet, operations.get(tablet));
+        FlushRetryErrback retryErrback = new FlushRetryErrback(tablet, operations.get(tablet));
+        // Note that if we do manual flushing multiple times when previous batch is still inflight,
+        // we may add the same callback multiple times, later retry of flushTablet will return null
+        // immediately. Since it is an illegal use case, we do not handle this currently.
+        operationsInFlight.get(tablet).addCallbacks(retryCallback, retryErrback);
+        return expectedBatch.getDeferred();
       }
 
       batch = operations.remove(tablet);
@@ -641,7 +693,7 @@ public class AsyncKuduSession implements SessionConfiguration {
    * Simple callback so that we try to flush this tablet again if we were waiting on the previous
    * Batch to finish.
    */
-  class FlushRetryCallback implements Callback<Deferred<BatchResponse>, BatchResponse> {
+  class FlushRetryCallback implements Callback<BatchResponse, BatchResponse> {
     private final Slice tablet;
     private final Batch expectedBatch;
     public FlushRetryCallback(Slice tablet, Batch expectedBatch) {
@@ -650,10 +702,45 @@ public class AsyncKuduSession implements SessionConfiguration {
     }
 
     @Override
-    public Deferred<BatchResponse> call(BatchResponse o) throws Exception {
-      LOG.trace("Previous batch in flight is done, flushing this tablet again: " +
-          Bytes.getString(tablet));
-      return flushTablet(tablet, expectedBatch);
+    public BatchResponse call(BatchResponse o) throws Exception {
+      if (LOG.isTraceEnabled()) {
+        LOG.trace("Previous batch in flight is done. " + toString());
+      }
+      flushTablet(tablet, expectedBatch);
+      return o;
+    }
+
+    @Override
+    public String toString() {
+      return String.format("FlushRetryCallback: retry flush tablet %s %s", Bytes.getString(tablet),
+          expectedBatch.toDebugString());
+    }
+  }
+
+  /**
+   * Same callback as above FlushRetryCallback, for the case that previous batch has error.
+   */
+  class FlushRetryErrback implements Callback<Exception, Exception> {
+    private final Slice tablet;
+    private final Batch expectedBatch;
+    public FlushRetryErrback(Slice tablet, Batch expectedBatch) {
+      this.tablet = tablet;
+      this.expectedBatch = expectedBatch;
+    }
+
+    @Override
+    public Exception call(Exception e) throws Exception {
+      if (LOG.isTraceEnabled()) {
+        LOG.trace("Previous batch ended with an error. " + toString());
+      }
+      flushTablet(tablet, expectedBatch);
+      return e;
+    }
+
+    @Override
+    public String toString() {
+      return String.format("FlushRetryErrback: retry flush tablet %s %s", Bytes.getString(tablet),
+          expectedBatch.toDebugString());
     }
   }
 
@@ -667,6 +754,11 @@ public class AsyncKuduSession implements SessionConfiguration {
       public BatchResponse call(BatchResponse o) throws Exception {
         tabletInFlightDone(tablet);
         return o;
+      }
+
+      @Override
+      public String toString() {
+        return "callback: mark tablet " + Bytes.getString(tablet) + " inflight done";
       }
     };
   }
@@ -682,6 +774,11 @@ public class AsyncKuduSession implements SessionConfiguration {
       public Exception call(Exception e) throws Exception {
         tabletInFlightDone(tablet);
         return e;
+      }
+
+      @Override
+      public String toString() {
+        return "errback: mark tablet " + Bytes.getString(tablet) + " inflight done";
       }
     };
   }

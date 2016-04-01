@@ -1,23 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_DELTA_COMPACTION_H
 #define KUDU_TABLET_DELTA_COMPACTION_H
 
+#include <memory>
 #include <string>
-#include <vector>
+#include <unordered_map>
 #include <utility>
-#include <tr1/unordered_map>
+#include <vector>
 
 #include "kudu/cfile/cfile_writer.h"
 #include "kudu/tablet/deltafile.h"
@@ -48,12 +52,11 @@ class MajorDeltaCompaction {
   //
   // TODO: is base_schema supposed to be the same as base_data->schema()? how about
   // in an ALTER scenario?
-  MajorDeltaCompaction(FsManager* fs_manager,
-                       const Schema& base_schema,
-                       CFileSet* base_data,
-                       const shared_ptr<DeltaIterator>& delta_iter,
-                       const std::vector<std::tr1::shared_ptr<DeltaStore> >& included_stores,
-                       const std::vector<int>& col_ids);
+  MajorDeltaCompaction(
+      FsManager* fs_manager, const Schema& base_schema, CFileSet* base_data,
+      std::shared_ptr<DeltaIterator> delta_iter,
+      std::vector<std::shared_ptr<DeltaStore> > included_stores,
+      const std::vector<ColumnId>& col_ids);
   ~MajorDeltaCompaction();
 
   // Executes the compaction.
@@ -98,7 +101,7 @@ class MajorDeltaCompaction {
   Schema partial_schema_;
 
   // The column ids to compact.
-  const std::vector<int> column_ids_;
+  const std::vector<ColumnId> column_ids_;
 
   // Inputs:
   //-----------------
@@ -110,7 +113,7 @@ class MajorDeltaCompaction {
   const SharedDeltaStoreVector included_stores_;
 
   // The merged view of the deltas from included_stores_.
-  const shared_ptr<DeltaIterator> delta_iter_;
+  const std::shared_ptr<DeltaIterator> delta_iter_;
 
   // Outputs:
   gscoped_ptr<MultiColumnWriter> base_data_writer_;

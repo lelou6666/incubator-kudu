@@ -1,45 +1,33 @@
 #!/bin/bash
-# Copyright 2013 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# Note regarding the autoreconf calls:
-#
-# Mac OS 10.8 shipped a clang-based C++ toolchain that provides both GNU libstdc++ and LLVM's
-# libc++. The default library used is libstdc++, though one can override that with the
-# -stdlib=libc++ option to clang (while compiling and linking). In 10.9, the default policy has
-# switched: libc++ is now the default, and to use libstdc++ you need to pass -stdlib=libstdc++
-# as a command line option.
-#
-# This is relevant to Kudu because libc++ does not support tr1; to use tr1 features like tr1/memory
-# we must use them from the C++11 namespace (i.e. <memory> instead of <tr1/memory> and -std=c++11
-# to clang).
-#
-# Setting CXXFLAGS=-stdlib=libstdc++ suffices for an autotools-based project, and this is what we do
-# in build-thirdparty.sh. However, older versions of autotools will filter out -stdlib=libstdc++
-# from a shared library link invocation. This leads to link failures with every std symbol listed
-# as "undefined". To fix this, one must regenerate the autotools system for each library on a
-# machine with modern brews of autotools. Running "autoconf -fvi" inside the library's directory
-# is sufficient. See this link for more information:
-#
-# http://trac.macports.org/ticket/32982
-#
-# This is why all the cmake-based projects have their autotools regenerated with "autoreconf -fvi".
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# autoreconf calls are necessary to fix hard-coded aclocal versions in the
+# configure scripts that ship with the projects.
 
 set -e
 
 TP_DIR=$(cd "$(dirname "$BASH_SOURCE")"; pwd)
 cd $TP_DIR
+
+if [[ "$OSTYPE" =~ ^linux ]]; then
+  OS_LINUX=1
+fi
 
 source vars.sh
 
@@ -60,21 +48,49 @@ fetch_and_expand() {
     exit 1
   fi
 
-  echo "Fetching $FILENAME"
-  curl -O "${CLOUDFRONT_URL_PREFIX}/${FILENAME}"
+  FULL_URL="${CLOUDFRONT_URL_PREFIX}/${FILENAME}"
+  SUCCESS=0
+  # Loop in case we encounter a corrupted archive and we need to re-download it.
+  for attempt in 1 2; do
+    if [ -r "$FILENAME" ]; then
+      echo "Archive $FILENAME already exists. Not re-downloading archive."
+    else
+      echo "Fetching $FILENAME from $FULL_URL"
+      curl -O "$FULL_URL"
+    fi
 
-  echo "Unpacking $FILENAME"
-  if echo "$FILENAME" | egrep -q '\.zip$'; then
-    unzip -q $FILENAME
-  elif echo "$FILENAME" | egrep -q '(\.tar\.gz|\.tgz)$'; then
-    tar xf $FILENAME
-  else
-    echo "Error: unknown file format: $FILENAME"
-    exit 1
+    echo "Unpacking $FILENAME"
+    if echo "$FILENAME" | egrep -q '\.zip$'; then
+      if ! unzip -q "$FILENAME"; then
+        echo "Error unzipping $FILENAME, removing file"
+        rm "$FILENAME"
+        continue
+      fi
+    elif echo "$FILENAME" | egrep -q '(\.tar\.gz|\.tgz)$'; then
+      if ! tar xf "$FILENAME"; then
+        echo "Error untarring $FILENAME, removing file"
+        rm "$FILENAME"
+        continue
+      fi
+    else
+      echo "Error: unknown file format: $FILENAME"
+      exit 1
+    fi
+
+    SUCCESS=1
+    break
+  done
+
+  if [ $SUCCESS -ne 1 ]; then
+    echo "Error: failed to fetch and unpack $FILENAME"
   fi
 
-  echo "Removing $FILENAME"
-  rm $FILENAME
+  # Allow for not removing previously-downloaded artifacts.
+  # Useful on a low-bandwidth connection.
+  if [ -z "$NO_REMOVE_THIRDPARTY_ARCHIVES" ]; then
+    echo "Removing $FILENAME"
+    rm $FILENAME
+  fi
   echo
 }
 
@@ -96,22 +112,20 @@ if [ ! -d $GMOCK_DIR ]; then
 fi
 
 if [ ! -d $GFLAGS_DIR ]; then
-  fetch_and_expand gflags-${GFLAGS_VERSION}.zip
-  pushd $GFLAGS_DIR
-  autoreconf -fvi
-  popd
+  fetch_and_expand gflags-${GFLAGS_VERSION}.tar.gz
 fi
 
 # Check that the gperftools patch has been applied.
 # If you add or remove patches, bump the patchlevel below to ensure
 # that any new Jenkins builds pick up your patches.
-GPERFTOOLS_PATCHLEVEL=1
+GPERFTOOLS_PATCHLEVEL=2
 delete_if_wrong_patchlevel $GPERFTOOLS_DIR $GPERFTOOLS_PATCHLEVEL
 if [ ! -d $GPERFTOOLS_DIR ]; then
   fetch_and_expand gperftools-${GPERFTOOLS_VERSION}.tar.gz
 
   pushd $GPERFTOOLS_DIR
   patch -p1 < $TP_DIR/patches/gperftools-Change-default-TCMALLOC_TRANSFER_NUM_OBJ-to-40.patch
+  patch -p1 < $TP_DIR/patches/gperftools-hook-mi_force_unlock-on-OSX-instead-of-pthread_atfork.patch
   touch patchlevel-$GPERFTOOLS_PATCHLEVEL
   autoreconf -fvi
   popd
@@ -154,7 +168,7 @@ if [ ! -d $SQUEASEL_DIR ]; then
 fi
 
 if [ ! -d $GSG_DIR ]; then
-  fetch_and_expand google-styleguide-r${GSG_REVISION}.tar.gz
+  fetch_and_expand google-styleguide-${GSG_VERSION}.tar.gz
 fi
 
 if [ ! -d $GCOVR_DIR ]; then
@@ -181,16 +195,32 @@ if [ ! -d $LIBUNWIND_DIR ]; then
   fetch_and_expand libunwind-${LIBUNWIND_VERSION}.tar.gz
 fi
 
-LLVM_PATCHLEVEL=3
+if [ ! -d $PYTHON_DIR ]; then
+  fetch_and_expand python-${PYTHON_VERSION}.tar.gz
+fi
+
+LLVM_PATCHLEVEL=2
 delete_if_wrong_patchlevel $LLVM_DIR $LLVM_PATCHLEVEL
 if [ ! -d $LLVM_DIR ]; then
   fetch_and_expand llvm-${LLVM_VERSION}.src.tar.gz
 
   pushd $LLVM_DIR
-  patch -p1 < $TP_DIR/patches/llvm-stop-including-msan_interface.patch
-  patch -p1 < $TP_DIR/patches/llvm-fix-jit-debugging.patch
   patch -p1 < $TP_DIR/patches/llvm-fix-amazon-linux.patch
+  patch -p1 < $TP_DIR/patches/llvm-devtoolset-toolchain.patch
   touch patchlevel-$LLVM_PATCHLEVEL
+  popd
+  echo
+fi
+
+GCC_PATCHLEVEL=2
+delete_if_wrong_patchlevel $GCC_DIR $GCC_PATCHLEVEL
+if [[ "$OSTYPE" =~ ^linux ]] && [[ ! -d $GCC_DIR ]]; then
+  fetch_and_expand gcc-${GCC_VERSION}.tar.gz
+  pushd $GCC_DIR/libstdc++-v3
+  patch -p0 < $TP_DIR/patches/libstdcxx-fix-string-dtor.patch
+  patch -p0 < $TP_DIR/patches/libstdcxx-fix-tr1-shared-ptr.patch
+  cd ..
+  touch patchlevel-$GCC_PATCHLEVEL
   popd
   echo
 fi
@@ -210,21 +240,12 @@ if [ ! -d $BITSHUFFLE_DIR ]; then
   fetch_and_expand bitshuffle-${BITSHUFFLE_VERSION}.tar.gz
 fi
 
-if [ ! -d $CLANG_TOOLCHAIN_DIR ]; then
-  fetch_and_expand clang-${CLANG_TOOLCHAIN_VERSION}.tgz
-fi
-# Make a link to the current version of the toolchain clang.
-# We don't want to put this in the thirdparty install directory, because then
-# clang assumes that it's installed system-wide, and no longer adds 'rpath'
-# entries for the other thirdparty libraries when building.
-ln -sf -T $CLANG_TOOLCHAIN_DIR clang-toolchain
-
 if [ ! -d $TRACE_VIEWER_DIR ]; then
   fetch_and_expand kudu-trace-viewer-${TRACE_VIEWER_VERSION}.tar.gz
 fi
 
-if [ ! -d $NVML_DIR ]; then
-  fetch_and_expand nvml-${NVML_VERSION}.tgz
+if [ -n "$OS_LINUX" -a ! -d $NVML_DIR ]; then
+  fetch_and_expand nvml-${NVML_VERSION}.tar.gz
 fi
 
 echo "---------------"

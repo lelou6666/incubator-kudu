@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <arpa/inet.h>
 #include <sys/types.h>
@@ -18,9 +21,7 @@
 #include <netdb.h>
 
 #include <algorithm>
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -32,6 +33,7 @@
 #include "kudu/gutil/strings/strip.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/strings/util.h"
+#include "kudu/util/debug/trace_event.h"
 #include "kudu/util/errno.h"
 #include "kudu/util/faststring.h"
 #include "kudu/util/net/net_util.h"
@@ -39,7 +41,12 @@
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/subprocess.h"
 
-using std::tr1::unordered_set;
+// Mac OS 10.9 does not appear to define HOST_NAME_MAX in unistd.h
+#ifndef HOST_NAME_MAX
+#define HOST_NAME_MAX 64
+#endif
+
+using std::unordered_set;
 using std::vector;
 using strings::Substitute;
 
@@ -58,10 +65,8 @@ HostPort::HostPort()
     port_(0) {
 }
 
-HostPort::HostPort(const std::string& host, uint16_t port)
-  : host_(host),
-    port_(port) {
-}
+HostPort::HostPort(std::string host, uint16_t port)
+    : host_(std::move(host)), port_(port) {}
 
 HostPort::HostPort(const Sockaddr& addr)
   : host_(addr.host()),
@@ -90,15 +95,17 @@ Status HostPort::ParseString(const string& str, uint16_t default_port) {
 }
 
 Status HostPort::ResolveAddresses(vector<Sockaddr>* addresses) const {
+  TRACE_EVENT1("net", "HostPort::ResolveAddresses",
+               "host", host_);
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
-  struct addrinfo* res = NULL;
+  struct addrinfo* res = nullptr;
   int rc;
   LOG_SLOW_EXECUTION(WARNING, 200,
                      Substitute("resolving address for $0", host_)) {
-    rc = getaddrinfo(host_.c_str(), NULL, &hints, &res);
+    rc = getaddrinfo(host_.c_str(), nullptr, &hints, &res);
   }
   if (rc != 0) {
     return Status::NetworkError(
@@ -106,7 +113,7 @@ Status HostPort::ResolveAddresses(vector<Sockaddr>* addresses) const {
       gai_strerror(rc));
   }
   gscoped_ptr<addrinfo, AddrinfoDeleter> scoped_res(res);
-  for (; res != NULL; res = res->ai_next) {
+  for (; res != nullptr; res = res->ai_next) {
     CHECK_EQ(res->ai_family, AF_INET);
     struct sockaddr_in* addr = reinterpret_cast<struct sockaddr_in*>(res->ai_addr);
     addr->sin_port = htons(port_);
@@ -124,7 +131,7 @@ Status HostPort::ParseStrings(const string& comma_sep_addrs,
                               uint16_t default_port,
                               vector<HostPort>* res) {
   vector<string> addr_strings = strings::Split(comma_sep_addrs, ",", strings::SkipEmpty());
-  BOOST_FOREACH(const string& addr_string, addr_strings) {
+  for (const string& addr_string : addr_strings) {
     HostPort host_port;
     RETURN_NOT_OK(host_port.ParseString(addr_string, default_port));
     res->push_back(host_port);
@@ -138,7 +145,7 @@ string HostPort::ToString() const {
 
 string HostPort::ToCommaSeparatedString(const vector<HostPort>& hostports) {
   vector<string> hostport_strs;
-  BOOST_FOREACH(const HostPort& hostport, hostports) {
+  for (const HostPort& hostport : hostports) {
     hostport_strs.push_back(hostport.ToString());
   }
   return JoinStrings(hostport_strs, ",");
@@ -155,25 +162,26 @@ Status ParseAddressList(const std::string& addr_list,
   RETURN_NOT_OK(HostPort::ParseStrings(addr_list, default_port, &host_ports));
   unordered_set<Sockaddr> uniqued;
 
-  BOOST_FOREACH(const HostPort& host_port, host_ports) {
+  for (const HostPort& host_port : host_ports) {
     vector<Sockaddr> this_addresses;
     RETURN_NOT_OK(host_port.ResolveAddresses(&this_addresses));
 
     // Only add the unique ones -- the user may have specified
     // some IP addresses in multiple ways
-    BOOST_FOREACH(const Sockaddr& addr, this_addresses) {
-      if (!InsertIfNotPresent(&uniqued, addr)) {
+    for (const Sockaddr& addr : this_addresses) {
+      if (InsertIfNotPresent(&uniqued, addr)) {
+        addresses->push_back(addr);
+      } else {
         LOG(INFO) << "Address " << addr.ToString() << " for " << host_port.ToString()
                   << " duplicates an earlier resolved entry.";
       }
     }
   }
-
-  std::copy(uniqued.begin(), uniqued.end(), std::back_inserter(*addresses));
   return Status::OK();
 }
 
 Status GetHostname(string* hostname) {
+  TRACE_EVENT0("net", "GetHostname");
   char name[HOST_NAME_MAX];
   int ret = gethostname(name, HOST_NAME_MAX);
   if (ret != 0) {
@@ -186,6 +194,7 @@ Status GetHostname(string* hostname) {
 }
 
 Status GetFQDN(string* hostname) {
+  TRACE_EVENT0("net", "GetFQDN");
   // Start with the non-qualified hostname
   RETURN_NOT_OK(GetHostname(hostname));
 
@@ -195,9 +204,14 @@ Status GetFQDN(string* hostname) {
   hints.ai_flags = AI_CANONNAME;
 
   struct addrinfo* result;
-  int rc = getaddrinfo(hostname->c_str(), NULL, &hints, &result);
-  if (rc != 0) {
-    return Status::NetworkError("Unable to lookup FQDN", ErrnoToString(errno), errno);
+  LOG_SLOW_EXECUTION(WARNING, 200,
+                     Substitute("looking up canonical hostname for localhost "
+                                "(eventual result was $0)", *hostname)) {
+    TRACE_EVENT0("net", "getaddrinfo");
+    int rc = getaddrinfo(hostname->c_str(), nullptr, &hints, &result);
+    if (rc != 0) {
+      return Status::NetworkError("Unable to lookup FQDN", ErrnoToString(errno), errno);
+    }
   }
 
   *hostname = result->ai_canonname;
@@ -232,6 +246,14 @@ Status HostPortFromSockaddrReplaceWildcard(const Sockaddr& addr, HostPort* hp) {
 }
 
 void TryRunLsof(const Sockaddr& addr, vector<string>* log) {
+#if defined(__APPLE__)
+  string cmd = strings::Substitute(
+      "lsof -n -i 'TCP:$0' -sTCP:LISTEN ; "
+      "for pid in $$(lsof -F p -n -i 'TCP:$0' -sTCP:LISTEN | cut -f 2 -dp) ; do"
+      "  pstree $$pid || ps h -p $$pid;"
+      "done",
+      addr.port());
+#else
   // Little inline bash script prints the full ancestry of any pid listening
   // on the same port as 'addr'. We could use 'pstree -s', but that option
   // doesn't exist on el6.
@@ -246,52 +268,19 @@ void TryRunLsof(const Sockaddr& addr, vector<string>* log) {
       "  done ; "
       "done",
       addr.port());
+#endif // defined(__APPLE__)
 
   LOG_STRING(WARNING, log) << "Failed to bind to " << addr.ToString() << ". "
                            << "Trying to use lsof to find any processes listening "
                            << "on the same port:";
   LOG_STRING(INFO, log) << "$ " << cmd;
-  Subprocess p("/bin/bash",
-               boost::assign::list_of<string>("bash")("-c")(cmd));
-  p.ShareParentStdout(false);
-  Status s = p.Start();
-  if (!s.ok()) {
-    LOG_STRING(WARNING, log) << "Unable to fork bash: " << s.ToString();
-    return;
+  vector<string> argv = { "bash", "-c", cmd };
+  string results;
+  Status s = Subprocess::Call(argv, &results);
+  if (PREDICT_FALSE(!s.ok())) {
+    LOG_STRING(WARNING, log) << s.ToString();
   }
-
-  close(p.ReleaseChildStdinFd());
-
-  faststring results;
-  char buf[1024];
-  while (true) {
-    ssize_t n = read(p.from_child_stdout_fd(), buf, arraysize(buf));
-    if (n == 0) {
-      // EOF
-      break;
-    }
-    if (n < 0) {
-      if (errno == EINTR) continue;
-      LOG_STRING(WARNING, log) << "IO error reading from bash: " <<
-        ErrnoToString(errno);
-      close(p.ReleaseChildStdoutFd());
-      break;
-    }
-
-    results.append(buf, n);
-  }
-
-  int rc;
-  s = p.Wait(&rc);
-  if (!s.ok()) {
-    LOG_STRING(WARNING, log) << "Unable to wait for lsof: " << s.ToString();
-    return;
-  }
-  if (rc != 0) {
-    LOG_STRING(WARNING, log) << "lsof failed";
-  }
-
-  LOG_STRING(WARNING, log) << results.ToString();
+  LOG_STRING(WARNING, log) << results;
 }
 
 } // namespace kudu

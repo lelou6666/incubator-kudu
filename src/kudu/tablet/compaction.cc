@@ -1,23 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/compaction.h"
 
-#include <glog/logging.h>
 #include <deque>
+#include <glog/logging.h>
+#include <memory>
 #include <string>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/common/wire_protocol.h"
@@ -34,7 +38,8 @@
 #include "kudu/tablet/transactions/write_transaction.h"
 #include "kudu/util/debug/trace_event.h"
 
-using std::tr1::unordered_set;
+using std::shared_ptr;
+using std::unordered_set;
 using strings::Substitute;
 
 namespace kudu {
@@ -70,7 +75,7 @@ class MemRowSetCompactionInput : public CompactionInput {
     // Realloc the internal block storage if we don't have enough space to
     // copy the whole leaf node's worth of data into it.
     if (PREDICT_FALSE(!row_block_ || num_in_block > row_block_->nrows())) {
-      row_block_.reset(new RowBlock(iter_->schema(), num_in_block, NULL));
+      row_block_.reset(new RowBlock(iter_->schema(), num_in_block, nullptr));
     }
 
     arena_.Reset();
@@ -129,17 +134,16 @@ class MemRowSetCompactionInput : public CompactionInput {
 class DiskRowSetCompactionInput : public CompactionInput {
  public:
   DiskRowSetCompactionInput(gscoped_ptr<RowwiseIterator> base_iter,
-                        shared_ptr<DeltaIterator> redo_delta_iter,
-                        shared_ptr<DeltaIterator> undo_delta_iter) :
-    base_iter_(base_iter.Pass()),
-    redo_delta_iter_(redo_delta_iter),
-    undo_delta_iter_(undo_delta_iter),
-    arena_(32*1024, 128*1024),
-    block_(base_iter_->schema(), kRowsPerBlock, &arena_),
-    redo_mutation_block_(kRowsPerBlock, reinterpret_cast<Mutation *>(NULL)),
-    undo_mutation_block_(kRowsPerBlock, reinterpret_cast<Mutation *>(NULL)),
-    first_rowid_in_block_(0)
-  {}
+                            shared_ptr<DeltaIterator> redo_delta_iter,
+                            shared_ptr<DeltaIterator> undo_delta_iter)
+      : base_iter_(std::move(base_iter)),
+        redo_delta_iter_(std::move(redo_delta_iter)),
+        undo_delta_iter_(std::move(undo_delta_iter)),
+        arena_(32 * 1024, 128 * 1024),
+        block_(base_iter_->schema(), kRowsPerBlock, &arena_),
+        redo_mutation_block_(kRowsPerBlock, reinterpret_cast<Mutation *>(NULL)),
+        undo_mutation_block_(kRowsPerBlock, reinterpret_cast<Mutation *>(NULL)),
+        first_rowid_in_block_(0) {}
 
   virtual Status Init() OVERRIDE {
     ScanSpec spec;
@@ -263,7 +267,7 @@ class MergeCompactionInput : public CompactionInput {
   MergeCompactionInput(const vector<shared_ptr<CompactionInput> > &inputs,
                        const Schema* schema)
     : schema_(schema) {
-    BOOST_FOREACH(const shared_ptr<CompactionInput> &input, inputs) {
+    for (const shared_ptr<CompactionInput> &input : inputs) {
       gscoped_ptr<MergeState> state(new MergeState);
       state->input = input;
       states_.push_back(state.release());
@@ -275,7 +279,7 @@ class MergeCompactionInput : public CompactionInput {
   }
 
   virtual Status Init() OVERRIDE {
-    BOOST_FOREACH(MergeState *state, states_) {
+    for (MergeState *state : states_) {
       RETURN_NOT_OK(state->input->Init());
     }
 
@@ -287,7 +291,7 @@ class MergeCompactionInput : public CompactionInput {
   virtual bool HasMoreBlocks() OVERRIDE {
     // Return true if any of the input blocks has more rows pending
     // or more blocks which have yet to be pulled.
-    BOOST_FOREACH(MergeState *state, states_) {
+    for (MergeState *state : states_) {
       if (!state->empty() ||
           state->input->HasMoreBlocks()) {
         return true;
@@ -416,9 +420,7 @@ class MergeCompactionInput : public CompactionInput {
       // it no longer dominates the inputs in it 'dominated' list. Re-check
       // all of those dominance relations and remove any that are no longer
       // valid.
-      for (vector<MergeState *>::iterator it = state->dominated.begin();
-           it != state->dominated.end();
-           ++it) {
+      for (auto it = state->dominated.begin(); it != state->dominated.end(); ++it) {
         MergeState *dominated = *it;
         if (!state->Dominates(*dominated, *schema_)) {
           states_.push_back(dominated);
@@ -468,13 +470,13 @@ class MergeCompactionInput : public CompactionInput {
   // Returns -1 if latest_version(left) < latest_version(right)
   static int CompareLatestLiveVersion(const CompactionInputRow& left,
                                       const CompactionInputRow& right) {
-    if (left.redo_head == NULL) {
+    if (left.redo_head == nullptr) {
       // left must still be alive
-      DCHECK(right.redo_head != NULL);
+      DCHECK(right.redo_head != nullptr);
       return 1;
     }
-    if (right.redo_head == NULL) {
-      DCHECK(left.redo_head != NULL);
+    if (right.redo_head == nullptr) {
+      DCHECK(left.redo_head != nullptr);
       return -1;
     }
 
@@ -501,7 +503,7 @@ class MergeCompactionInput : public CompactionInput {
   }
 
   static void AdvanceToLastInList(const Mutation** m) {
-    while ((*m)->next() != NULL) {
+    while ((*m)->next() != nullptr) {
       *m = (*m)->next();
     }
   }
@@ -544,7 +546,7 @@ Status CompactionInput::Create(const DiskRowSet &rowset,
           MvccSnapshot::CreateSnapshotIncludingNoTransactions(),
           &undo_deltas), "Could not open UNDOs");
 
-  out->reset(new DiskRowSetCompactionInput(base_iter.Pass(), redo_deltas, undo_deltas));
+  out->reset(new DiskRowSetCompactionInput(std::move(base_iter), redo_deltas, undo_deltas));
   return Status::OK();
 }
 
@@ -568,7 +570,7 @@ Status RowSetsInCompaction::CreateCompactionInput(const MvccSnapshot &snap,
   CHECK(schema->has_column_ids());
 
   vector<shared_ptr<CompactionInput> > inputs;
-  BOOST_FOREACH(const shared_ptr<RowSet> &rs, rowsets_) {
+  for (const shared_ptr<RowSet> &rs : rowsets_) {
     gscoped_ptr<CompactionInput> input;
     RETURN_NOT_OK_PREPEND(rs->NewCompactionInput(schema, snap, &input),
                           Substitute("Could not create compaction input for rowset $0",
@@ -588,7 +590,7 @@ Status RowSetsInCompaction::CreateCompactionInput(const MvccSnapshot &snap,
 void RowSetsInCompaction::DumpToLog() const {
   LOG(INFO) << "Selected " << rowsets_.size() << " rowsets to compact:";
   // Dump the selected rowsets to the log, and collect corresponding iterators.
-  BOOST_FOREACH(const shared_ptr<RowSet> &rs, rowsets_) {
+  for (const shared_ptr<RowSet> &rs : rowsets_) {
     LOG(INFO) << rs->ToString() << "(current size on disk: ~"
               << rs->EstimateOnDiskSize() << " bytes)";
   }
@@ -627,10 +629,10 @@ Status ApplyMutationsAndGenerateUndos(const MvccSnapshot& snap,
   // which doesn't actually mutate it and having Mutation::set_next()
   // take a non-const value is required in other places.
   Mutation* undo_head = const_cast<Mutation*>(src_row.undo_head);
-  Mutation* redo_head = NULL;
+  Mutation* redo_head = nullptr;
 
   for (const Mutation *redo_mut = src_row.redo_head;
-       redo_mut != NULL;
+       redo_mut != nullptr;
        redo_mut = redo_mut->next()) {
 
     // Skip anything not committed.
@@ -674,7 +676,7 @@ Status ApplyMutationsAndGenerateUndos(const MvccSnapshot& snap,
 
       // In the case where the previous undo was NULL just make this one
       // the head.
-      if (undo_head == NULL) {
+      if (undo_head == nullptr) {
         undo_head = current_undo;
       } else {
         current_undo->set_next(undo_head);
@@ -694,7 +696,7 @@ Status ApplyMutationsAndGenerateUndos(const MvccSnapshot& snap,
         RETURN_NOT_OK(redo_decoder.GetReinsertedRowSlice(*dst_schema, &reinserted_slice));
         ConstContiguousRow reinserted(dst_schema, reinserted_slice.data());
         // No need to copy into an arena -- can refer to the mutation's arena.
-        Arena* null_arena = NULL;
+        Arena* null_arena = nullptr;
         RETURN_NOT_OK(CopyRow(reinserted, dst_row, null_arena));
 
         // Create an undo for the REINSERT
@@ -706,7 +708,7 @@ Status ApplyMutationsAndGenerateUndos(const MvccSnapshot& snap,
 
         // Also reset the previous redo head since it stored the delete which was nullified
         // by this reinsert
-        redo_head = NULL;
+        redo_head = nullptr;
 
         if ((*num_rows_history_truncated)++ == 0) {
           LOG(WARNING) << "Found REINSERT REDO truncating row history for "
@@ -747,7 +749,7 @@ Status FlushCompactionInput(CompactionInput* input,
 
   DCHECK(out->schema().has_column_ids());
 
-  RowBlock block(out->schema(), 100, NULL);
+  RowBlock block(out->schema(), 100, nullptr);
 
   uint64_t num_rows_history_truncated = 0;
 
@@ -755,7 +757,7 @@ Status FlushCompactionInput(CompactionInput* input,
     RETURN_NOT_OK(input->PrepareBlock(&rows));
 
     int n = 0;
-    BOOST_FOREACH(const CompactionInputRow &input_row, rows) {
+    for (const CompactionInputRow &input_row : rows) {
       RETURN_NOT_OK(out->RollIfNecessary());
 
       const Schema* schema = input_row.row.schema();
@@ -771,8 +773,8 @@ Status FlushCompactionInput(CompactionInput* input,
         " Redo Mutations: " << Mutation::StringifyMutationList(*schema, input_row.redo_head);
 
       // Collect the new UNDO/REDO mutations.
-      Mutation* new_undos_head = NULL;
-      Mutation* new_redos_head = NULL;
+      Mutation* new_undos_head = nullptr;
+      Mutation* new_redos_head = nullptr;
 
       bool is_garbage_collected;
       RETURN_NOT_OK(ApplyMutationsAndGenerateUndos(snap,
@@ -796,7 +798,7 @@ Status FlushCompactionInput(CompactionInput* input,
 
       // We should always have UNDO deltas, until we implement delta GC. For now,
       // this is a convenient assertion to catch bugs like KUDU-632.
-      CHECK(new_undos_head != NULL) <<
+      CHECK(new_undos_head != nullptr) <<
         "Writing an output row with no UNDOs: "
         "Input Row: " << dst_row.schema()->DebugRow(dst_row) <<
         " RowId: " << input_row.row.row_index() <<
@@ -804,7 +806,7 @@ Status FlushCompactionInput(CompactionInput* input,
         " Redo Mutations: " << Mutation::StringifyMutationList(*schema, input_row.redo_head);
       out->AppendUndoDeltas(dst_row.row_index(), new_undos_head, &index_in_current_drs_);
 
-      if (new_redos_head != NULL) {
+      if (new_redos_head != nullptr) {
         out->AppendRedoDeltas(dst_row.row_index(), new_redos_head, &index_in_current_drs_);
       }
 
@@ -848,7 +850,7 @@ Status ReupdateMissedDeltas(const string &tablet_name,
 
   // Collect the delta trackers that we'll push the updates into.
   deque<DeltaTracker *> delta_trackers;
-  BOOST_FOREACH(const shared_ptr<RowSet> &rs, output_rowsets) {
+  for (const shared_ptr<RowSet> &rs : output_rowsets) {
     delta_trackers.push_back(down_cast<DiskRowSet *>(rs.get())->delta_tracker());
   }
 
@@ -878,13 +880,13 @@ Status ReupdateMissedDeltas(const string &tablet_name,
   while (input->HasMoreBlocks()) {
     RETURN_NOT_OK(input->PrepareBlock(&rows));
 
-    BOOST_FOREACH(const CompactionInputRow &row, rows) {
+    for (const CompactionInputRow &row : rows) {
       DVLOG(2) << "Revisiting row: " << schema->DebugRow(row.row) <<
           " Redo Mutations: " << Mutation::StringifyMutationList(*schema, row.redo_head) <<
           " Undo Mutations: " << Mutation::StringifyMutationList(*schema, row.undo_head);
 
       for (const Mutation *mut = row.redo_head;
-           mut != NULL;
+           mut != nullptr;
            mut = mut->next()) {
         RowChangeListDecoder decoder(mut->changelist());
         RETURN_NOT_OK(decoder.Init());
@@ -984,7 +986,7 @@ Status ReupdateMissedDeltas(const string &tablet_name,
 
   {
     TRACE_EVENT0("tablet", "Flushing missed deltas");
-    BOOST_FOREACH(DeltaTracker* tracker, updated_trackers) {
+    for (DeltaTracker* tracker : updated_trackers) {
       VLOG(1) << "Flushing DeltaTracker updated with missed deltas...";
       RETURN_NOT_OK_PREPEND(tracker->Flush(DeltaTracker::NO_FLUSH_METADATA),
                             "Could not flush delta tracker after missed delta update");
@@ -1002,7 +1004,7 @@ Status DebugDumpCompactionInput(CompactionInput *input, vector<string> *lines) {
   while (input->HasMoreBlocks()) {
     RETURN_NOT_OK(input->PrepareBlock(&rows));
 
-    BOOST_FOREACH(const CompactionInputRow &input_row, rows) {
+    for (const CompactionInputRow &input_row : rows) {
       const Schema* schema = input_row.row.schema();
       LOG_STRING(INFO, lines) << schema->DebugRow(input_row.row) <<
         " Undos: " + Mutation::StringifyMutationList(*schema, input_row.undo_head) <<

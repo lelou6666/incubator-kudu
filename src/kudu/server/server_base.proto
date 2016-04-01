@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package kudu.server;
 
 option java_package = "org.kududb.server";
@@ -96,6 +99,20 @@ message GetStatusResponsePB {
   required ServerStatusPB status = 1;
 }
 
+// Makes the HybridClock of the server use these values for wall clock time and error,
+// for testing purposes.
+// Requires that the server was started with '--use_mock_wall_clock=true'.
+message SetServerWallClockForTestsRequestPB {
+  optional uint64 now_usec = 1;
+  optional uint64 max_error_usec = 2;
+}
+
+// Response corresponding to the request above.
+message SetServerWallClockForTestsResponsePB {
+  // Set to 'true' if the clock was updated successfully.
+  required bool success = 1;
+}
+
 service GenericService {
   rpc SetFlag(SetFlagRequestPB)
     returns (SetFlagResponsePB);
@@ -105,6 +122,9 @@ service GenericService {
 
   rpc ServerClock(ServerClockRequestPB)
     returns (ServerClockResponsePB);
+
+  rpc SetServerWallClockForTests(SetServerWallClockForTestsRequestPB)
+    returns (SetServerWallClockForTestsResponsePB);
 
   rpc GetStatus(GetStatusRequestPB)
     returns (GetStatusResponsePB);

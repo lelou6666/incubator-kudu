@@ -1,28 +1,29 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/tablet.h"
 #include "kudu/tablet/tablet_metrics.h"
 #include "kudu/tablet/tablet_mm_ops.h"
 #include "kudu/tablet/tablet-test-base.h"
 
-using boost::assign::list_of;
-
 namespace kudu {
 namespace tablet {
 
-class KuduTabletMmOpsTest : public TabletTestBase<IntKeyTestSetup<INT64> > {
+class KuduTabletMmOpsTest : public TabletTestBase<IntKeyTestSetup<INT64>> {
  protected:
   typedef TabletTestBase<IntKeyTestSetup<INT64> > Superclass;
 
@@ -71,7 +72,7 @@ class KuduTabletMmOpsTest : public TabletTestBase<IntKeyTestSetup<INT64> > {
                              scoped_refptr<Histogram>,
                              ScopedRefPtrHashFunctor<Histogram>,
                              ScopedRefPtrEqualToFunctor<Histogram> >& metrics) {
-    BOOST_FOREACH(const scoped_refptr<Histogram>& c, all_possible_metrics_) {
+    for (const scoped_refptr<Histogram>& c : all_possible_metrics_) {
       c->Increment(1); // value doesn't matter
       if (ContainsKey(metrics, c)) {
         NO_FATALS(StatsShouldChange(op));
@@ -89,30 +90,27 @@ class KuduTabletMmOpsTest : public TabletTestBase<IntKeyTestSetup<INT64> > {
 TEST_F(KuduTabletMmOpsTest, TestCompactRowSetsOpCacheStats) {
   CompactRowSetsOp op(tablet().get());
   NO_FATALS(TestFirstCall(&op));
-  NO_FATALS(TestAffectedMetrics(&op, list_of
-                                (tablet()->metrics()->flush_mrs_duration)
-                                (tablet()->metrics()->compact_rs_duration)));
+  NO_FATALS(TestAffectedMetrics(&op, { tablet()->metrics()->flush_mrs_duration,
+                                       tablet()->metrics()->compact_rs_duration }));
 }
 
 TEST_F(KuduTabletMmOpsTest, TestMinorDeltaCompactionOpCacheStats) {
   MinorDeltaCompactionOp op(tablet().get());
   NO_FATALS(TestFirstCall(&op));
-  NO_FATALS(TestAffectedMetrics(&op, list_of
-                                (tablet()->metrics()->flush_mrs_duration)
-                                (tablet()->metrics()->flush_dms_duration)
-                                (tablet()->metrics()->compact_rs_duration)
-                                (tablet()->metrics()->delta_minor_compact_rs_duration)));
+  NO_FATALS(TestAffectedMetrics(&op, { tablet()->metrics()->flush_mrs_duration,
+                                       tablet()->metrics()->flush_dms_duration,
+                                       tablet()->metrics()->compact_rs_duration,
+                                       tablet()->metrics()->delta_minor_compact_rs_duration }));
 }
 
 TEST_F(KuduTabletMmOpsTest, TestMajorDeltaCompactionOpCacheStats) {
   MajorDeltaCompactionOp op(tablet().get());
   NO_FATALS(TestFirstCall(&op));
-  NO_FATALS(TestAffectedMetrics(&op, list_of
-                                (tablet()->metrics()->flush_mrs_duration)
-                                (tablet()->metrics()->flush_dms_duration)
-                                (tablet()->metrics()->compact_rs_duration)
-                                (tablet()->metrics()->delta_minor_compact_rs_duration)
-                                (tablet()->metrics()->delta_major_compact_rs_duration)));
+  NO_FATALS(TestAffectedMetrics(&op, { tablet()->metrics()->flush_mrs_duration,
+                                       tablet()->metrics()->flush_dms_duration,
+                                       tablet()->metrics()->compact_rs_duration,
+                                       tablet()->metrics()->delta_minor_compact_rs_duration,
+                                       tablet()->metrics()->delta_major_compact_rs_duration }));
 }
 } // namespace tablet
 } // namespace kudu

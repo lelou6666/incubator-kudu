@@ -33,16 +33,15 @@ RefCountedStaticMemory::~RefCountedStaticMemory() {}
 
 RefCountedBytes::RefCountedBytes() {}
 
-RefCountedBytes::RefCountedBytes(const std::vector<unsigned char>& initializer)
-    : data_(initializer) {
-}
+RefCountedBytes::RefCountedBytes(std::vector<unsigned char> initializer)
+    : data_(std::move(initializer)) {}
 
 RefCountedBytes::RefCountedBytes(const unsigned char* p, size_t size)
     : data_(p, p + size) {}
 
 RefCountedBytes* RefCountedBytes::TakeVector(
     std::vector<unsigned char>* to_destroy) {
-  RefCountedBytes* bytes = new RefCountedBytes;
+  auto bytes = new RefCountedBytes;
   bytes->data_.swap(*to_destroy);
   return bytes;
 }
@@ -50,7 +49,7 @@ RefCountedBytes* RefCountedBytes::TakeVector(
 const unsigned char* RefCountedBytes::front() const {
   // STL will assert if we do front() on an empty vector, but calling code
   // expects a NULL.
-  return size() ? &data_.front() : NULL;
+  return size() ? &data_.front() : nullptr;
 }
 
 size_t RefCountedBytes::size() const {
@@ -65,13 +64,13 @@ RefCountedString::~RefCountedString() {}
 
 // static
 RefCountedString* RefCountedString::TakeString(std::string* to_destroy) {
-  RefCountedString* self = new RefCountedString;
+  auto self = new RefCountedString;
   to_destroy->swap(self->data_);
   return self;
 }
 
 const unsigned char* RefCountedString::front() const {
-  return data_.empty() ? NULL :
+  return data_.empty() ? nullptr :
          reinterpret_cast<const unsigned char*>(data_.data());
 }
 
@@ -86,7 +85,7 @@ RefCountedMallocedMemory::RefCountedMallocedMemory(
 }
 
 const unsigned char* RefCountedMallocedMemory::front() const {
-  return length_ ? data_ : NULL;
+  return length_ ? data_ : nullptr;
 }
 
 size_t RefCountedMallocedMemory::size() const {

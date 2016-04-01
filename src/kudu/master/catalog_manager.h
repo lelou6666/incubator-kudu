@@ -1,25 +1,29 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_MASTER_CATALOG_MANAGER_H
 #define KUDU_MASTER_CATALOG_MANAGER_H
 
-#include <boost/thread/mutex.hpp>
 #include <boost/optional/optional_fwd.hpp>
+#include <boost/thread/mutex.hpp>
 #include <map>
+#include <set>
 #include <string>
-#include <tr1/unordered_map>
-#include <tr1/unordered_set>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/common/partition.h"
@@ -27,14 +31,15 @@
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/master/master.pb.h"
 #include "kudu/master/ts_manager.h"
-#include "kudu/tserver/tablet_peer_lookup.h"
 #include "kudu/server/monitored_task.h"
+#include "kudu/tserver/tablet_peer_lookup.h"
 #include "kudu/util/cow_object.h"
 #include "kudu/util/locks.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/oid_generator.h"
-#include "kudu/util/status.h"
 #include "kudu/util/promise.h"
+#include "kudu/util/random.h"
+#include "kudu/util/status.h"
 
 namespace kudu {
 
@@ -104,9 +109,9 @@ struct TabletReplica {
 class TabletInfo : public RefCountedThreadSafe<TabletInfo> {
  public:
   typedef PersistentTabletInfo cow_state;
-  typedef std::tr1::unordered_map<std::string, TabletReplica> ReplicaMap;
+  typedef std::unordered_map<std::string, TabletReplica> ReplicaMap;
 
-  TabletInfo(const scoped_refptr<TableInfo>& table, const std::string& tablet_id);
+  TabletInfo(const scoped_refptr<TableInfo>& table, std::string tablet_id);
 
   const std::string& tablet_id() const { return tablet_id_; }
   const scoped_refptr<TableInfo>& table() const { return table_; }
@@ -199,7 +204,7 @@ class TableInfo : public RefCountedThreadSafe<TableInfo> {
  public:
   typedef PersistentTableInfo cow_state;
 
-  explicit TableInfo(const std::string& table_id);
+  explicit TableInfo(std::string table_id);
 
   std::string ToString() const;
 
@@ -211,9 +216,9 @@ class TableInfo : public RefCountedThreadSafe<TableInfo> {
   // Add multiple tablets to this table.
   void AddTablets(const std::vector<TabletInfo*>& tablets);
 
-  // Return true if tablet with 'tablet_id' has been removed from
-  // 'tablet_map_' below.
-  bool RemoveTablet(const std::string& tablet_id);
+  // Return true if tablet with 'partition_key_start' has been
+  // removed from 'tablet_map_' below.
+  bool RemoveTablet(const std::string& partition_key_start);
 
   // This only returns tablets which are in RUNNING state.
   void GetTabletsInRange(const GetTableLocationsRequestPB* req,
@@ -259,7 +264,7 @@ class TableInfo : public RefCountedThreadSafe<TableInfo> {
   CowObject<PersistentTableInfo> metadata_;
 
   // List of pending tasks (e.g. create/alter tablet requests)
-  std::tr1::unordered_set<MonitoredTask*> pending_tasks_;
+  std::unordered_set<MonitoredTask*> pending_tasks_;
 
   DISALLOW_COPY_AND_ASSIGN(TableInfo);
 };
@@ -396,7 +401,9 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
 
   bool IsInitialized() const;
 
-  virtual Status StartRemoteBootstrap(const consensus::StartRemoteBootstrapRequestPB& req) OVERRIDE;
+  virtual Status StartRemoteBootstrap(
+      const consensus::StartRemoteBootstrapRequestPB& req,
+      boost::optional<kudu::tserver::TabletServerErrorPB::Code>* error_code) OVERRIDE;
 
   // Return OK if this CatalogManager is a leader in a consensus configuration and if
   // the required leader state (metadata for tables and tablets) has
@@ -409,6 +416,9 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   consensus::RaftPeerPB::Role Role() const;
 
  private:
+  // So that the test can call ElectedAsLeaderCb() directly.
+  FRIEND_TEST(MasterTest, TestShutdownDuringTableVisit);
+
   friend class TableLoader;
   friend class TabletLoader;
 
@@ -466,8 +476,8 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   // Helper for creating the initial TabletInfo state.
   // Leaves the tablet "write locked" with the new info in the
   // "dirty" state field.
-  TabletInfo *CreateTabletInfo(TableInfo* table,
-                               const PartitionPB& partition);
+  scoped_refptr<TabletInfo> CreateTabletInfo(TableInfo* table,
+                                             const PartitionPB& partition);
 
   // Builds the TabletLocationsPB for a tablet based on the provided TabletInfo.
   // Populates locs_pb and returns true on success.
@@ -508,6 +518,17 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   // Task that takes care of the tablet assignments/creations.
   // Loops through the "not created" tablets and sends a CreateTablet() request.
   Status ProcessPendingAssignments(const std::vector<scoped_refptr<TabletInfo> >& tablets);
+
+  // Given 'two_choices', which should be a vector of exactly two elements, select which
+  // one is the better choice for a new replica.
+  std::shared_ptr<TSDescriptor> PickBetterReplicaLocation(const TSDescriptorVector& two_choices);
+
+  // Select a tablet server from 'ts_descs' on which to place a new replica.
+  // Any tablet servers in 'excluded' are not considered.
+  // REQUIRES: 'ts_descs' must include at least one non-excluded server.
+  std::shared_ptr<TSDescriptor> SelectReplica(
+      const TSDescriptorVector& ts_descs,
+      const std::set<std::shared_ptr<TSDescriptor>>& excluded);
 
   // Select N Replicas from online tablet servers (as specified by
   // 'ts_descs') for the specified tablet and populate the consensus configuration
@@ -557,6 +578,9 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   // tablet.
   void SendAlterTabletRequest(const scoped_refptr<TabletInfo>& tablet);
 
+  // Request tablet servers to delete all replicas of the tablet.
+  void DeleteTabletReplicas(const TabletInfo* tablet, const std::string& msg);
+
   // Marks each of the tablets in the given table as deleted and triggers requests
   // to the tablet servers to delete them.
   void DeleteTabletsAndSendRequests(const scoped_refptr<TableInfo>& table);
@@ -596,17 +620,20 @@ class CatalogManager : public tserver::TabletPeerLookupIf {
   mutable LockType lock_;
 
   // Table maps: table-id -> TableInfo and table-name -> TableInfo
-  typedef std::tr1::unordered_map<std::string, scoped_refptr<TableInfo> > TableInfoMap;
+  typedef std::unordered_map<std::string, scoped_refptr<TableInfo> > TableInfoMap;
   TableInfoMap table_ids_map_;
   TableInfoMap table_names_map_;
 
   // Tablet maps: tablet-id -> TabletInfo
-  typedef std::tr1::unordered_map<std::string, scoped_refptr<TabletInfo> > TabletInfoMap;
+  typedef std::unordered_map<std::string, scoped_refptr<TabletInfo> > TabletInfoMap;
   TabletInfoMap tablet_map_;
 
   Master *master_;
   Atomic32 closing_;
   ObjectIdGenerator oid_generator_;
+
+  // Random number generator used for selecting replica locations.
+  ThreadSafeRandom rng_;
 
   gscoped_ptr<SysCatalogTable> sys_catalog_;
 

@@ -1,25 +1,27 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Simple tool to send an CREATE TABLE request for one of the demo tablets.
 // This will eventually be replaced by a proper shell -- just a quick
 // hack for easy demo purposes.
 
-#include <glog/logging.h>
 #include <gflags/gflags.h>
+#include <glog/logging.h>
 #include <iostream>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/benchmarks/tpch/tpch-schemas.h"
@@ -34,14 +36,14 @@
 #include "kudu/util/flags.h"
 #include "kudu/util/logging.h"
 
-using std::string;
-using std::tr1::shared_ptr;
-using std::vector;
 using kudu::client::KuduClient;
 using kudu::client::KuduClientBuilder;
 using kudu::client::KuduSchema;
 using kudu::client::KuduTableCreator;
+using kudu::client::sp::shared_ptr;
 using kudu::rpc::RpcController;
+using std::string;
+using std::vector;
 
 DEFINE_string(master_address, "localhost",
               "Comma separated list of master addresses to run against.");

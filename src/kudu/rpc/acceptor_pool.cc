@@ -1,27 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/acceptor_pool.h"
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <inttypes.h>
-#include <stdint.h>
-#include <tr1/memory>
-
 #include <iostream>
+#include <pthread.h>
+#include <stdint.h>
 #include <string>
 #include <vector>
 
@@ -29,14 +30,14 @@
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/messenger.h"
 #include "kudu/util/flag_tags.h"
-#include "kudu/util/thread.h"
+#include "kudu/util/logging.h"
+#include "kudu/util/metrics.h"
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/net/socket.h"
-#include "kudu/util/metrics.h"
 #include "kudu/util/status.h"
+#include "kudu/util/thread.h"
 
 using google::protobuf::Message;
-using std::tr1::shared_ptr;
 using std::string;
 
 METRIC_DEFINE_counter(server, rpc_connections_accepted,
@@ -56,15 +57,14 @@ TAG_FLAG(rpc_acceptor_listen_backlog, advanced);
 namespace kudu {
 namespace rpc {
 
-AcceptorPool::AcceptorPool(Messenger *messenger,
-                           Socket *socket, const Sockaddr &bind_address)
- : messenger_(messenger),
-   socket_(socket->Release()),
-   bind_address_(bind_address),
-   rpc_connections_accepted_(METRIC_rpc_connections_accepted.Instantiate(
-                                 messenger->metric_entity())),
-   closing_(false) {
-}
+AcceptorPool::AcceptorPool(Messenger* messenger, Socket* socket,
+                           Sockaddr bind_address)
+    : messenger_(messenger),
+      socket_(socket->Release()),
+      bind_address_(std::move(bind_address)),
+      rpc_connections_accepted_(METRIC_rpc_connections_accepted.Instantiate(
+          messenger->metric_entity())),
+      closing_(false) {}
 
 AcceptorPool::~AcceptorPool() {
   Shutdown();
@@ -93,13 +93,22 @@ void AcceptorPool::Shutdown() {
     return;
   }
 
+#if defined(__linux__)
   // Closing the socket will break us out of accept() if we're in it, and
   // prevent future accepts.
   WARN_NOT_OK(socket_.Shutdown(true, true),
               strings::Substitute("Could not shut down acceptor socket on $0",
                                   bind_address_.ToString()));
+#else
+  // Calling shutdown on an accepting (non-connected) socket is illegal on most
+  // platforms (but not Linux). Instead, the accepting threads are interrupted
+  // forcefully.
+  for (const scoped_refptr<kudu::Thread>& thread : threads_) {
+    pthread_cancel(thread.get()->pthread_id());
+  }
+#endif
 
-  BOOST_FOREACH(const scoped_refptr<kudu::Thread>& thread, threads_) {
+  for (const scoped_refptr<kudu::Thread>& thread : threads_) {
     CHECK_OK(ThreadJoiner(thread.get()).Join());
   }
   threads_.clear();
@@ -124,14 +133,15 @@ void AcceptorPool::RunThread() {
       if (Release_Load(&closing_)) {
         break;
       }
-      LOG(WARNING) << "AcceptorPool: accept failed: " << s.ToString();
+      KLOG_EVERY_N_SECS(WARNING, 1) << "AcceptorPool: accept failed: " << s.ToString()
+                                    << THROTTLE_MSG;
       continue;
     }
     s = new_sock.SetNoDelay(true);
     if (!s.ok()) {
-      LOG(WARNING) << "Acceptor with remote = " << remote.ToString()
+      KLOG_EVERY_N_SECS(WARNING, 1) << "Acceptor with remote = " << remote.ToString()
           << " failed to set TCP_NODELAY on a newly accepted socket: "
-          << s.ToString();
+          << s.ToString() << THROTTLE_MSG;
       continue;
     }
     rpc_connections_accepted_->Increment();

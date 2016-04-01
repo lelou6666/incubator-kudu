@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/transactions/transaction_driver.h"
 
@@ -34,7 +37,7 @@ using consensus::ReplicateMsg;
 using consensus::CommitMsg;
 using consensus::DriverType;
 using log::Log;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 static const char* kTimestampFieldName = "timestamp";
 
@@ -66,7 +69,7 @@ TransactionDriver::TransactionDriver(TransactionTracker *txn_tracker,
 
 Status TransactionDriver::Init(gscoped_ptr<Transaction> transaction,
                                DriverType type) {
-  transaction_ = transaction.Pass();
+  transaction_ = std::move(transaction);
 
   if (type == consensus::REPLICA) {
     boost::lock_guard<simple_spinlock> lock(opid_lock_);
@@ -80,7 +83,7 @@ Status TransactionDriver::Init(gscoped_ptr<Transaction> transaction,
     if (consensus_) { // sometimes NULL in tests
       // Unretained is required to avoid a refcount cycle.
       mutable_state()->set_consensus_round(
-        consensus_->NewRound(replicate_msg.Pass(),
+        consensus_->NewRound(std::move(replicate_msg),
                              Bind(&TransactionDriver::ReplicationFinished, Unretained(this))));
     }
   }
@@ -96,11 +99,11 @@ consensus::OpId TransactionDriver::GetOpId() {
 }
 
 const TransactionState* TransactionDriver::state() const {
-  return transaction_ != NULL ? transaction_->state() : NULL;
+  return transaction_ != nullptr ? transaction_->state() : nullptr;
 }
 
 TransactionState* TransactionDriver::mutable_state() {
-  return transaction_ != NULL ? transaction_->state() : NULL;
+  return transaction_ != nullptr ? transaction_->state() : nullptr;
 }
 
 Transaction::TransactionType TransactionDriver::tx_type() const {
@@ -114,7 +117,7 @@ string TransactionDriver::ToString() const {
 
 string TransactionDriver::ToStringUnlocked() const {
   string ret = StateString(replication_state_, prepare_state_);
-  if (transaction_ != NULL) {
+  if (transaction_ != nullptr) {
     ret += " " + transaction_->ToString();
   } else {
     ret += "[unknown txn]";
@@ -364,6 +367,11 @@ void TransactionDriver::ApplyTask() {
     commit_msg->mutable_commited_op_id()->CopyFrom(op_id_copy_);
     SetResponseTimestamp(transaction_->state(), transaction_->state()->timestamp());
 
+    {
+      TRACE_EVENT1("txn", "AsyncAppendCommit", "txn", this);
+      CHECK_OK(log_->AsyncAppendCommit(std::move(commit_msg), Bind(DoNothingStatusCB)));
+    }
+
     // If the client requested COMMIT_WAIT as the external consistency mode
     // calculate the latest that the prepare timestamp could be and wait
     // until now.earliest > prepare_latest. Only after this are the locks
@@ -378,11 +386,6 @@ void TransactionDriver::ApplyTask() {
       CHECK_OK(CommitWait());
     }
 
-    transaction_->PreCommit();
-    {
-      TRACE_EVENT1("txn", "AsyncAppendCommit", "txn", this);
-      CHECK_OK(log_->AsyncAppendCommit(commit_msg.Pass(), Bind(DoNothingStatusCB)));
-    }
     Finalize();
   }
 }

@@ -1,19 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
@@ -118,26 +119,24 @@ TEST_F(TestMemcmpableVarint, TestCompositeKeys) {
 // tests "interesting" values -- i.e values around the boundaries of where
 // the encoding changes its number of bytes.
 TEST_F(TestMemcmpableVarint, TestInterestingCompositeKeys) {
-  vector<uint64_t> interesting_values =
-    boost::assign::list_of
-    (0)(1)(240) // 1 byte
-    (241)(2000)(2287) // 2 bytes
-    (2288)(40000)(67823) // 3 bytes
-    (67824)(1ULL << 23)((1ULL << 24) - 1) // 4 bytes
-    (1ULL << 24)(1ULL << 30)((1ULL << 32) - 1); // 5 bytes
+  vector<uint64_t> interesting_values = { 0, 1, 240, // 1 byte
+                                          241, 2000, 2287, // 2 bytes
+                                          2288, 40000, 67823, // 3 bytes
+                                          67824, 1ULL << 23, (1ULL << 24) - 1, // 4 bytes
+                                          1ULL << 24, 1ULL << 30, (1ULL << 32) - 1 }; // 5 bytes
 
   faststring buf1;
   faststring buf2;
 
-  BOOST_FOREACH(uint64_t v1, interesting_values) {
-    BOOST_FOREACH(uint64_t v2, interesting_values) {
+  for (uint64_t v1 : interesting_values) {
+    for (uint64_t v2 : interesting_values) {
       buf1.clear();
       pair<uint64_t, uint64_t> p1 = make_pair(v1, v2);
       PutMemcmpableVarint64(&buf1, p1.first);
       PutMemcmpableVarint64(&buf1, p1.second);
 
-      BOOST_FOREACH(uint64_t v3, interesting_values) {
-        BOOST_FOREACH(uint64_t v4, interesting_values) {
+      for (uint64_t v3 : interesting_values) {
+        for (uint64_t v4 : interesting_values) {
           buf2.clear();
           pair<uint64_t, uint64_t> p2 = make_pair(v3, v4);
           PutMemcmpableVarint64(&buf2, p2.first);

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tools/ksck_remote.h"
 
@@ -33,9 +36,9 @@ static const std::string kMessengerName = "ksck";
 using rpc::Messenger;
 using rpc::MessengerBuilder;
 using rpc::RpcController;
-using std::tr1::shared_ptr;
-using std::vector;
+using std::shared_ptr;
 using std::string;
+using std::vector;
 using strings::Substitute;
 
 MonoDelta GetDefaultTimeout() {
@@ -85,18 +88,15 @@ class ChecksumCallbackHandler {
 // After the ChecksumStepper reports its results to the reporter, it deletes itself.
 class ChecksumStepper {
  public:
-  ChecksumStepper(const string& tablet_id,
-                  const Schema& schema,
-                  const string& server_uuid,
-                  const ChecksumOptions& options,
-                  const ReportResultCallback& callback,
-                  const shared_ptr<tserver::TabletServerServiceProxy>& proxy)
+  ChecksumStepper(string tablet_id, const Schema& schema, string server_uuid,
+                  ChecksumOptions options, ReportResultCallback callback,
+                  shared_ptr<tserver::TabletServerServiceProxy> proxy)
       : schema_(schema),
-        tablet_id_(tablet_id),
-        server_uuid_(server_uuid),
-        options_(options),
-        reporter_callback_(callback),
-        proxy_(proxy),
+        tablet_id_(std::move(tablet_id)),
+        server_uuid_(std::move(server_uuid)),
+        options_(std::move(options)),
+        reporter_callback_(std::move(callback)),
+        proxy_(std::move(proxy)),
         call_seq_id_(0),
         checksum_(0) {
     DCHECK(proxy_);
@@ -238,7 +238,7 @@ Status RemoteKsckMaster::RetrieveTabletServers(TSMap* tablet_servers) {
   rpc.set_timeout(GetDefaultTimeout());
   RETURN_NOT_OK(proxy_->ListTabletServers(req, &resp, &rpc));
   tablet_servers->clear();
-  BOOST_FOREACH(const master::ListTabletServersResponsePB_Entry& e, resp.servers()) {
+  for (const master::ListTabletServersResponsePB_Entry& e : resp.servers()) {
     HostPortPB addr = e.registration().rpc_addresses(0);
     vector<Sockaddr> addresses;
     RETURN_NOT_OK(ParseAddressList(HostPort(addr.host(), addr.port()).ToString(),
@@ -261,7 +261,7 @@ Status RemoteKsckMaster::RetrieveTablesList(vector<shared_ptr<KsckTable> >* tabl
     return StatusFromPB(resp.error().status());
   }
   vector<shared_ptr<KsckTable> > tables_temp;
-  BOOST_FOREACH(const master::ListTablesResponsePB_TableInfo& info, resp.tables()) {
+  for (const master::ListTablesResponsePB_TableInfo& info : resp.tables()) {
     Schema schema;
     int num_replicas;
     RETURN_NOT_OK(GetTableInfo(info.name(), &schema, &num_replicas));
@@ -298,10 +298,10 @@ Status RemoteKsckMaster::GetTabletsBatch(const string& table_name,
 
   rpc.set_timeout(GetDefaultTimeout());
   RETURN_NOT_OK(proxy_->GetTableLocations(req, &resp, &rpc));
-  BOOST_FOREACH(const master::TabletLocationsPB& locations, resp.tablet_locations()) {
+  for (const master::TabletLocationsPB& locations : resp.tablet_locations()) {
     shared_ptr<KsckTablet> tablet(new KsckTablet(locations.tablet_id()));
     vector<shared_ptr<KsckTabletReplica> > replicas;
-    BOOST_FOREACH(const master::TabletLocationsPB_ReplicaPB& replica, locations.replicas()) {
+    for (const master::TabletLocationsPB_ReplicaPB& replica : locations.replicas()) {
       bool is_leader = replica.role() == consensus::RaftPeerPB::LEADER;
       bool is_follower = replica.role() == consensus::RaftPeerPB::FOLLOWER;
       replicas.push_back(shared_ptr<KsckTabletReplica>(

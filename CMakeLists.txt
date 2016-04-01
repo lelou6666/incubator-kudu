@@ -1,22 +1,81 @@
-# Copyright 2014 Cloudera, Inc.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
-# Require cmake at least as new as the one in thirdparty/
-cmake_minimum_required(VERSION 3.2.3)
+# Require cmake that supports BYPRODUCTS in add_custom_command() [1].
+#
+# Note: cmake in thirdparty/ will always meet this minimum.
+#
+# 1. https://cmake.org/Bug/view.php?id=14963
+cmake_minimum_required(VERSION 3.2.0)
+
+# Prevent builds from the top-level source directory. This ensures that build
+# output is well isolated from the source tree.
+#
+# May be overridden by setting KUDU_ALLOW_IN_SOURCE_BUILDS; this is only
+# recommended for experts!
+if("${CMAKE_CURRENT_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_BINARY_DIR}" AND
+    NOT "${KUDU_ALLOW_IN_SOURCE_BUILD}")
+  message(FATAL_ERROR
+    "Kudu may not be built from the top-level source directory. Create a new "
+    "directory and run cmake from there, passing the path to the top-level "
+    "source directory as the last argument. "
+    "To override this, rerun CMake with -DKUDU_ALLOW_IN_SOURCE_BUILD=1. "
+    "Also, delete 'CMakeCache.txt' and 'CMakeFiles' from the top-level source "
+    "directory, otherwise future builds will not work.")
+endif()
+
+# Provide a 'latest' symlink to this build directory if the "blessed"
+# multi-build layout is detected:
+#
+# build/
+# build/<first build directory>
+# build/<second build directory>
+# ...
+if ("${CMAKE_CURRENT_BINARY_DIR}" MATCHES "^${CMAKE_CURRENT_SOURCE_DIR}/build/[^/]+$")
+  if ("${CMAKE_CURRENT_BINARY_DIR}" MATCHES "^${CMAKE_CURRENT_SOURCE_DIR}/build/latest")
+    message(FATAL_ERROR "Should not run cmake inside the build/latest symlink. "
+            "First change directories into the destination of the symlink.")
+  endif()
+  if (NOT APPLE)
+    set(MORE_ARGS "-T")
+  endif()
+
+  # Create the symlink both during cmake invocation and when the default target
+  # ('all') is built. The former is useful for scripts that, after running
+  # cmake, only build a single target (i.e. "make lint").
+  execute_process(COMMAND ln ${MORE_ARGS} -sf ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/latest)
+  add_custom_target(latest_symlink ALL
+    ln ${MORE_ARGS} -sf ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/latest
+    COMMENT "Recreating ../build/latest symlink")
+
+  # 'ALL' above doesn't actually add 'latest_symlink' as a dependency to all
+  # targets. So, we override add_executable to ensure that whenever any executable
+  # is built, the symlink is re-created.
+  function(add_executable name)
+    # Call through to the original add_executable function.
+    _add_executable(${name} ${ARGN})
+    add_dependencies(${name} latest_symlink)
+  endfunction()
+endif()
 
 # TODO: can we somehow pass this into the java build?
-set(KUDU_VERSION_NUMBER "0.5.0")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" KUDU_VERSION_NUMBER)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake_modules")
 include(CMakeParseArguments)
@@ -56,13 +115,24 @@ endif()
 #    integers
 #  -Wno-deprecated: some of the gutil code includes old things like ext/hash_set, ignore that
 #  - pthread: enable multithreaded malloc
-#  - -D__STDC_FORMAT_MACROS: for PRI* print format macros
 #  -fno-strict-aliasing
 #     Assume programs do not follow strict aliasing rules.
 #     GCC cannot always verify whether strict aliasing rules are indeed followed due to
 #     fundamental limitations in escape analysis, which can result in subtle bad code generation.
 #     This has a small perf hit but worth it to avoid hard to debug crashes.
-set(CXX_COMMON_FLAGS "-fno-strict-aliasing -msse4.2 -Wall -Wno-sign-compare -Wno-deprecated -pthread -D__STDC_FORMAT_MACROS")
+set(CXX_COMMON_FLAGS "-fno-strict-aliasing -msse4.2 -Wall -Wno-sign-compare -Wno-deprecated -pthread")
+
+# We want access to the PRI* print format macros.
+add_definitions(-D__STDC_FORMAT_MACROS)
+
+# Explicitly disable the new gcc5 ABI. Until clang supports abi tags [1], Kudu's
+# generated code (which always uses clang) must be built against the old ABI.
+# There's no recourse for using both ABIs in the same process; gcc's advice [2]
+# is to build everything against the old ABI.
+#
+# 1. https://llvm.org/bugs/show_bug.cgi?id=23529
+# 2. https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html
+add_definitions(-D_GLIBCXX_USE_CXX11_ABI=0)
 
 # We want short macros from util/status.h.
 add_definitions(-DKUDU_HEADERS_USE_SHORT_STATUS_MACROS=1)
@@ -141,18 +211,15 @@ set(CMAKE_CXX_FLAGS "${CXX_COMMON_FLAGS} ${CMAKE_CXX_FLAGS}")
 include(CompilerInfo)
 
 if ("${COMPILER_FAMILY}" STREQUAL "clang")
-  # Clang helpfully provides a few extensions from C++11 such as the 'override'
-  # keyword on methods. This doesn't change behavior, and we selectively enable
-  # it in src/gutil/port.h only on clang. So, we can safely use it, and don't want
-  # to trigger warnings when we do so.
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-c++11-extensions")
-
   # Using Clang with ccache causes a bunch of spurious warnings that are
   # purportedly fixed in the next version of ccache. See the following for details:
   #
   #   http://petereisentraut.blogspot.com/2011/05/ccache-and-clang.html
   #   http://petereisentraut.blogspot.com/2011/09/ccache-and-clang-part-2.html
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Qunused-arguments")
+
+  # Clang generates ambiguous member template warnings when calling the ev++ api.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-ambiguous-member-template")
 
   # Only hardcode -fcolor-diagnostics if stderr is opened on a terminal. Otherwise
   # the color codes show up as noisy artifacts.
@@ -166,10 +233,23 @@ if ("${COMPILER_FAMILY}" STREQUAL "clang")
   else()
     message("Running without a controlling terminal or in a dumb terminal")
   endif()
+elseif("${COMPILER_FAMILY}" STREQUAL "gcc")
+  # Disallow GCC < 4.8, since it doesn't support the C++11 standard
+  # well enough for us.
+  if ("${COMPILER_VERSION}" VERSION_LESS "4.8")
+    message(FATAL_ERROR "GCC <4.8 not supported. Consider using "
+        "thirdparty/clang-toolchain/ to build on older hosts.")
+  endif()
 
-  # Use libstdc++ and not libc++. The latter lacks support for tr1 in OSX
-  # and since 10.9 is now the default.
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libstdc++")
+  # GCC 4.8's tree vectorizer has a bug which causes hard-to-debug incorrect
+  # code. Disable this option on release builds, where it would otherwise
+  # be enabled by -O3.
+  if ("${COMPILER_VERSION}" MATCHES "^4.8" AND
+      "${CMAKE_BUILD_TYPE}" STREQUAL "RELEASE")
+    message("Running release build on gcc 4.8. The tree-vectorize optimization "
+      "in this version of gcc is known to be buggy. Disabling it.")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-tree-vectorize")
+  endif()
 endif()
 
 # Sanity check linking option.
@@ -220,6 +300,7 @@ endif()
 
 # For any C code, use the same flags.
 set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 # Flag to enable clang undefined behavior sanitizer
 # We explicitly don't enable all of the sanitizer flags:
@@ -253,8 +334,12 @@ if (${KUDU_USE_TSAN})
   # so that the annotations in the header actually take effect.
   add_definitions("-D_GLIBCXX_EXTERN_TEMPLATE=0")
 
-  # Some of the above also need to be passed to the linker.
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie -fsanitize=thread")
+  # Compile and link against the thirdparty TSAN instrumented libstdcxx.
+  set(TSAN_GCC_DIR "${CMAKE_SOURCE_DIR}/thirdparty/installed-deps-tsan/gcc")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-rpath,${TSAN_GCC_DIR}/lib -fsanitize=thread")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -nostdinc++ -L${TSAN_GCC_DIR}/lib")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem ${TSAN_GCC_DIR}/include/c++/4.9.3")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -isystem ${TSAN_GCC_DIR}/include/c++/4.9.3/backward")
 
   # Strictly speaking, TSAN doesn't require dynamic linking. But it does
   # require all code to be position independent, and the easiest way to
@@ -287,22 +372,13 @@ endif()
 
 # Code coverage
 if ("${KUDU_GENERATE_COVERAGE}")
-  if("${CMAKE_CXX_COMPILER}" MATCHES ".*clang.*")
-    # There appears to be some bugs in clang 3.3 which cause code coverage
-    # to have link errors, not locating the llvm_gcda_* symbols.
-    # This should be fixed in llvm 3.4 with http://llvm.org/viewvc/llvm-project?view=revision&revision=184666
-    message(SEND_ERROR "Cannot currently generate coverage with clang")
-  endif()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage -DCOVERAGE_BUILD")
 
-  # For coverage to work properly, we need to use static linkage. Otherwise,
-  # __gcov_flush() doesn't properly flush coverage from every module.
-  # See http://stackoverflow.com/questions/28164543/using-gcov-flush-within-a-library-doesnt-force-the-other-modules-to-yield-gc
-  if("${KUDU_LINK}" STREQUAL "a")
-    message("Using static linking for coverage build")
-    set(KUDU_LINK "s")
-  elseif("${KUDU_LINK}" STREQUAL "d")
-    message(SEND_ERROR "Cannot use coverage with static linking")
+  if(NOT "${COMPILER_FAMILY}" STREQUAL "clang")
+    # Use clang for coverage builds so that we can standardize on a single
+    # compiler. clang also handles flushing coverage from shared libraries
+    # better than gcc.
+    message(SEND_ERROR "Must use clang for coverage build")
   endif()
 endif()
 
@@ -353,30 +429,19 @@ if ("${KUDU_LINK}" STREQUAL "d")
   add_definitions(-fPIC)
 endif()
 
-# set compile output directory
-string (TOLOWER ${CMAKE_BUILD_TYPE} BUILD_SUBDIR_NAME)
-set(BUILD_OUTPUT_ROOT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build/${BUILD_SUBDIR_NAME}/")
-
-# Link build/latest to the current build directory, to avoid developers
-# accidentally running the latest debug build when in fact they're building
-# release builds.
-FILE(MAKE_DIRECTORY ${BUILD_OUTPUT_ROOT_DIRECTORY})
-if (NOT APPLE)
-  set(MORE_ARGS "-T")
-endif()
-EXECUTE_PROCESS(COMMAND ln ${MORE_ARGS} -sf ${BUILD_OUTPUT_ROOT_DIRECTORY}
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/latest)
-
 # where to put generated archives (.a files)
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${BUILD_OUTPUT_ROOT_DIRECTORY}")
-set(ARCHIVE_OUTPUT_DIRECTORY "${BUILD_OUTPUT_ROOT_DIRECTORY}")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib")
+file(MAKE_DIRECTORY "${CMAKE_ARCHIVE_OUTPUT_DIRECTORY}")
 
 # where to put generated libraries (.so files)
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${BUILD_OUTPUT_ROOT_DIRECTORY}")
-set(LIBRARY_OUTPUT_DIRECTORY "${BUILD_OUTPUT_ROOT_DIRECTORY}")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lib")
+file(MAKE_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}")
 
 # where to put generated binaries
-set(EXECUTABLE_OUTPUT_PATH "${BUILD_OUTPUT_ROOT_DIRECTORY}")
+set(EXECUTABLE_OUTPUT_PATH "${CMAKE_CURRENT_BINARY_DIR}/bin")
+file(MAKE_DIRECTORY "${EXECUTABLE_OUTPUT_PATH}")
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/src)
 include_directories(src)
 
 ############################################################
@@ -539,7 +604,14 @@ function(ADD_KUDU_TEST REL_TEST_NAME)
     target_link_libraries(${TEST_NAME} ${KUDU_TEST_LINK_LIBS})
   else()
     # No executable, just invoke the test (probably a script) directly.
-    set(TEST_PATH ${CMAKE_CURRENT_SOURCE_DIR}/${REL_TEST_NAME})
+    get_filename_component(TEST_NAME_WITH_EXT ${REL_TEST_NAME} NAME)
+    set(TEST_PATH "${EXECUTABLE_OUTPUT_PATH}/${TEST_NAME_WITH_EXT}")
+
+    # Ideally this would run only when the test is built, not when cmake runs,
+    # but add_test() doesn't yield a target (if it did, that target could depend
+    # on an add_custom_command() that copies the test file into place).
+    execute_process(COMMAND ln -sf ${CMAKE_CURRENT_SOURCE_DIR}/${REL_TEST_NAME}
+      ${EXECUTABLE_OUTPUT_PATH})
   endif()
 
   add_test(${TEST_NAME}
@@ -617,9 +689,16 @@ function(ADD_THIRDPARTY_LIB LIB_NAME)
   endif()
 endfunction()
 
-# Look in thirdparty/installed before anywhere else for system dependencies.
-set(THIRDPARTY_PREFIX ${CMAKE_SOURCE_DIR}/thirdparty/installed)
-set(CMAKE_PREFIX_PATH ${THIRDPARTY_PREFIX})
+# Look in thirdparty prefix paths before anywhere else for system dependencies.
+set(THIRDPARTY_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/installed)
+set(CMAKE_PREFIX_PATH ${THIRDPARTY_PREFIX} ${CMAKE_PREFIX_PATH})
+if (${KUDU_USE_TSAN})
+  set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/installed-deps-tsan
+      ${CMAKE_PREFIX_PATH})
+else()
+  set(CMAKE_PREFIX_PATH ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/installed-deps
+      ${CMAKE_PREFIX_PATH})
+endif()
 
 ## Cyrus SASL
 find_package(CyrusSASL REQUIRED)
@@ -663,18 +742,15 @@ ADD_THIRDPARTY_LIB(gmock
   SHARED_LIB ${GMOCK_SHARED_LIBRARY})
 
 ## Protobuf
-set(PROTO_SRC_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/src)
-set(PROTO_DST_ROOT ${CMAKE_CURRENT_BINARY_DIR}/src)
-find_package( Protobuf REQUIRED )
+find_package(Protobuf REQUIRED)
 include_directories(SYSTEM ${PROTOBUF_INCLUDE_DIR})
 ADD_THIRDPARTY_LIB(protobuf
   STATIC_LIB "${PROTOBUF_STATIC_LIBRARY}"
-  SHARED_LIB "${PROTOBUF_LIBRARY}")
+  SHARED_LIB "${PROTOBUF_SHARED_LIBRARY}")
 ADD_THIRDPARTY_LIB(protoc
   STATIC_LIB "${PROTOBUF_PROTOC_STATIC_LIBRARY}"
   SHARED_LIB "${PROTOBUF_PROTOC_LIBRARY}"
   DEPS protobuf)
-
 find_package(KRPC REQUIRED)
 
 ## Snappy
@@ -709,15 +785,10 @@ ADD_THIRDPARTY_LIB(zlib
   SHARED_LIB "${ZLIB_SHARED_LIB}")
 
 ## Squeasel
-## Doesn't build on OSX, skipping it means Kudu doesn't build!
-## TODO Make it work.
-if (NOT APPLE)
-  find_package(Squeasel REQUIRED)
-  include_directories(SYSTEM ${SQUEASEL_INCLUDE_DIR})
-  ADD_THIRDPARTY_LIB(squeasel
-    STATIC_LIB "${SQUEASEL_STATIC_LIB}"
-    DEPS ${SQUEASEL_STATIC_LIB_DEPS})
-endif()
+find_package(Squeasel REQUIRED)
+include_directories(SYSTEM ${SQUEASEL_INCLUDE_DIR})
+ADD_THIRDPARTY_LIB(squeasel
+  STATIC_LIB "${SQUEASEL_STATIC_LIB}")
 
 ## Google PerfTools
 ##
@@ -739,11 +810,13 @@ if (NOT "${KUDU_USE_ASAN}" AND
 endif()
 
 # libvmem
-find_package(Vmem REQUIRED)
-include_directories(SYSTEM ${VMEM_INCLUDE_DIR})
-ADD_THIRDPARTY_LIB(vmem
-  STATIC_LIB "${VMEM_STATIC_LIB}"
-  SHARED_LIB "${VMEM_SHARED_LIB}")
+if (NOT APPLE)
+  find_package(Vmem REQUIRED)
+  include_directories(SYSTEM ${VMEM_INCLUDE_DIR})
+  ADD_THIRDPARTY_LIB(vmem
+    STATIC_LIB "${VMEM_STATIC_LIB}"
+    SHARED_LIB "${VMEM_SHARED_LIB}")
+endif()
 
 ## curl
 find_package(CURL REQUIRED)
@@ -765,15 +838,16 @@ if(${LLVM_PACKAGE_VERSION} VERSION_LESS 3.4)
 endif()
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-link_directories(${LLVM_LIBRARY_DIRS})
 
 ## librt
-find_library(RT_LIB_PATH rt)
-if(NOT RT_LIB_PATH)
-  message(FATAL_ERROR "Could not find librt on the system path")
+if (NOT APPLE)
+  find_library(RT_LIB_PATH rt)
+  if(NOT RT_LIB_PATH)
+    message(FATAL_ERROR "Could not find librt on the system path")
+  endif()
+  ADD_THIRDPARTY_LIB(rt
+    SHARED_LIB "${RT_LIB_PATH}")
 endif()
-ADD_THIRDPARTY_LIB(rt
-  SHARED_LIB "${RT_LIB_PATH}")
 
 ## Boost
 # It's important that Boost come last in the list of packages, because it's the only
@@ -836,28 +910,34 @@ set(KUDU_TEST_LINK_LIBS ${KUDU_MIN_TEST_LIBS})
 # "make ctags" target
 ############################################################
 if (UNIX)
-  add_custom_target(ctags ctags -R --languages=c++,c --exclude=thirdparty/installed)
+  add_custom_target(ctags ctags --languages=c++,c -L
+    `find ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_BINARY_DIR}/src`)
 endif (UNIX)
 
 ############################################################
 # "make etags" target
+#
+# Requires the exuberant-ctags system package.
 ############################################################
 if (UNIX)
-  add_custom_target(tags etags --members --declarations
-  `find ${CMAKE_CURRENT_SOURCE_DIR}/src
-   -name \\*.cc -or -name \\*.hh -or -name \\*.cpp -or -name \\*.h -or -name \\*.c -or
-   -name \\*.f`)
-  add_custom_target(etags DEPENDS tags)
+  add_custom_target(etags etags --members --declarations
+    `find ${CMAKE_CURRENT_SOURCE_DIR}/src
+          ${CMAKE_CURRENT_BINARY_DIR}/src
+          -name \\*.cc -or -name \\*.hh -or -name \\*.cpp -or
+          -name \\*.h -or -name \\*.c`)
 endif (UNIX)
 
 ############################################################
 # "make cscope" target
 ############################################################
 if (UNIX)
-  add_custom_target(cscope find ${CMAKE_CURRENT_SOURCE_DIR}
-  ( -name \\*.cc -or -name \\*.hh -or -name \\*.cpp -or
-    -name \\*.h -or -name \\*.c -or -name \\*.f )
-  -exec echo \"{}\" \; > cscope.files && cscope -q -b VERBATIM)
+  add_custom_target(cscope
+    find ${CMAKE_CURRENT_SOURCE_DIR}/src
+         ${CMAKE_CURRENT_BINARY_DIR}/src
+         -name \\*.cc -or -name \\*.hh -or -name \\*.cpp -or
+         -name \\*.h -or -name \\*.c
+    > cscope.files && cscope -q -b)
 endif (UNIX)
 
 ############################################################
@@ -875,13 +955,18 @@ endif (UNIX)
 # "make docs" target
 ############################################################
 if (UNIX)
-  set(DOCS_BUILD_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/build/docs)
-  add_custom_command(
-    OUTPUT ${DOCS_BUILD_DIRECTORY}
-    # We want the docs output HTML to go in a docs/ subdir of the output dir
-    COMMAND docs/support/scripts/make_docs.sh)
   add_custom_target(docs
-    DEPENDS ${DOCS_BUILD_DIRECTORY})
+    # The docs output HTML will end up in a docs/ subdir.
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/support/scripts/make_docs.sh
+      --build_root ${CMAKE_CURRENT_BINARY_DIR})
+endif (UNIX)
+
+############################################################
+# "make site" target
+############################################################
+if (UNIX)
+  add_custom_target(site
+    ${CMAKE_CURRENT_SOURCE_DIR}/docs/support/scripts/make_site.sh)
 endif (UNIX)
 
 ############################################################

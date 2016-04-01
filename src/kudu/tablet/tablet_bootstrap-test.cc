@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log-test-base.h"
 
@@ -28,6 +31,10 @@
 #include "kudu/tablet/tablet-test-util.h"
 #include "kudu/tablet/tablet_metadata.h"
 
+using std::shared_ptr;
+using std::string;
+using std::vector;
+
 namespace kudu {
 
 namespace log {
@@ -38,9 +45,6 @@ extern const char* kTestTablet;
 } // namespace log
 
 namespace tablet {
-
-using std::vector;
-using std::string;
 
 using consensus::ConsensusBootstrapInfo;
 using consensus::ConsensusMetadata;
@@ -78,7 +82,7 @@ class BootstrapTest : public LogTestBase {
                                                TABLET_DATA_READY,
                                                meta));
     (*meta)->SetLastDurableMrsIdForTests(mrs_id);
-    if ((*meta)->GetRowSetForTests(0) != NULL) {
+    if ((*meta)->GetRowSetForTests(0) != nullptr) {
       (*meta)->GetRowSetForTests(0)->SetLastDurableRedoDmsIdForTests(delta_id);
     }
     return (*meta)->Flush();
@@ -145,9 +149,9 @@ class BootstrapTest : public LogTestBase {
     // we aren't properly setting up the clock after bootstrap.
     MvccSnapshot snap = MvccSnapshot::CreateSnapshotIncludingAllTransactions();
     ASSERT_OK(tablet->NewRowIterator(schema_, snap, Tablet::UNORDERED, &iter));
-    ASSERT_OK(iter->Init(NULL));
+    ASSERT_OK(iter->Init(nullptr));
     ASSERT_OK(IterateToStringList(iter.get(), results));
-    BOOST_FOREACH(const string& result, *results) {
+    for (const string& result : *results) {
       VLOG(1) << result;
     }
   }
@@ -225,7 +229,7 @@ TEST_F(BootstrapTest, TestOrphanCommit) {
     // commits.
     AppendCommit(opid);
     log::SegmentSequence segments;
-    ASSERT_OK(log_->GetLogReader()->GetSegmentsSnapshot(&segments));
+    ASSERT_OK(log_->reader()->GetSegmentsSnapshot(&segments));
     fs_manager_->env()->DeleteFile(segments[0]->path());
   }
   {
@@ -264,7 +268,7 @@ TEST_F(BootstrapTest, TestNonOrphansAfterOrphanCommit) {
   AppendCommit(opid);
 
   log::SegmentSequence segments;
-  ASSERT_OK(log_->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log_->reader()->GetSegmentsSnapshot(&segments));
   fs_manager_->env()->DeleteFile(segments[0]->path());
 
   current_index_ += 2;
@@ -411,7 +415,7 @@ TEST_F(BootstrapTest, TestOutOfOrderCommits) {
   MemStoreTargetPB* target = mutate->add_mutated_stores();
   target->set_mrs_id(1);
 
-  AppendCommit(mutate_commit.Pass());
+  AppendCommit(std::move(mutate_commit));
 
   gscoped_ptr<consensus::CommitMsg> insert_commit(new consensus::CommitMsg);
   insert_commit->set_op_type(consensus::WRITE_OP);
@@ -421,7 +425,7 @@ TEST_F(BootstrapTest, TestOutOfOrderCommits) {
   target = insert->add_mutated_stores();
   target->set_mrs_id(1);
 
-  AppendCommit(insert_commit.Pass());
+  AppendCommit(std::move(insert_commit));
 
   ConsensusBootstrapInfo boot_info;
   shared_ptr<Tablet> tablet;
@@ -475,7 +479,7 @@ TEST_F(BootstrapTest, TestMissingCommitMessage) {
   MemStoreTargetPB* target = mutate->add_mutated_stores();
   target->set_mrs_id(1);
 
-  AppendCommit(mutate_commit.Pass());
+  AppendCommit(std::move(mutate_commit));
 
   ConsensusBootstrapInfo boot_info;
   shared_ptr<Tablet> tablet;
@@ -522,7 +526,7 @@ TEST_F(BootstrapTest, TestConsensusOnlyOperationOutOfOrderTimestamp) {
   mutate_commit->set_op_type(consensus::NO_OP);
   *mutate_commit->mutable_commited_op_id() = noop_replicate->get()->id();
 
-  AppendCommit(mutate_commit.Pass());
+  AppendCommit(std::move(mutate_commit));
 
   // ...and WRITE_OP...
   mutate_commit.reset(new consensus::CommitMsg);
@@ -533,7 +537,7 @@ TEST_F(BootstrapTest, TestConsensusOnlyOperationOutOfOrderTimestamp) {
   MemStoreTargetPB* target = mutate->add_mutated_stores();
   target->set_mrs_id(1);
 
-  AppendCommit(mutate_commit.Pass());
+  AppendCommit(std::move(mutate_commit));
 
   ConsensusBootstrapInfo boot_info;
   shared_ptr<Tablet> tablet;

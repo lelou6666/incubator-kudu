@@ -1,27 +1,29 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/svg_dump.h"
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <time.h>
 
-#include <iostream>
 #include <fstream>
+#include <iostream>
 #include <string>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/common/encoded_key.h"
@@ -33,7 +35,7 @@
 #include "kudu/util/flag_tags.h"
 
 using std::ostream;
-using std::tr1::unordered_set;
+using std::unordered_set;
 using std::vector;
 
 namespace kudu {
@@ -63,14 +65,14 @@ void OrganizeSVGRows(const vector<RowSetInfo>& candidates,
                      vector<vector<const RowSetInfo*> >* rows) {
   rows->push_back(vector<const RowSetInfo *>());
 
-  BOOST_FOREACH(const RowSetInfo &candidate, candidates) {
+  for (const RowSetInfo &candidate : candidates) {
     // Slot into the first row of the output which fits it
     bool found_slot = false;
-    BOOST_FOREACH(vector<const RowSetInfo *> &row, *rows) {
+    for (vector<const RowSetInfo *> &row : *rows) {
       // If this candidate doesn't intersect any other candidates in this
       // row, we can put it here.
       bool fits_in_row = true;
-      BOOST_FOREACH(const RowSetInfo *already_in_row, row) {
+      for (const RowSetInfo *already_in_row : row) {
         if (candidate.Intersects(*already_in_row)) {
           fits_in_row = false;
           break;
@@ -124,7 +126,7 @@ void DumpSVG(const vector<RowSetInfo>& candidates,
     const vector<const RowSetInfo *> &row = svg_rows[row_index];
 
     int y = kRowHeight * row_index + kHeaderHeight;
-    BOOST_FOREACH(const RowSetInfo *cand, row) {
+    for (const RowSetInfo *cand : row) {
       bool was_picked = ContainsKey(picked, cand->rowset());
       const char *color = was_picked ? kPickedColor : kDefaultColor;
 
@@ -159,7 +161,7 @@ gscoped_ptr<ostream> PrepareOstream() {
   // Get default file name
   const string &pattern = FLAGS_compaction_policy_dump_svgs_pattern;
   if (pattern.empty()) return gscoped_ptr<ostream>();
-  const string path = StringReplace(pattern, "TIME", StringPrintf("%ld", time(NULL)), true);
+  const string path = StringReplace(pattern, "TIME", StringPrintf("%ld", time(nullptr)), true);
 
   // Open
   out.reset(new ofstream(path.c_str()));

@@ -1,21 +1,24 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 {
   "name" : "KUDU",
   "label" : "Kudu (Beta)",
   "description" : "Kudu is a true column store for the Hadoop ecosystem. <span class=\"error\">Kudu is currently in Beta and is not supported. Before adding this service, ensure that you have installed the Kudu binaries, which are not included in CDH.</span>",
-  "version" : "0.5.0",
+  "version" : "0.6.0",
   "compatibility" : {
     "generation" : 1
   },
@@ -114,7 +117,7 @@
         {
           "name" : "fs_wal_dir",
           "label" : "Kudu Master WAL Directory",
-          "description" : "Directory where Kudu masters will store write-ahead logs. Can be the same as one of the data directories. When colocating masters and tablet servers, this directory must be different for each of them and one cannot contain the other.",
+          "description" : "Directory where Kudu masters will store write-ahead logs. It can be the same as one of the data directories, but not a sub-directory of a data directory. Master and tablet servers must use different directories when co-located on the same machine.",
           "required" : "true",
           "configurableInWizard" : true,
           "type" : "path",
@@ -211,7 +214,7 @@
         {
           "name" : "fs_wal_dir",
           "label" : "Kudu Tablet Server WAL Directory",
-          "description" : "Directory where Kudu tablet servers will store write-ahead logs. Can be the same as one of the data directories. When colocating masters and tablet servers, this directory must be different for each of them and one cannot contain the other.",
+          "description" : "Directory where Kudu tablet servers will store write-ahead logs. It can be the same as one of the data directories, but not a sub-directory of a data directory. Master and tablet servers must use different directories when co-located on the same machine.",
           "required" : "true",
           "configurableInWizard" : true,
           "type" : "path",

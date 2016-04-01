@@ -1,26 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TSERVER_SCANNERS_H
 #define KUDU_TSERVER_SCANNERS_H
 
+#include <boost/thread/shared_mutex.hpp>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <utility>
 #include <vector>
-
-#include <boost/thread/shared_mutex.hpp>
 
 #include "kudu/common/iterator_stats.h"
 #include "kudu/gutil/gscoped_ptr.h"
@@ -48,7 +50,7 @@ namespace tserver {
 
 class Scanner;
 struct ScannerMetrics;
-typedef std::tr1::shared_ptr<Scanner> SharedScanner;
+typedef std::shared_ptr<Scanner> SharedScanner;
 
 // Manages the live scanners within a Tablet Server.
 //
@@ -80,9 +82,13 @@ class ScannerManager {
   bool UnregisterScanner(const std::string& scanner_id);
 
   // Return the number of scanners currently active.
+  // Note this method will not return accurate value
+  // if under concurrent modifications.
   size_t CountActiveScanners() const;
 
   // List all active scanners.
+  // Note this method will not return a consistent view
+  // of all active scanners if under concurrent modifications.
   void ListScanners(std::vector<SharedScanner>* scanners);
 
   // Iterate through scanners and remove any which are past their TTL.
@@ -91,10 +97,25 @@ class ScannerManager {
  private:
   FRIEND_TEST(ScannerTest, TestExpire);
 
+  enum {
+    kNumScannerMapStripes = 32
+  };
+
+  typedef std::unordered_map<std::string, SharedScanner> ScannerMap;
+
   typedef std::pair<std::string, SharedScanner> ScannerMapEntry;
+
+  struct ScannerMapStripe {
+    // Lock protecting the scanner map.
+    mutable boost::shared_mutex lock_;
+    // Map of the currently active scanners.
+    ScannerMap scanners_by_id_;
+  };
 
   // Periodically call RemoveExpiredScanners().
   void RunRemovalThread();
+
+  ScannerMapStripe& GetStripeByScannerId(const string& scanner_id);
 
   // (Optional) scanner metrics for this instance.
   gscoped_ptr<ScannerMetrics> metrics_;
@@ -105,13 +126,7 @@ class ScannerManager {
   mutable boost::mutex shutdown_lock_;
   boost::condition_variable shutdown_cv_;
 
-  // Lock protecting the scanner map.
-  mutable boost::shared_mutex lock_;
-
-  // Map of the currently active scanners.
-  typedef std::tr1::unordered_map<std::string, SharedScanner> ScannerMap;
-
-  ScannerMap scanners_by_id_;
+  std::vector<ScannerMapStripe*> scanner_maps_;
 
   // Generator for scanner IDs.
   ObjectIdGenerator oid_generator_;
@@ -127,12 +142,8 @@ class ScannerManager {
 // RAII wrapper to unregister a scanner upon scope exit.
 class ScopedUnregisterScanner {
  public:
-  ScopedUnregisterScanner(ScannerManager* mgr,
-                          const std::string& id)
-    : mgr_(mgr),
-      id_(id),
-      cancelled_(false) {
-  }
+  ScopedUnregisterScanner(ScannerManager* mgr, std::string id)
+      : mgr_(mgr), id_(std::move(id)), cancelled_(false) {}
 
   ~ScopedUnregisterScanner() {
     if (!cancelled_) {
@@ -154,10 +165,9 @@ class ScopedUnregisterScanner {
 // An open scanner on the server side.
 class Scanner {
  public:
-  explicit Scanner(const std::string& id,
+  explicit Scanner(std::string id,
                    const scoped_refptr<tablet::TabletPeer>& tablet_peer,
-                   const std::string& requestor_string,
-                   ScannerMetrics* metrics);
+                   std::string requestor_string, ScannerMetrics* metrics);
   ~Scanner();
 
   // Attach an actual iterator and a ScanSpec to this Scanner.
@@ -202,7 +212,10 @@ class Scanner {
   // Return the ScanSpec associated with this Scanner.
   const ScanSpec& spec() const;
 
-  const std::string& tablet_id() const { return tablet_peer_->tablet_id(); }
+  const std::string tablet_id() const {
+    // scanners-test passes a null tablet_peer.
+    return tablet_peer_ ? tablet_peer_->tablet_id() : "null tablet";
+  }
 
   const scoped_refptr<tablet::TabletPeer>& tablet_peer() const { return tablet_peer_; }
 

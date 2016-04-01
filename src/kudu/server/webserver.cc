@@ -1,29 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/server/webserver.h"
 
 #include <algorithm>
@@ -33,7 +23,6 @@
 #include <map>
 #include <vector>
 #include <boost/lexical_cast.hpp>
-#include <boost/foreach.hpp>
 #include <boost/bind.hpp>
 #include <boost/mem_fn.hpp>
 #include <boost/algorithm/string.hpp>
@@ -54,6 +43,10 @@
 #include "kudu/util/url-coding.h"
 #include "kudu/util/version_info.h"
 
+#if defined(__APPLE__)
+typedef sig_t sighandler_t;
+#endif
+
 using std::string;
 using std::stringstream;
 using std::vector;
@@ -69,7 +62,7 @@ namespace kudu {
 
 Webserver::Webserver(const WebserverOptions& opts)
   : opts_(opts),
-    context_(NULL) {
+    context_(nullptr) {
   string host = opts.bind_interface.empty() ? "0.0.0.0" : opts.bind_interface;
   http_address_ = host + ":" + boost::lexical_cast<string>(opts.port);
 }
@@ -81,7 +74,7 @@ Webserver::~Webserver() {
 
 void Webserver::RootHandler(const Webserver::WebRequest& args, stringstream* output) {
   (*output) << "<h2>Status Pages</h2>";
-  BOOST_FOREACH(const PathHandlerMap::value_type& handler, path_handlers_) {
+  for (const PathHandlerMap::value_type& handler : path_handlers_) {
     if (handler.second->is_on_nav_bar()) {
       (*output) << "<a href=\"" << handler.first << "\">" << handler.second->alias() << "</a><br/>";
     }
@@ -94,7 +87,7 @@ void Webserver::RootHandler(const Webserver::WebRequest& args, stringstream* out
 void Webserver::BuildArgumentMap(const string& args, ArgumentMap* output) {
   vector<StringPiece> arg_pairs = strings::Split(args, "&");
 
-  BOOST_FOREACH(const StringPiece& arg_pair, arg_pairs) {
+  for (const StringPiece& arg_pair : arg_pairs) {
     vector<StringPiece> key_value = strings::Split(arg_pair, "=");
     if (key_value.empty()) continue;
 
@@ -116,7 +109,7 @@ Status Webserver::BuildListenSpec(string* spec) const {
   RETURN_NOT_OK(ParseAddressList(http_address_, 80, &addrs));
 
   vector<string> parts;
-  BOOST_FOREACH(const Sockaddr& addr, addrs) {
+  for (const Sockaddr& addr : addrs) {
     // Mongoose makes sockets with 's' suffixes accept SSL traffic only
     parts.push_back(addr.ToString() + (IsSecure() ? "s" : ""));
   }
@@ -134,6 +127,8 @@ Status Webserver::Start() {
     LOG(INFO) << "Document root: " << opts_.doc_root;
     options.push_back("document_root");
     options.push_back(opts_.doc_root.c_str());
+    options.push_back("enable_directory_listing");
+    options.push_back("no");
   } else {
     LOG(INFO)<< "Document root disabled";
   }
@@ -173,7 +168,7 @@ Status Webserver::Start() {
   options.push_back(num_threads_str.c_str());
 
   // Options must be a NULL-terminated list
-  options.push_back(NULL);
+  options.push_back(nullptr);
 
   // mongoose ignores SIGCHLD and we need it to run kinit. This means that since
   // mongoose does not reap its own children CGI programs must be avoided.
@@ -194,7 +189,7 @@ Status Webserver::Start() {
   // Restore the child signal handler so wait() works properly.
   signal(SIGCHLD, sig_chld);
 
-  if (context_ == NULL) {
+  if (context_ == nullptr) {
     stringstream error_msg;
     error_msg << "Webserver: Could not start on address " << http_address_;
     Sockaddr addr;
@@ -211,7 +206,7 @@ Status Webserver::Start() {
   vector<Sockaddr> addrs;
   RETURN_NOT_OK(GetBoundAddresses(&addrs));
   string bound_addresses_str;
-  BOOST_FOREACH(const Sockaddr& addr, addrs) {
+  for (const Sockaddr& addr : addrs) {
     if (!bound_addresses_str.empty()) {
       bound_addresses_str += ", ";
     }
@@ -223,9 +218,9 @@ Status Webserver::Start() {
 }
 
 void Webserver::Stop() {
-  if (context_ != NULL) {
+  if (context_ != nullptr) {
     sq_stop(context_);
-    context_ = NULL;
+    context_ = nullptr;
   }
 }
 
@@ -254,7 +249,7 @@ Status Webserver::GetBoundAddresses(std::vector<Sockaddr>* addrs) const {
 
 int Webserver::LogMessageCallbackStatic(const struct sq_connection* connection,
                                         const char* message) {
-  if (message != NULL) {
+  if (message != nullptr) {
     LOG(INFO) << "Webserver: " << message;
     return 1;
   }
@@ -300,7 +295,7 @@ int Webserver::RunPathHandler(const PathHandler& handler,
   bool use_style = true;
 
   WebRequest req;
-  if (request_info->query_string != NULL) {
+  if (request_info->query_string != nullptr) {
     req.query_string = request_info->query_string;
     BuildArgumentMap(request_info->query_string, &req.parsed_args);
   }
@@ -308,7 +303,7 @@ int Webserver::RunPathHandler(const PathHandler& handler,
   if (req.request_method == "POST") {
     const char* content_len_str = sq_get_header(connection, "Content-Length");
     int32_t content_len = 0;
-    if (content_len_str == NULL ||
+    if (content_len_str == nullptr ||
         !safe_strto32(content_len_str, &content_len)) {
       sq_printf(connection, "HTTP/1.1 411 Length Required\r\n");
       return 1;
@@ -344,7 +339,7 @@ int Webserver::RunPathHandler(const PathHandler& handler,
 
   stringstream output;
   if (use_style) BootstrapPageHeader(&output);
-  BOOST_FOREACH(const PathHandlerCallback& callback_, handler.callbacks()) {
+  for (const PathHandlerCallback& callback_ : handler.callbacks()) {
     callback_(req, &output);
   }
   if (use_style) BootstrapPageFooter(&output);
@@ -371,7 +366,7 @@ int Webserver::RunPathHandler(const PathHandler& handler,
 void Webserver::RegisterPathHandler(const string& path, const string& alias,
     const PathHandlerCallback& callback, bool is_styled, bool is_on_nav_bar) {
   boost::lock_guard<boost::shared_mutex> lock(lock_);
-  PathHandlerMap::iterator it = path_handlers_.find(path);
+  auto it = path_handlers_.find(path);
   if (it == path_handlers_.end()) {
     it = path_handlers_.insert(
         make_pair(path, new PathHandler(is_styled, is_on_nav_bar, alias))).first;
@@ -381,7 +376,7 @@ void Webserver::RegisterPathHandler(const string& path, const string& alias,
 
 const char* const PAGE_HEADER = "<!DOCTYPE html>"
 " <html>"
-"   <head><title>Cloudera Kudu</title>"
+"   <head><title>Kudu</title>"
 " <link href='/bootstrap/css/bootstrap.min.css' rel='stylesheet' media='screen' />"
 " <link href='/kudu.css' rel='stylesheet' />"
 " </head>"
@@ -408,7 +403,7 @@ static const char* const NAVIGATION_BAR_SUFFIX =
 void Webserver::BootstrapPageHeader(stringstream* output) {
   (*output) << PAGE_HEADER;
   (*output) << NAVIGATION_BAR_PREFIX;
-  BOOST_FOREACH(const PathHandlerMap::value_type& handler, path_handlers_) {
+  for (const PathHandlerMap::value_type& handler : path_handlers_) {
     if (handler.second->is_on_nav_bar()) {
       (*output) << "<li><a href=\"" << handler.first << "\">" << handler.second->alias()
                 << "</a></li>";

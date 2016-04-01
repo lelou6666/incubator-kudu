@@ -1,22 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_INTEGRATION_TESTS_EXTERNAL_MINI_CLUSTER_H
 #define KUDU_INTEGRATION_TESTS_EXTERNAL_MINI_CLUSTER_H
 
+#include <memory>
 #include <string>
 #include <sys/types.h>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/client/client.h"
@@ -84,6 +87,8 @@ struct ExternalMiniClusterOptions {
   // 'ip addr | grep 127.0.0.1' and checking that the address is listed as
   // '127.0.0.1/8'.
   //
+  // This option is disabled by default on OS X.
+  //
   // NOTE: this does not currently affect the HTTP server.
   //
   // Default: true
@@ -91,7 +96,7 @@ struct ExternalMiniClusterOptions {
 
   // The path where the kudu daemons should be run from.
   // Default: "", which uses the same path as the currently running executable.
-  // This works for unit tests, since they all end up in build/latest/.
+  // This works for unit tests, since they all end up in build/latest/bin.
   std::string daemon_bin_path;
 
   // Extra flags for tablet servers and masters respectively.
@@ -206,16 +211,16 @@ class ExternalMiniCluster {
   }
 
   // Return the client messenger used by the ExternalMiniCluster.
-  std::tr1::shared_ptr<rpc::Messenger> messenger();
+  std::shared_ptr<rpc::Messenger> messenger();
 
   // If the cluster is configured for a single non-distributed master,
   // return a proxy to that master. Requires that the single master is
   // running.
-  std::tr1::shared_ptr<master::MasterServiceProxy> master_proxy();
+  std::shared_ptr<master::MasterServiceProxy> master_proxy();
 
   // Returns an RPC proxy to the master at 'idx'. Requires that the
   // master at 'idx' is running.
-  std::tr1::shared_ptr<master::MasterServiceProxy> master_proxy(int idx);
+  std::shared_ptr<master::MasterServiceProxy> master_proxy(int idx);
 
   // Wait until the number of registered tablet servers reaches the
   // given count on at least one of the running masters.  Returns
@@ -236,7 +241,7 @@ class ExternalMiniCluster {
   //
   // REQUIRES: the cluster must have already been Start()ed.
   Status CreateClient(client::KuduClientBuilder& builder,
-                      std::tr1::shared_ptr<client::KuduClient>* client);
+                      client::sp::shared_ptr<client::KuduClient>* client);
 
   // Sets the given flag on the given daemon, which must be running.
   //
@@ -269,16 +274,15 @@ class ExternalMiniCluster {
   std::vector<scoped_refptr<ExternalMaster> > masters_;
   std::vector<scoped_refptr<ExternalTabletServer> > tablet_servers_;
 
-  std::tr1::shared_ptr<rpc::Messenger> messenger_;
+  std::shared_ptr<rpc::Messenger> messenger_;
 
   DISALLOW_COPY_AND_ASSIGN(ExternalMiniCluster);
 };
 
 class ExternalDaemon : public RefCountedThreadSafe<ExternalDaemon> {
  public:
-  ExternalDaemon(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
-                 const std::string& exe, const std::string& data_dir,
-                 const std::vector<std::string>& extra_flags);
+  ExternalDaemon(std::shared_ptr<rpc::Messenger> messenger, std::string exe,
+                 std::string data_dir, std::vector<std::string> extra_flags);
 
   HostPort bound_rpc_hostport() const;
   Sockaddr bound_rpc_addr() const;
@@ -303,6 +307,10 @@ class ExternalDaemon : public RefCountedThreadSafe<ExternalDaemon> {
   // This may return false if the process crashed, even if we didn't
   // explicitly call Shutdown().
   bool IsProcessAlive() const;
+
+  // Wait for this process to crash, or the given timeout to
+  // elapse. If the process is already crashed, returns immediately.
+  Status WaitForCrash(const MonoDelta& timeout) const;
 
   virtual void Shutdown();
 
@@ -337,7 +345,7 @@ class ExternalDaemon : public RefCountedThreadSafe<ExternalDaemon> {
   // In a non-coverage build, this does nothing.
   void FlushCoverage();
 
-  const std::tr1::shared_ptr<rpc::Messenger> messenger_;
+  const std::shared_ptr<rpc::Messenger> messenger_;
   const std::string exe_;
   const std::string data_dir_;
   std::vector<std::string> extra_flags_;
@@ -374,13 +382,13 @@ class ScopedResumeExternalDaemon {
 
 class ExternalMaster : public ExternalDaemon {
  public:
-  ExternalMaster(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
+  ExternalMaster(const std::shared_ptr<rpc::Messenger>& messenger,
                  const std::string& exe, const std::string& data_dir,
                  const std::vector<std::string>& extra_flags);
 
-  ExternalMaster(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
+  ExternalMaster(const std::shared_ptr<rpc::Messenger>& messenger,
                  const std::string& exe, const std::string& data_dir,
-                 const std::string& rpc_bind_address,
+                 std::string rpc_bind_address,
                  const std::vector<std::string>& extra_flags);
 
   Status Start();
@@ -399,9 +407,9 @@ class ExternalMaster : public ExternalDaemon {
 
 class ExternalTabletServer : public ExternalDaemon {
  public:
-  ExternalTabletServer(const std::tr1::shared_ptr<rpc::Messenger>& messenger,
+  ExternalTabletServer(const std::shared_ptr<rpc::Messenger>& messenger,
                        const std::string& exe, const std::string& data_dir,
-                       const std::string& bind_host,
+                       std::string bind_host,
                        const std::vector<HostPort>& master_addrs,
                        const std::vector<std::string>& extra_flags);
 

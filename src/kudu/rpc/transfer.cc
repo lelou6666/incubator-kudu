@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/transfer.h"
 
-#include <boost/foreach.hpp>
 #include <stdint.h>
 
 #include <iostream>
@@ -24,6 +26,7 @@
 
 #include "kudu/gutil/endian.h"
 #include "kudu/gutil/stringprintf.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/constants.h"
 #include "kudu/rpc/messenger.h"
 #include "kudu/util/flag_tags.h"
@@ -39,6 +42,7 @@ namespace kudu {
 namespace rpc {
 
 using std::ostringstream;
+using std::set;
 using std::string;
 
 #define RETURN_ON_ERROR_OR_SOCKET_NOT_READY(status) \
@@ -70,19 +74,28 @@ Status InboundTransfer::ReceiveBuffer(Socket &socket) {
     }
     DCHECK_GE(nread, 0);
     cur_offset_ += nread;
-    if (cur_offset_ == kMsgLengthPrefixLength) {
-      // Finished reading the length prefix
-
-      // The length prefix doesn't include its own 4 bytes, so we have to
-      // add that back in.
-      total_length_ = NetworkByteOrder::Load32(&buf_[0]) + kMsgLengthPrefixLength;
-      if (total_length_ > FLAGS_rpc_max_message_size) {
-        return Status::NetworkError(StringPrintf("the frame had a "
-                 "length of %d, but we only support messages up to %d bytes "
-                 "long.", total_length_, FLAGS_rpc_max_message_size));
-      }
-      buf_.resize(total_length_);
+    if (cur_offset_ < kMsgLengthPrefixLength) {
+      // If we still don't have the full length prefix, we can't continue
+      // reading yet.
+      return Status::OK();
     }
+    // Since we only read 'rem' bytes above, we should now have exactly
+    // the length prefix in our buffer and no more.
+    DCHECK_EQ(cur_offset_, kMsgLengthPrefixLength);
+
+    // The length prefix doesn't include its own 4 bytes, so we have to
+    // add that back in.
+    total_length_ = NetworkByteOrder::Load32(&buf_[0]) + kMsgLengthPrefixLength;
+    if (total_length_ > FLAGS_rpc_max_message_size) {
+      return Status::NetworkError(StringPrintf("the frame had a "
+               "length of %d, but we only support messages up to %d bytes "
+               "long.", total_length_, FLAGS_rpc_max_message_size));
+    }
+    if (total_length_ <= kMsgLengthPrefixLength) {
+      return Status::NetworkError(StringPrintf("the frame had a "
+               "length of %d, which is invalid", total_length_));
+    }
+    buf_.resize(total_length_);
 
     // Fall through to receive the message body, which is likely to be already
     // available on the socket.
@@ -106,11 +119,19 @@ bool InboundTransfer::TransferFinished() const {
   return cur_offset_ == total_length_;
 }
 
-OutboundTransfer::OutboundTransfer(const std::vector<Slice> &payload,
+string InboundTransfer::StatusAsString() const {
+  return strings::Substitute("$0/$1 bytes received", cur_offset_, total_length_);
+}
+
+OutboundTransfer::OutboundTransfer(int32_t call_id,
+                                   const std::vector<Slice> &payload,
+                                   set<RpcFeatureFlag> required_features,
                                    TransferCallbacks *callbacks)
   : cur_slice_idx_(0),
     cur_offset_in_slice_(0),
+    required_features_(std::move(required_features)),
     callbacks_(callbacks),
+    call_id_(call_id),
     aborted_(false) {
   CHECK(!payload.empty());
 

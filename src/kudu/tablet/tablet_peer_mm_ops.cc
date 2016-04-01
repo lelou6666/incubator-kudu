@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/tablet_peer_mm_ops.h"
 
@@ -56,7 +59,7 @@ const double kFlushUpperBoundMs = 60 * 60 * 1000;
 //
 
 void FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(MaintenanceOpStats* stats,
-                                                              double elapsed_ms, bool is_empty) {
+                                                              double elapsed_ms) {
   if (stats->ram_anchored() > FLAGS_flush_threshold_mb * 1024 * 1024) {
     // If we're over the user-specified flush threshold, then consider the perf
     // improvement to be 1 for every extra MB.  This produces perf_improvement results
@@ -67,7 +70,7 @@ void FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(MaintenanceOpStats
     double extra_mb =
         static_cast<double>(FLAGS_flush_threshold_mb - (stats->ram_anchored()) / (1024 * 1024));
     stats->set_perf_improvement(extra_mb);
-  } else if (!is_empty && elapsed_ms > kFlushDueToTimeMs) {
+  } else if (elapsed_ms > kFlushDueToTimeMs) {
     // Even if we aren't over the threshold, consider flushing if we haven't flushed
     // in a long time. But, don't give it a large perf_improvement score. We should
     // only do this if we really don't have much else to do, and if we've already waited a bit.
@@ -89,7 +92,8 @@ void FlushMRSOp::UpdateStats(MaintenanceOpStats* stats) {
   boost::lock_guard<simple_spinlock> l(lock_);
 
   map<int64_t, int64_t> max_idx_to_segment_size;
-  if (!tablet_peer_->GetMaxIndexesToSegmentSizeMap(&max_idx_to_segment_size).ok()) {
+  if (tablet_peer_->tablet()->MemRowSetEmpty() ||
+      !tablet_peer_->GetMaxIndexesToSegmentSizeMap(&max_idx_to_segment_size).ok()) {
     return;
   }
 
@@ -107,8 +111,7 @@ void FlushMRSOp::UpdateStats(MaintenanceOpStats* stats) {
   // been in the last 5 minutes.
   FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(
       stats,
-      time_since_flush_.elapsed().wall_millis(),
-      tablet_peer_->tablet()->MemRowSetEmpty());
+      time_since_flush_.elapsed().wall_millis());
 }
 
 bool FlushMRSOp::Prepare() {
@@ -121,7 +124,8 @@ bool FlushMRSOp::Prepare() {
 void FlushMRSOp::Perform() {
   CHECK(!tablet_peer_->tablet()->rowsets_flush_sem_.try_lock());
 
-  tablet_peer_->tablet()->FlushUnlocked();
+  KUDU_CHECK_OK_PREPEND(tablet_peer_->tablet()->FlushUnlocked(),
+                        Substitute("FlushMRS failed on $0", tablet_peer_->tablet_id()));
 
   {
     boost::lock_guard<simple_spinlock> l(lock_);
@@ -147,7 +151,8 @@ void FlushDeltaMemStoresOp::UpdateStats(MaintenanceOpStats* stats) {
   int64_t dms_size;
   int64_t retention_size;
   map<int64_t, int64_t> max_idx_to_segment_size;
-  if (!tablet_peer_->GetMaxIndexesToSegmentSizeMap(&max_idx_to_segment_size).ok()) {
+  if (tablet_peer_->tablet()->DeltaMemRowSetEmpty() ||
+      !tablet_peer_->GetMaxIndexesToSegmentSizeMap(&max_idx_to_segment_size).ok()) {
     return;
   }
   tablet_peer_->tablet()->GetInfoForBestDMSToFlush(max_idx_to_segment_size,
@@ -159,8 +164,7 @@ void FlushDeltaMemStoresOp::UpdateStats(MaintenanceOpStats* stats) {
 
   FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(
       stats,
-      time_since_flush_.elapsed().wall_millis(),
-      tablet_peer_->tablet()->DeltaMemRowSetEmpty());
+      time_since_flush_.elapsed().wall_millis());
 }
 
 void FlushDeltaMemStoresOp::Perform() {

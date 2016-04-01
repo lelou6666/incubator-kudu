@@ -1,26 +1,29 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TSERVER_TS_TABLET_MANAGER_H
 #define KUDU_TSERVER_TS_TABLET_MANAGER_H
 
 #include <boost/optional/optional_fwd.hpp>
 #include <boost/thread/locks.hpp>
 #include <gtest/gtest_prod.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
-#include <tr1/unordered_set>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/gutil/macros.h"
@@ -61,7 +64,7 @@ namespace tserver {
 class TabletServer;
 
 // Map of tablet id -> transition reason string.
-typedef std::tr1::unordered_map<std::string, std::string> TransitionInProgressMap;
+typedef std::unordered_map<std::string, std::string> TransitionInProgressMap;
 
 class TransitionInProgressDeleter;
 
@@ -142,7 +145,9 @@ class TSTabletManager : public tserver::TabletPeerLookupIf {
   // See the StartRemoteBootstrap() RPC declaration in consensus.proto for details.
   // Currently this runs the entire procedure synchronously.
   // TODO: KUDU-921: Run this procedure on a background thread.
-  virtual Status StartRemoteBootstrap(const consensus::StartRemoteBootstrapRequestPB& req) OVERRIDE;
+  virtual Status StartRemoteBootstrap(
+      const consensus::StartRemoteBootstrapRequestPB& req,
+      boost::optional<TabletServerErrorPB::Code>* error_code) OVERRIDE;
 
   // Generate an incremental tablet report.
   //
@@ -175,6 +180,9 @@ class TSTabletManager : public tserver::TabletPeerLookupIf {
   // Returns the number of tablets in the "dirty" map, for use by unit tests.
   int GetNumDirtyTabletsForTests() const;
 
+  // Return the number of tablets in RUNNING or BOOTSTRAPPING state.
+  int GetNumLiveTablets() const;
+
   Status RunAllLogGC();
 
  private:
@@ -193,7 +201,7 @@ class TSTabletManager : public tserver::TabletPeerLookupIf {
   struct TabletReportState {
     uint32_t change_seq;
   };
-  typedef std::tr1::unordered_map<std::string, TabletReportState> DirtyMap;
+  typedef std::unordered_map<std::string, TabletReportState> DirtyMap;
 
   // Standard log prefix, given a tablet id.
   std::string LogPrefix(const std::string& tablet_id) const;
@@ -305,14 +313,19 @@ class TSTabletManager : public tserver::TabletPeerLookupIf {
 
   consensus::RaftPeerPB local_peer_pb_;
 
-  typedef std::tr1::unordered_map<std::string, scoped_refptr<tablet::TabletPeer> > TabletMap;
+  typedef std::unordered_map<std::string, scoped_refptr<tablet::TabletPeer> > TabletMap;
 
-  // Lock protecting tablet_map_, dirty_tablets_, state_, and
-  // transition_in_progress_.
+  // Lock protecting tablet_map_, dirty_tablets_, state_,
+  // transition_in_progress_, and perm_deleted_tablet_ids_.
   mutable rw_spinlock lock_;
 
   // Map from tablet ID to tablet
   TabletMap tablet_map_;
+
+  // Permanently deleted tablet ids. If a tablet is removed with status
+  // TABLET_DATA_DELETED then it is added to this map (until the next process
+  // restart).
+  std::unordered_set<std::string> perm_deleted_tablet_ids_;
 
   // Map of tablet ids -> reason strings where the keys are tablets whose
   // bootstrap, creation, or deletion is in-progress
@@ -343,9 +356,8 @@ class TSTabletManager : public tserver::TabletPeerLookupIf {
 // when tablet boostrap, create, and delete operations complete.
 class TransitionInProgressDeleter : public RefCountedThreadSafe<TransitionInProgressDeleter> {
  public:
-  TransitionInProgressDeleter(TransitionInProgressMap* map,
-                              rw_spinlock* lock,
-                              const string& entry);
+  TransitionInProgressDeleter(TransitionInProgressMap* map, rw_spinlock* lock,
+                              string entry);
 
  private:
   friend class RefCountedThreadSafe<TransitionInProgressDeleter>;

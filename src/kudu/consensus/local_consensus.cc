@@ -1,21 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/local_consensus.h"
 
 #include <boost/thread/locks.hpp>
-#include <boost/assign/list_of.hpp>
 #include <iostream>
 
 #include "kudu/consensus/log.h"
@@ -33,18 +35,16 @@ namespace consensus {
 using base::subtle::Barrier_AtomicIncrement;
 using log::Log;
 using log::LogEntryBatch;
-using std::tr1::shared_ptr;
 using strings::Substitute;
 
-LocalConsensus::LocalConsensus(const ConsensusOptions& options,
+LocalConsensus::LocalConsensus(ConsensusOptions options,
                                gscoped_ptr<ConsensusMetadata> cmeta,
-                               const string& peer_uuid,
+                               string peer_uuid,
                                const scoped_refptr<server::Clock>& clock,
-                               ReplicaTransactionFactory* txn_factory,
-                               Log* log)
-    : peer_uuid_(peer_uuid),
-      options_(options),
-      cmeta_(cmeta.Pass()),
+                               ReplicaTransactionFactory* txn_factory, Log* log)
+    : peer_uuid_(std::move(peer_uuid)),
+      options_(std::move(options)),
+      cmeta_(std::move(cmeta)),
       txn_factory_(DCHECK_NOTNULL(txn_factory)),
       log_(DCHECK_NOTNULL(log)),
       clock_(clock),
@@ -82,7 +82,7 @@ Status LocalConsensus::Start(const ConsensusBootstrapInfo& info) {
 }
 
 Status LocalConsensus::ResubmitOrphanedReplicates(const std::vector<ReplicateMsg*> replicates) {
-  BOOST_FOREACH(ReplicateMsg* msg, replicates) {
+  for (ReplicateMsg* msg : replicates) {
     DCHECK_LT(msg->id().index(), next_op_id_index_)
       << "Orphaned replicate " << OpIdToString(msg->id())
       << " is newer than next op index " << next_op_id_index_;
@@ -125,10 +125,9 @@ Status LocalConsensus::Replicate(const scoped_refptr<ConsensusRound>& round) {
     // It's important that we do this under the same lock as we generate
     // the op id, so that we log things in-order.
     gscoped_ptr<log::LogEntryBatchPB> entry_batch;
-    log::CreateBatchFromAllocatedOperations(
-        boost::assign::list_of(round->replicate_scoped_refptr()), &entry_batch);
+    log::CreateBatchFromAllocatedOperations({ round->replicate_scoped_refptr() }, &entry_batch);
 
-    RETURN_NOT_OK(log_->Reserve(log::REPLICATE, entry_batch.Pass(),
+    RETURN_NOT_OK(log_->Reserve(log::REPLICATE, std::move(entry_batch),
                                 &reserved_entry_batch));
 
     // Local consensus transactions are always committed so we

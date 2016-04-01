@@ -1,18 +1,21 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
+#include <algorithm>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
@@ -21,6 +24,8 @@
 #include "kudu/util/random.h"
 #include "kudu/util/random_util.h"
 #include "kudu/util/test_util.h"
+
+DECLARE_bool(use_mock_wall_clock);
 
 namespace kudu {
 namespace server {
@@ -33,7 +38,6 @@ class HybridClockTest : public KuduTest {
 
   virtual void SetUp() OVERRIDE {
     KuduTest::SetUp();
-
     ASSERT_OK(clock_->Init());
   }
 
@@ -41,13 +45,88 @@ class HybridClockTest : public KuduTest {
   scoped_refptr<HybridClock> clock_;
 };
 
+TEST(MockHybridClockTest, TestMockedSystemClock) {
+  google::FlagSaver saver;
+  FLAGS_use_mock_wall_clock = true;
+  scoped_refptr<HybridClock> clock(new HybridClock());
+  clock->Init();
+  Timestamp timestamp;
+  uint64_t max_error_usec;
+  clock->NowWithError(&timestamp, &max_error_usec);
+  ASSERT_EQ(timestamp.ToUint64(), 0);
+  ASSERT_EQ(max_error_usec, 0);
+  // If we read the clock again we should see the logical component be incremented.
+  clock->NowWithError(&timestamp, &max_error_usec);
+  ASSERT_EQ(timestamp.ToUint64(), 1);
+  // Now set an arbitrary time and check that is the time returned by the clock.
+  uint64_t time = 1234;
+  uint64_t error = 100 * 1000;
+  clock->SetMockClockWallTimeForTests(time);
+  clock->SetMockMaxClockErrorForTests(error);
+  clock->NowWithError(&timestamp, &max_error_usec);
+  ASSERT_EQ(timestamp.ToUint64(),
+            HybridClock::TimestampFromMicrosecondsAndLogicalValue(time, 0).ToUint64());
+  ASSERT_EQ(max_error_usec, error);
+  // Perform another read, we should observe the logical component increment, again.
+  clock->NowWithError(&timestamp, &max_error_usec);
+  ASSERT_EQ(timestamp.ToUint64(),
+            HybridClock::TimestampFromMicrosecondsAndLogicalValue(time, 1).ToUint64());
+}
+
+// Test that, if the rate at which the clock is read is greater than the maximum
+// resolution of the logical counter (12 bits in our implementation), it properly
+// "overflows" into the physical portion of the clock, and maintains all ordering
+// guarantees even as the physical clock continues to increase.
+//
+// This is a regression test for KUDU-1345.
+TEST(MockHybridClockTest, TestClockDealsWithWrapping) {
+  google::FlagSaver saver;
+  FLAGS_use_mock_wall_clock = true;
+  scoped_refptr<HybridClock> clock(new HybridClock());
+  clock->SetMockClockWallTimeForTests(1000);
+  clock->Init();
+
+  Timestamp prev = clock->Now();
+
+  // Update the clock from 10us in the future
+  clock->Update(HybridClock::TimestampFromMicroseconds(1010));
+
+  // Now read the clock value enough times so that the logical value wraps
+  // over, and should increment the _physical_ portion of the clock.
+  for (int i = 0; i < 10000; i++) {
+    Timestamp now = clock->Now();
+    ASSERT_GT(now.value(), prev.value());
+    prev = now;
+  }
+  ASSERT_EQ(1012, HybridClock::GetPhysicalValueMicros(prev));
+
+  // Advance the time microsecond by microsecond, and ensure the clock never
+  // goes backwards.
+  for (int time = 1001; time < 1020; time++) {
+    clock->SetMockClockWallTimeForTests(time);
+    Timestamp now = clock->Now();
+
+    // Clock should run strictly forwards.
+    ASSERT_GT(now.value(), prev.value());
+
+    // Additionally, once the physical time surpasses the logical time, we should
+    // be running on the physical clock. Otherwise, we should stick with the physical
+    // time we had rolled forward to above.
+    if (time > 1012) {
+      ASSERT_EQ(time, HybridClock::GetPhysicalValueMicros(now));
+    } else {
+      ASSERT_EQ(1012, HybridClock::GetPhysicalValueMicros(now));
+    }
+
+    prev = now;
+  }
+}
+
 // Test that two subsequent time reads are monotonically increasing.
 TEST_F(HybridClockTest, TestNow_ValuesIncreaseMonotonically) {
   const Timestamp now1 = clock_->Now();
   const Timestamp now2 = clock_->Now();
-  ASSERT_GE(HybridClock::GetLogicalValue(now1), HybridClock::GetLogicalValue(now2));
-  ASSERT_GE(HybridClock::GetPhysicalValueMicros(now1),
-            HybridClock::GetPhysicalValueMicros(now1));
+  ASSERT_LT(now1.value(), now2.value());
 }
 
 // Tests the clock updates with the incoming value if it is higher.
@@ -88,19 +167,15 @@ TEST_F(HybridClockTest, TestWaitUntilAfter_TestCase1) {
       past_ts,
       MonoDelta::FromMicroseconds(-3 * max_error));
 
-  Timestamp current_ts;
-  uint64_t current_max_error;
-  clock_->NowWithError(&current_ts, &current_max_error);
-
   Status s = clock_->WaitUntilAfter(past_ts_changed, no_deadline);
 
   ASSERT_OK(s);
 
   MonoTime after = MonoTime::Now(MonoTime::FINE);
   MonoDelta delta = after.GetDeltaSince(before);
-  // Actually this should be close to 0, but we are sure it can't be bigger than
-  // current_ts.physical_ts.max_error_usec
-  ASSERT_LT(delta.ToMicroseconds(), current_max_error);
+  // The delta should be close to 0, but it takes some time for the hybrid
+  // logical clock to decide that it doesn't need to wait.
+  ASSERT_LT(delta.ToMicroseconds(), 25000);
 }
 
 // The normal case for transactions. Obtain a timestamp and then wait until
@@ -113,6 +188,9 @@ TEST_F(HybridClockTest, TestWaitUntilAfter_TestCase2) {
   Timestamp past_ts;
   uint64_t past_max_error;
   clock_->NowWithError(&past_ts, &past_max_error);
+  // Make sure the error is at least a small number of microseconds, to ensure
+  // that we always have to wait.
+  past_max_error = std::max(past_max_error, static_cast<uint64_t>(20));
   Timestamp wait_until = HybridClock::AddPhysicalTimeToTimestamp(
       past_ts,
       MonoDelta::FromMicroseconds(past_max_error));
@@ -197,7 +275,7 @@ TEST_F(HybridClockTest, TestClockDoesntGoBackwardsWithUpdates) {
 
   SleepFor(MonoDelta::FromSeconds(1));
   stop.Store(true);
-  BOOST_FOREACH(const scoped_refptr<Thread> t, threads) {
+  for (const scoped_refptr<Thread> t : threads) {
     t->Join();
   }
 }

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/peer_manager.h"
 
@@ -52,10 +55,10 @@ Status PeerManager::UpdateRaftConfig(const RaftConfigPB& config) {
 
   boost::lock_guard<simple_spinlock> lock(lock_);
   // Create new peers
-  BOOST_FOREACH(const RaftPeerPB& peer_pb, config.peers()) {
+  for (const RaftPeerPB& peer_pb : config.peers()) {
     new_peers.insert(peer_pb.permanent_uuid());
     Peer* peer = FindPtrOrNull(peers_, peer_pb.permanent_uuid());
-    if (peer != NULL) {
+    if (peer != nullptr) {
       continue;
     }
     if (peer_pb.permanent_uuid() == local_uuid_) {
@@ -73,7 +76,7 @@ Status PeerManager::UpdateRaftConfig(const RaftConfigPB& config) {
                                       local_uuid_,
                                       queue_,
                                       thread_pool_,
-                                      peer_proxy.Pass(),
+                                      std::move(peer_proxy),
                                       &remote_peer));
     InsertOrDie(&peers_, peer_pb.permanent_uuid(), remote_peer.release());
   }
@@ -83,21 +86,22 @@ Status PeerManager::UpdateRaftConfig(const RaftConfigPB& config) {
 
 void PeerManager::SignalRequest(bool force_if_queue_empty) {
   boost::lock_guard<simple_spinlock> lock(lock_);
-  PeersMap::iterator iter = peers_.begin();
-    for (; iter != peers_.end(); iter++) {
-      Status s = (*iter).second->SignalRequest(force_if_queue_empty);
-      if (PREDICT_FALSE(!s.ok())) {
-        LOG(WARNING) << GetLogPrefix() << "Peer was closed, removing from peers. Peer: "
-            << (*iter).second->peer_pb().ShortDebugString();
-        peers_.erase(iter);
-      }
+  auto iter = peers_.begin();
+  for (; iter != peers_.end(); iter++) {
+    Status s = (*iter).second->SignalRequest(force_if_queue_empty);
+    if (PREDICT_FALSE(!s.ok())) {
+      LOG(WARNING) << GetLogPrefix()
+                   << "Peer was closed, removing from peers. Peer: "
+                   << (*iter).second->peer_pb().ShortDebugString();
+      peers_.erase(iter);
     }
+  }
 }
 
 void PeerManager::Close() {
   {
     boost::lock_guard<simple_spinlock> lock(lock_);
-    BOOST_FOREACH(const PeersMap::value_type& entry, peers_) {
+    for (const PeersMap::value_type& entry : peers_) {
       entry.second->Close();
     }
     STLDeleteValues(&peers_);

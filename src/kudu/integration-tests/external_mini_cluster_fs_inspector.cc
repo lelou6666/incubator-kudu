@@ -1,21 +1,24 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/integration-tests/external_mini_cluster_fs_inspector.h"
 
 #include <algorithm>
-#include <boost/foreach.hpp>
+#include <set>
 
 #include "kudu/consensus/metadata.pb.h"
 #include "kudu/gutil/strings/join.h"
@@ -30,6 +33,7 @@
 namespace kudu {
 namespace itest {
 
+using std::set;
 using std::string;
 using std::vector;
 
@@ -48,7 +52,7 @@ ExternalMiniClusterFsInspector::~ExternalMiniClusterFsInspector() {}
 Status ExternalMiniClusterFsInspector::ListFilesInDir(const string& path,
                                                       vector<string>* entries) {
   RETURN_NOT_OK(env_->GetChildren(path, entries));
-  vector<string>::iterator iter = entries->begin();
+  auto iter = entries->begin();
   while (iter != entries->end()) {
     if (*iter == "." || *iter == ".." || iter->find(".tmp.") != string::npos) {
       iter = entries->erase(iter);
@@ -72,11 +76,20 @@ int ExternalMiniClusterFsInspector::CountWALSegmentsOnTS(int index) {
   vector<string> tablets;
   CHECK_OK(ListFilesInDir(ts_wal_dir, &tablets));
   int total_segments = 0;
-  BOOST_FOREACH(const string& tablet, tablets) {
+  for (const string& tablet : tablets) {
     string tablet_wal_dir = JoinPathSegments(ts_wal_dir, tablet);
     total_segments += CountFilesInDir(tablet_wal_dir);
   }
   return total_segments;
+}
+
+vector<string> ExternalMiniClusterFsInspector::ListTablets() {
+  set<string> tablets;
+  for (int i = 0; i < cluster_->num_tablet_servers(); i++) {
+    auto ts_tablets = ListTabletsOnTS(i);
+    tablets.insert(ts_tablets.begin(), ts_tablets.end());
+  }
+  return vector<string>(tablets.begin(), tablets.end());
 }
 
 vector<string> ExternalMiniClusterFsInspector::ListTabletsOnTS(int index) {
@@ -84,6 +97,14 @@ vector<string> ExternalMiniClusterFsInspector::ListTabletsOnTS(int index) {
   string meta_dir = JoinPathSegments(data_dir, FsManager::kTabletMetadataDirName);
   vector<string> tablets;
   CHECK_OK(ListFilesInDir(meta_dir, &tablets));
+  return tablets;
+}
+
+vector<string> ExternalMiniClusterFsInspector::ListTabletsWithDataOnTS(int index) {
+  string data_dir = cluster_->tablet_server(index)->data_dir();
+  string wal_dir = JoinPathSegments(data_dir, FsManager::kWalDirName);
+  vector<string> tablets;
+  CHECK_OK(ListFilesInDir(wal_dir, &tablets));
   return tablets;
 }
 
@@ -160,16 +181,30 @@ Status ExternalMiniClusterFsInspector::ReadConsensusMetadataOnTS(int index,
   return pb_util::ReadPBContainerFromPath(env_, cmeta_file, cmeta_pb);
 }
 
-Status ExternalMiniClusterFsInspector::CheckTabletDataStateOnTS(int index,
-                                                                const string& tablet_id,
-                                                                TabletDataState state) {
+Status ExternalMiniClusterFsInspector::CheckTabletDataStateOnTS(
+    int index,
+    const string& tablet_id,
+    const vector<TabletDataState>& allowed_states) {
+
   TabletSuperBlockPB sb;
   RETURN_NOT_OK(ReadTabletSuperBlockOnTS(index, tablet_id, &sb));
-  if (PREDICT_FALSE(sb.tablet_data_state() != state)) {
-    return Status::IllegalState("Tablet data state != " + TabletDataState_Name(state),
-                                TabletDataState_Name(sb.tablet_data_state()));
+  if (std::find(allowed_states.begin(), allowed_states.end(), sb.tablet_data_state()) !=
+      allowed_states.end()) {
+    return Status::OK();
   }
-  return Status::OK();
+
+  vector<string> state_names;
+  for (auto state : allowed_states) {
+    state_names.push_back(TabletDataState_Name(state));
+  }
+  string expected_str = JoinStrings(state_names, ",");
+  if (state_names.size() > 1) {
+    expected_str = "one of: " + expected_str;
+  }
+
+  return Status::IllegalState(Substitute("State $0 unexpected, expected $1",
+                                         TabletDataState_Name(sb.tablet_data_state()),
+                                         expected_str));
 }
 
 Status ExternalMiniClusterFsInspector::WaitForNoData(const MonoDelta& timeout) {
@@ -241,23 +276,24 @@ Status ExternalMiniClusterFsInspector::WaitForReplicaCount(int expected, const M
                                      expected, found));
 }
 
-Status ExternalMiniClusterFsInspector::WaitForTabletDataStateOnTS(int index,
-                                                                  const string& tablet_id,
-                                                                  TabletDataState expected,
-                                                                  const MonoDelta& timeout) {
+Status ExternalMiniClusterFsInspector::WaitForTabletDataStateOnTS(
+    int index,
+    const string& tablet_id,
+    const vector<TabletDataState>& expected_states,
+    const MonoDelta& timeout) {
   MonoTime start = MonoTime::Now(MonoTime::FINE);
   MonoTime deadline = start;
   deadline.AddDelta(timeout);
   Status s;
   while (true) {
-    s = CheckTabletDataStateOnTS(index, tablet_id, expected);
+    s = CheckTabletDataStateOnTS(index, tablet_id, expected_states);
     if (s.ok()) return Status::OK();
     if (deadline.ComesBefore(MonoTime::Now(MonoTime::FINE))) break;
     SleepFor(MonoDelta::FromMilliseconds(5));
   }
-  return Status::TimedOut(Substitute("Timed out after $0 waiting for tablet data state $1: $2",
+  return Status::TimedOut(Substitute("Timed out after $0 waiting for correct tablet state: $1",
                                      MonoTime::Now(MonoTime::FINE).GetDeltaSince(start).ToString(),
-                                     TabletDataState_Name(expected), s.ToString()));
+                                     s.ToString()));
 }
 
 Status ExternalMiniClusterFsInspector::WaitForFilePatternInTabletWalDirOnTs(
@@ -281,9 +317,9 @@ Status ExternalMiniClusterFsInspector::WaitForFilePatternInTabletWalDirOnTs(
 
     error_msg = "";
     bool any_missing_required = false;
-    BOOST_FOREACH(const string& required_filter, substrings_required) {
+    for (const string& required_filter : substrings_required) {
       bool filter_matched = false;
-      BOOST_FOREACH(const string& entry, entries) {
+      for (const string& entry : entries) {
         if (entry.find(required_filter) != string::npos) {
           filter_matched = true;
           break;
@@ -297,9 +333,9 @@ Status ExternalMiniClusterFsInspector::WaitForFilePatternInTabletWalDirOnTs(
     }
 
     bool any_present_disallowed = false;
-    BOOST_FOREACH(const string& entry, entries) {
+    for (const string& entry : entries) {
       if (any_present_disallowed) break;
-      BOOST_FOREACH(const string& disallowed_filter, substrings_disallowed) {
+      for (const string& disallowed_filter : substrings_disallowed) {
         if (entry.find(disallowed_filter) != string::npos) {
           any_present_disallowed = true;
           error_msg += "present from substrings_disallowed: " + entry +

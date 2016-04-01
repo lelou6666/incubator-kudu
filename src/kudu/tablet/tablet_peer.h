@@ -1,21 +1,25 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_TABLET_TABLET_PEER_H_
 #define KUDU_TABLET_TABLET_PEER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -65,15 +69,14 @@ class TabletPeer : public RefCountedThreadSafe<TabletPeer>,
   typedef std::map<int64_t, int64_t> MaxIdxToSegmentSizeMap;
 
   TabletPeer(const scoped_refptr<TabletMetadata>& meta,
-             const consensus::RaftPeerPB& local_peer_pb,
-             ThreadPool* apply_pool,
-             const Callback<void(const std::string& reason)>& mark_dirty_clbk);
+             const consensus::RaftPeerPB& local_peer_pb, ThreadPool* apply_pool,
+             Callback<void(const std::string& reason)> mark_dirty_clbk);
 
   // Initializes the TabletPeer, namely creating the Log and initializing
   // Consensus.
-  Status Init(const std::tr1::shared_ptr<tablet::Tablet>& tablet,
+  Status Init(const std::shared_ptr<tablet::Tablet>& tablet,
               const scoped_refptr<server::Clock>& clock,
-              const std::tr1::shared_ptr<rpc::Messenger>& messenger,
+              const std::shared_ptr<rpc::Messenger>& messenger,
               const scoped_refptr<log::Log>& log,
               const scoped_refptr<MetricEntity>& metric_entity);
 
@@ -133,7 +136,7 @@ class TabletPeer : public RefCountedThreadSafe<TabletPeer>,
     return tablet_.get();
   }
 
-  std::tr1::shared_ptr<Tablet> shared_tablet() const {
+  std::shared_ptr<Tablet> shared_tablet() const {
     boost::lock_guard<simple_spinlock> lock(lock_);
     return tablet_;
   }
@@ -155,6 +158,13 @@ class TabletPeer : public RefCountedThreadSafe<TabletPeer>,
     return status_listener_.get();
   }
 
+  // Sets the tablet to a BOOTSTRAPPING state, indicating it is starting up.
+  void SetBootstrapping() {
+    boost::lock_guard<simple_spinlock> lock(lock_);
+    CHECK_EQ(NOT_STARTED, state_);
+    state_ = BOOTSTRAPPING;
+  }
+
   // sets the tablet state to FAILED additionally setting the error to the provided
   // one.
   void SetFailed(const Status& error) {
@@ -168,6 +178,11 @@ class TabletPeer : public RefCountedThreadSafe<TabletPeer>,
     boost::lock_guard<simple_spinlock> lock(lock_);
     return error_;
   }
+
+  // Returns a human-readable string indicating the state of the tablet.
+  // Typically this looks like "NOT_STARTED", "TABLET_DATA_COPYING",
+  // etc. For use in places like the Web UI.
+  std::string HumanReadableState() const;
 
   // Adds list of transactions in-flight at the time of the call to
   // 'out'. TransactionStatusPB objects are used to allow this method
@@ -265,8 +280,8 @@ class TabletPeer : public RefCountedThreadSafe<TabletPeer>,
   TransactionTracker txn_tracker_;
   TransactionOrderVerifier txn_order_verifier_;
   scoped_refptr<log::Log> log_;
-  std::tr1::shared_ptr<Tablet> tablet_;
-  std::tr1::shared_ptr<rpc::Messenger> messenger_;
+  std::shared_ptr<Tablet> tablet_;
+  std::shared_ptr<rpc::Messenger> messenger_;
   scoped_refptr<consensus::Consensus> consensus_;
   gscoped_ptr<TabletStatusListener> status_listener_;
   simple_spinlock prepare_replicate_lock_;

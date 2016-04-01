@@ -1,19 +1,21 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gtest/gtest.h>
-#include <boost/assign/list_of.hpp>
 
 #include "kudu/client/client.h"
 #include "kudu/gutil/strings/substitute.h"
@@ -32,14 +34,14 @@ namespace tools {
 
 using client::KuduColumnSchema;
 using client::KuduInsert;
-using client::KuduSession;
 using client::KuduSchemaBuilder;
+using client::KuduSession;
 using client::KuduTable;
 using client::KuduTableCreator;
-using std::tr1::static_pointer_cast;
-using std::tr1::shared_ptr;
-using std::vector;
+using client::sp::shared_ptr;
+using std::static_pointer_cast;
 using std::string;
+using std::vector;
 using strings::Substitute;
 
 static const char *kTableName = "ksck-test-table";
@@ -134,8 +136,8 @@ class RemoteKsckTest : public KuduTest {
   // Generate a set of split rows for tablets used in this test.
   vector<const KuduPartialRow*> GenerateSplitRows() {
     vector<const KuduPartialRow*> split_rows;
-    vector<int> split_nums = boost::assign::list_of(33)(66);
-    BOOST_FOREACH(int i, split_nums) {
+    vector<int> split_nums = { 33, 66 };
+    for (int i : split_nums) {
       KuduPartialRow* row = schema_.NewRow();
       CHECK_OK(row->SetInt32(0, i));
       split_rows.push_back(row);
@@ -163,16 +165,16 @@ class RemoteKsckTest : public KuduTest {
     return Status::OK();
   }
 
-  shared_ptr<Ksck> ksck_;
+  std::shared_ptr<Ksck> ksck_;
   shared_ptr<client::KuduClient> client_;
 
  private:
   Sockaddr master_rpc_addr_;
-  shared_ptr<MiniCluster> mini_cluster_;
+  std::shared_ptr<MiniCluster> mini_cluster_;
   client::KuduSchema schema_;
   shared_ptr<client::KuduTable> client_table_;
-  shared_ptr<KsckMaster> master_;
-  shared_ptr<KsckCluster> cluster_;
+  std::shared_ptr<KsckMaster> master_;
+  std::shared_ptr<KsckCluster> cluster_;
   Random random_;
 };
 

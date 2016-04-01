@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/codegen/row_projector.h"
 
@@ -20,8 +23,6 @@
 #include <utility>
 #include <vector>
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <llvm/ExecutionEngine/ExecutionEngine.h>
 #include <llvm/IR/Argument.h>
 #include <llvm/IR/BasicBlock.h>
@@ -44,7 +45,6 @@ namespace llvm {
 class LLVMContext;
 } // namespace llvm
 
-using boost::assign::list_of;
 using llvm::Argument;
 using llvm::BasicBlock;
 using llvm::ConstantInt;
@@ -57,8 +57,9 @@ using llvm::Module;
 using llvm::PointerType;
 using llvm::Type;
 using llvm::Value;
-using std::string;
 using std::ostream;
+using std::string;
+using std::unique_ptr;
 using std::vector;
 
 DECLARE_bool(codegen_dump_functions);
@@ -89,10 +90,9 @@ llvm::Function* MakeProjection(const string& name,
   const Schema& projection = *proj.projection();
 
   // Create the function after providing a declaration
-  vector<Type*> argtypes = list_of<Type*>
-    (Type::getInt8PtrTy(context))
-    (PointerType::getUnqual(mbuilder->GetType("class.kudu::RowBlockRow")))
-    (PointerType::getUnqual(mbuilder->GetType("class.kudu::Arena")));
+  vector<Type*> argtypes = { Type::getInt8PtrTy(context),
+                             PointerType::getUnqual(mbuilder->GetType("class.kudu::RowBlockRow")),
+                             PointerType::getUnqual(mbuilder->GetType("class.kudu::Arena")) };
   FunctionType* fty =
     FunctionType::get(Type::getInt1Ty(context), argtypes, false);
   Function* f = mbuilder->Create(fty, name);
@@ -174,8 +174,7 @@ llvm::Function* MakeProjection(const string& name,
   int success_update_number = 0;
 
   // Copy base data
-  BOOST_FOREACH(const kudu::RowProjector::ProjectionIdxMapping& pmap,
-                proj.base_cols_mapping()) {
+  for (const kudu::RowProjector::ProjectionIdxMapping& pmap : proj.base_cols_mapping()) {
     // Retrieve information regarding this column-to-column transformation
     size_t proj_idx = pmap.first;
     size_t base_idx = pmap.second;
@@ -188,8 +187,7 @@ llvm::Function* MakeProjection(const string& name,
     src_cell->setName(StrCat("src_cell_base_", base_idx));
     Value* col_idx = builder->getInt64(proj_idx);
     ConstantInt* is_binary = builder->getInt1(col.type_info()->physical_type() == BINARY);
-    vector<Value*> args = list_of<Value*>
-      (size)(src_cell)(rbrow)(col_idx)(is_binary)(arena);
+    vector<Value*> args = { size, src_cell, rbrow, col_idx, is_binary, arena };
 
     // Add additional arguments if nullable
     Function* to_call = copy_cell_not_null;
@@ -211,7 +209,7 @@ llvm::Function* MakeProjection(const string& name,
     << "Value Adapter not supported yet";
 
   // Fill defaults
-  BOOST_FOREACH(size_t dfl_idx, proj.projection_defaults()) {
+  for (size_t dfl_idx : proj.projection_defaults()) {
     // Retrieve mapping information
     const ColumnSchema& col = projection.column(dfl_idx);
     const void* dfl = READ ? col.read_default_value() :
@@ -225,16 +223,15 @@ llvm::Function* MakeProjection(const string& name,
 
     // Handle default columns that are nullable
     if (col.is_nullable()) {
-      Value* is_null = builder->getInt1(dfl == NULL);
-      vector<Value*> args = list_of<Value*>(rbrow)(col_idx)(is_null);
+      Value* is_null = builder->getInt1(dfl == nullptr);
+      vector<Value*> args = { rbrow, col_idx, is_null };
       builder->CreateCall(row_block_set_null, args);
       // If dfl was NULL, we're done
-      if (dfl == NULL) continue;
+      if (dfl == nullptr) continue;
     }
 
     // Make the copy cell call and check the return value
-    vector<Value*> args = list_of
-      (size)(src_cell)(rbrow)(col_idx)(is_binary)(arena);
+    vector<Value*> args = { size, src_cell, rbrow, col_idx, is_binary, arena };
     Value* result = builder->CreateCall(copy_cell_not_null, args);
     result->setName(StrCat("result_dfl", dfl_idx));
     success = builder->CreateAnd(success, result);
@@ -258,15 +255,15 @@ RowProjectorFunctions::RowProjectorFunctions(const Schema& base_schema,
                                              const Schema& projection,
                                              ProjectionFunction read_f,
                                              ProjectionFunction write_f,
-                                             gscoped_ptr<JITCodeOwner> owner)
-  : JITWrapper(owner.Pass()),
+                                             unique_ptr<JITCodeOwner> owner)
+  : JITWrapper(std::move(owner)),
     base_schema_(base_schema),
     projection_(projection),
     read_f_(read_f),
     write_f_(write_f) {
-  CHECK(read_f != NULL)
+  CHECK(read_f != nullptr)
     << "Promise to compile read function not fulfilled by ModuleBuilder";
-  CHECK(write_f != NULL)
+  CHECK(write_f != nullptr)
     << "Promise to compile write function not fulfilled by ModuleBuilder";
 }
 
@@ -293,14 +290,14 @@ Status RowProjectorFunctions::Create(const Schema& base_schema,
   builder.AddJITPromise(read, &read_f);
   builder.AddJITPromise(write, &write_f);
 
-  gscoped_ptr<JITCodeOwner> owner;
+  unique_ptr<JITCodeOwner> owner;
   RETURN_NOT_OK(builder.Compile(&owner));
 
   if (tm) {
     *tm = builder.GetTargetMachine();
   }
   out->reset(new RowProjectorFunctions(base_schema, projection, read_f,
-                                       write_f, owner.Pass()));
+                                       write_f, std::move(owner)));
   return Status::OK();
 }
 
@@ -346,21 +343,20 @@ Status RowProjectorFunctions::EncodeKey(const Schema& base, const Schema& proj,
 
   AddNext(out, JITWrapper::ROW_PROJECTOR);
   AddNext(out, base.num_columns());
-  BOOST_FOREACH(const ColumnSchema& col, base.columns()) {
+  for (const ColumnSchema& col : base.columns()) {
     AddNext(out, col.type_info()->physical_type());
     AddNext(out, col.is_nullable());
   }
   AddNext(out, proj.num_columns());
-  BOOST_FOREACH(const ColumnSchema& col, proj.columns()) {
+  for (const ColumnSchema& col : proj.columns()) {
     AddNext(out, col.type_info()->physical_type());
     AddNext(out, col.is_nullable());
   }
   AddNext(out, projector.base_cols_mapping().size());
-  BOOST_FOREACH(const kudu::RowProjector::ProjectionIdxMapping& map,
-                projector.base_cols_mapping()) {
+  for (const kudu::RowProjector::ProjectionIdxMapping& map : projector.base_cols_mapping()) {
     AddNext(out, map);
   }
-  BOOST_FOREACH(size_t dfl_idx, projector.projection_defaults()) {
+  for (size_t dfl_idx : projector.projection_defaults()) {
     const ColumnSchema& col = proj.column(dfl_idx);
     AddNext(out, dfl_idx);
     AddNext(out, col.read_default_value());
@@ -384,7 +380,7 @@ struct DefaultEquals {
 
 struct ColumnSchemaEqualsType {
   bool operator()(const ColumnSchema& s1, const ColumnSchema& s2) {
-    return s1.EqualsType(s2);
+    return s1.EqualsPhysicalType(s2);
   }
 };
 
@@ -422,7 +418,7 @@ bool ContainerEquals(const T& t1, const T& t2) {
 // the actual dependency on column identification - which is the effect
 // that those attributes have on the RowProjector's mapping (i.e., different
 // names and IDs are ok, so long as the mapping is the same). Note that
-// key columns are not given any special meaning in projection. Types
+// key columns are not given any special meaning in projection. Physical types
 // and nullability of columns must be exactly equal between the two
 // schema pairs.
 //

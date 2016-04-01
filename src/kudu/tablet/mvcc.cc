@@ -1,19 +1,21 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <boost/thread/mutex.hpp>
 #include <glog/logging.h>
@@ -90,7 +92,7 @@ Status MvccManager::StartTransactionAtTimestamp(Timestamp timestamp) {
 
 void MvccManager::StartApplyingTransaction(Timestamp timestamp) {
   boost::lock_guard<LockType> l(lock_);
-  InFlightMap::iterator it = timestamps_in_flight_.find(timestamp.value());
+  auto it = timestamps_in_flight_.find(timestamp.value());
   if (PREDICT_FALSE(it == timestamps_in_flight_.end())) {
     LOG(FATAL) << "Cannot mark timestamp " << timestamp.ToString() << " as APPLYING: "
                << "not in the in-flight map.";
@@ -180,7 +182,7 @@ void MvccManager::OfflineCommitTransaction(Timestamp timestamp) {
 MvccManager::TxnState MvccManager::RemoveInFlightAndGetStateUnlocked(Timestamp ts) {
   DCHECK(lock_.is_locked());
 
-  InFlightMap::iterator it = timestamps_in_flight_.find(ts.value());
+  auto it = timestamps_in_flight_.find(ts.value());
   if (it == timestamps_in_flight_.end()) {
     LOG(FATAL) << "Trying to remove timestamp which isn't in the in-flight set: "
                << ts.ToString();
@@ -239,9 +241,9 @@ void MvccManager::OfflineAdjustSafeTime(Timestamp safe_time) {
 static void FilterTimestamps(std::vector<Timestamp::val_type>* v,
                              Timestamp::val_type watermark) {
   int j = 0;
-  for (int i = 0; i < v->size(); i++) {
-    if ((*v)[i] >= watermark) {
-      (*v)[j++] = (*v)[i];
+  for (const auto& ts : *v) {
+    if (ts >= watermark) {
+      (*v)[j++] = ts;
     }
   }
   v->resize(j);
@@ -274,7 +276,7 @@ void MvccManager::AdjustCleanTime() {
   // it may also have unblocked some waiters.
   // Check if someone is waiting for transactions to be committed.
   if (PREDICT_FALSE(!waiters_.empty())) {
-    vector<WaitingState*>::iterator iter = waiters_.begin();
+    auto iter = waiters_.begin();
     while (iter != waiters_.end()) {
       WaitingState* waiter = *iter;
       if (IsDoneWaitingUnlocked(*waiter)) {
@@ -330,6 +332,7 @@ bool MvccManager::IsDoneWaitingUnlocked(const WaitingState& waiter) const {
     case NONE_APPLYING:
       return !AnyApplyingAtOrBeforeUnlocked(waiter.timestamp);
   }
+  LOG(FATAL); // unreachable
 }
 
 bool MvccManager::AreAllTransactionsCommittedUnlocked(Timestamp ts) const {
@@ -343,7 +346,7 @@ bool MvccManager::AreAllTransactionsCommittedUnlocked(Timestamp ts) const {
 }
 
 bool MvccManager::AnyApplyingAtOrBeforeUnlocked(Timestamp ts) const {
-  BOOST_FOREACH(const InFlightMap::value_type entry, timestamps_in_flight_) {
+  for (const InFlightMap::value_type entry : timestamps_in_flight_) {
     if (entry.first <= ts.value()) {
       return true;
     }
@@ -377,7 +380,7 @@ void MvccManager::WaitForApplyingTransactionsToCommit() const {
   Timestamp wait_for = Timestamp::kMin;
   {
     boost::lock_guard<LockType> l(lock_);
-    BOOST_FOREACH(const InFlightMap::value_type entry, timestamps_in_flight_) {
+    for (const InFlightMap::value_type entry : timestamps_in_flight_) {
       if (entry.second == APPLYING) {
         wait_for = Timestamp(std::max(entry.first, wait_for.value()));
       }
@@ -413,7 +416,7 @@ Timestamp MvccManager::GetCleanTimestamp() const {
 void MvccManager::GetApplyingTransactionsTimestamps(std::vector<Timestamp>* timestamps) const {
   boost::lock_guard<LockType> l(lock_);
   timestamps->reserve(timestamps_in_flight_.size());
-  BOOST_FOREACH(const InFlightMap::value_type entry, timestamps_in_flight_) {
+  for (const InFlightMap::value_type entry : timestamps_in_flight_) {
     if (entry.second == APPLYING) {
       timestamps->push_back(Timestamp(entry.first));
     }
@@ -451,7 +454,7 @@ MvccSnapshot MvccSnapshot::CreateSnapshotIncludingNoTransactions() {
 }
 
 bool MvccSnapshot::IsCommittedFallback(const Timestamp& timestamp) const {
-  BOOST_FOREACH(const Timestamp::val_type& v, committed_timestamps_) {
+  for (const Timestamp::val_type& v : committed_timestamps_) {
     if (v == timestamp.value()) return true;
   }
 
@@ -482,7 +485,7 @@ std::string MvccSnapshot::ToString() const {
             " or (T in {");
 
   bool first = true;
-  BOOST_FOREACH(Timestamp::val_type t, committed_timestamps_) {
+  for (Timestamp::val_type t : committed_timestamps_) {
     if (!first) {
       ret.push_back(',');
     }
@@ -494,7 +497,7 @@ std::string MvccSnapshot::ToString() const {
 }
 
 void MvccSnapshot::AddCommittedTimestamps(const std::vector<Timestamp>& timestamps) {
-  BOOST_FOREACH(const Timestamp& ts, timestamps) {
+  for (const Timestamp& ts : timestamps) {
     AddCommittedTimestamp(ts);
   }
 }

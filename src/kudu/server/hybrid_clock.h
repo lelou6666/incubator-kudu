@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_SERVER_HYBRID_CLOCK_H_
 #define KUDU_SERVER_HYBRID_CLOCK_H_
@@ -23,8 +26,6 @@
 #include "kudu/util/metrics.h"
 #include "kudu/util/status.h"
 
-struct ntptimeval;
-
 namespace kudu {
 namespace server {
 
@@ -32,6 +33,9 @@ namespace server {
 Status CheckClockSynchronized();
 
 // The HybridTime clock.
+//
+// HybridTime should not be used on a distributed cluster running on OS X hosts,
+// since NTP clock error is not available.
 class HybridClock : public Clock {
  public:
   HybridClock();
@@ -143,8 +147,27 @@ class HybridClock : public Clock {
   // separated.
   static std::string StringifyTimestamp(const Timestamp& timestamp);
 
+  // Sets the time to be returned by a mock call to the system clock, for tests.
+  // Requires that 'FLAGS_use_mock_wall_clock' is set to true and that 'now_usec' is less
+  // than the previously set time.
+  // NOTE: This refers to the time returned by the system clock, not the time returned
+  // by HybridClock, i.e. 'now_usec' is not a HybridTime timestmap and shouldn't have
+  // a logical component.
+  void SetMockClockWallTimeForTests(uint64_t now_usec);
+
+  // Sets the max. error to be returned by a mock call to the system clock, for tests.
+  // Requires that 'FLAGS_use_mock_wall_clock' is set to true.
+  // This can be used to make HybridClock report the wall clock as unsynchronized, by
+  // setting error to be more than the configured tolerance.
+  void SetMockMaxClockErrorForTests(uint64_t max_error_usec);
+
  private:
-  uint64_t GetTimeUsecs(ntptimeval* timeval);
+
+  // Obtains the current wallclock time and maximum error in microseconds,
+  // and checks if the clock is synchronized.
+  //
+  // On OS X, the error will always be 0.
+  kudu::Status WalltimeWithError(uint64_t* now_usec, uint64_t* error_usec);
 
   // Used to get the timestamp for metrics.
   uint64_t NowForMetrics();
@@ -152,16 +175,25 @@ class HybridClock : public Clock {
   // Used to get the current error, for metrics.
   uint64_t ErrorForMetrics();
 
+  // Set by calls to SetMockClockWallTimeForTests().
+  // For testing purposes only.
+  uint64_t mock_clock_time_usec_;
+
+  // Set by calls to SetMockClockErrorForTests().
+  // For testing purposes only.
+  uint64_t mock_clock_max_error_usec_;
+
+#if !defined(__APPLE__)
   uint64_t divisor_;
+#endif
 
   double tolerance_adjustment_;
 
   mutable simple_spinlock lock_;
 
-  // the last clock read/update, in microseconds.
-  uint64_t last_usec_;
-  // the next logical value to be assigned to a timestamp
-  uint64_t next_logical_;
+  // The next timestamp to be generated from this clock, assuming that
+  // the physical clock hasn't advanced beyond the value stored here.
+  uint64_t next_timestamp_;
 
   // How many bits to left shift a microseconds clock read. The remainder
   // of the timestamp will be reserved for logical values.

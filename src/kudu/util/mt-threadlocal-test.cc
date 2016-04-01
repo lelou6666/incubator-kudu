@@ -1,20 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-#include <boost/foreach.hpp>
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 #include <boost/thread/locks.hpp>
 #include <glog/logging.h>
-#include <tr1/unordered_set>
+#include <unordered_set>
 
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/map-util.h"
@@ -28,7 +31,7 @@
 #include "kudu/util/thread.h"
 #include "kudu/util/threadlocal.h"
 
-using std::tr1::unordered_set;
+using std::unordered_set;
 using std::vector;
 using strings::Substitute;
 
@@ -155,7 +158,7 @@ static uint64_t Iterate(CounterRegistry* registry, int expected_counters) {
   uint64_t sum = 0;
   int seen_counters = 0;
   boost::lock_guard<RegistryLockType> l(*registry->get_lock());
-  BOOST_FOREACH(Counter* counter, *registry->GetCountersUnlocked()) {
+  for (Counter* counter : *registry->GetCountersUnlocked()) {
     uint64_t value;
     {
       boost::lock_guard<CounterLockType> l(*counter->get_lock());
@@ -208,7 +211,7 @@ static void TestThreadLocalCounters(CounterRegistry* registry, const int num_thr
   reader_done.CountDown();
 
   LOG(INFO) << "Joining & deleting threads...";
-  BOOST_FOREACH(scoped_refptr<kudu::Thread> thread, threads) {
+  for (scoped_refptr<kudu::Thread> thread : threads) {
     CHECK_OK(ThreadJoiner(thread.get()).Join());
   }
   LOG(INFO) << "Done.";
@@ -310,7 +313,7 @@ TEST_F(ThreadLocalTest, TestTLSMember) {
   }
 
   LOG(INFO) << "Joining & deleting threads...";
-  BOOST_FOREACH(scoped_refptr<kudu::Thread> thread, threads) {
+  for (scoped_refptr<kudu::Thread> thread : threads) {
     CHECK_OK(ThreadJoiner(thread.get()).Join());
   }
 }

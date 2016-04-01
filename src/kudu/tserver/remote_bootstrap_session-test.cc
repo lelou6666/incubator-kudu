@@ -1,22 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/tablet/tablet-test-util.h"
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
+#include <memory>
 
 #include "kudu/common/partial_row.h"
 #include "kudu/common/row_operations.h"
@@ -40,10 +42,12 @@
 
 METRIC_DECLARE_entity(tablet);
 
+using std::shared_ptr;
+using std::string;
+
 namespace kudu {
 namespace tserver {
 
-using std::string;
 using consensus::ConsensusMetadata;
 using consensus::OpId;
 using consensus::RaftConfigPB;
@@ -66,10 +70,8 @@ using tablet::WriteTransactionState;
 class RemoteBootstrapTest : public KuduTabletTest {
  public:
   RemoteBootstrapTest()
-    : KuduTabletTest(Schema(boost::assign::list_of
-                              (ColumnSchema("key", STRING))
-                              (ColumnSchema("val", INT32)),
-                              1)) {
+    : KuduTabletTest(Schema({ ColumnSchema("key", STRING),
+                              ColumnSchema("val", INT32) }, 1)) {
     CHECK_OK(ThreadPoolBuilder("test-exec").Build(&apply_pool_));
   }
 
@@ -125,6 +127,7 @@ class RemoteBootstrapTest : public KuduTabletTest {
     mbuilder.Build(&messenger);
 
     log_anchor_registry_.reset(new LogAnchorRegistry());
+    tablet_peer_->SetBootstrapping();
     CHECK_OK(tablet_peer_->Init(tablet(),
                                 clock(),
                                 messenger,
@@ -157,10 +160,9 @@ class RemoteBootstrapTest : public KuduTabletTest {
       WriteResponsePB resp;
       CountDownLatch latch(1);
 
-      WriteTransactionState* state =
-          new WriteTransactionState(tablet_peer_.get(), &req, &resp);
+      auto state = new WriteTransactionState(tablet_peer_.get(), &req, &resp);
       state->set_completion_callback(gscoped_ptr<tablet::TransactionCompletionCallback>(
-          new tablet::LatchTransactionCompletionCallback<WriteResponsePB>(&latch, &resp)).Pass());
+          new tablet::LatchTransactionCompletionCallback<WriteResponsePB>(&latch, &resp)));
       ASSERT_OK(tablet_peer_->SubmitWrite(state));
       latch.Wait();
       ASSERT_FALSE(resp.has_error()) << "Request failed: " << resp.error().ShortDebugString();
@@ -287,14 +289,14 @@ TEST_F(RemoteBootstrapTest, TestBlocksAreFetchableAfterBeingDeleted) {
 
   // Gather all the blocks.
   vector<BlockId> data_blocks;
-  BOOST_FOREACH(const RowSetDataPB& rowset, tablet_superblock.rowsets()) {
-    BOOST_FOREACH(const DeltaDataPB& redo, rowset.redo_deltas()) {
+  for (const RowSetDataPB& rowset : tablet_superblock.rowsets()) {
+    for (const DeltaDataPB& redo : rowset.redo_deltas()) {
       data_blocks.push_back(BlockId::FromPB(redo.block()));
     }
-    BOOST_FOREACH(const DeltaDataPB& undo, rowset.undo_deltas()) {
+    for (const DeltaDataPB& undo : rowset.undo_deltas()) {
       data_blocks.push_back(BlockId::FromPB(undo.block()));
     }
-    BOOST_FOREACH(const ColumnDataPB& column, rowset.columns()) {
+    for (const ColumnDataPB& column : rowset.columns()) {
       data_blocks.push_back(BlockId::FromPB(column.block()));
     }
     if (rowset.has_bloom_block()) {
@@ -306,12 +308,12 @@ TEST_F(RemoteBootstrapTest, TestBlocksAreFetchableAfterBeingDeleted) {
   }
 
   // Delete them.
-  BOOST_FOREACH(const BlockId& block_id, data_blocks) {
+  for (const BlockId& block_id : data_blocks) {
     ASSERT_OK(fs_manager()->DeleteBlock(block_id));
   }
 
   // Read them back.
-  BOOST_FOREACH(const BlockId& block_id, data_blocks) {
+  for (const BlockId& block_id : data_blocks) {
     ASSERT_TRUE(session_->IsBlockOpenForTests(block_id));
     string data;
     RemoteBootstrapErrorPB::Code error_code;

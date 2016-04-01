@@ -1,27 +1,31 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CLIENT_CLIENT_H
 #define KUDU_CLIENT_CLIENT_H
 
 #include <stdint.h>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_set>
 #include <vector>
 
+#include "kudu/client/row_result.h"
+#include "kudu/client/scan_batch.h"
 #include "kudu/client/scan_predicate.h"
 #include "kudu/client/schema.h"
+#include "kudu/client/shared_ptr.h"
 #ifdef KUDU_HEADERS_NO_STUBS
 #include <gtest/gtest_prod.h>
 #include "kudu/gutil/macros.h"
@@ -34,19 +38,22 @@
 #include "kudu/util/monotime.h"
 #include "kudu/util/status.h"
 
+#if _GLIBCXX_USE_CXX11_ABI
+#error \
+  "Kudu will not function properly if built with gcc 5's new ABI. " \
+  "Please modify your application to set -D_GLIBCXX_USE_CXX11_ABI=0. " \
+  "For more information about the new ABI, see " \
+  "https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html."
+#endif
+
 namespace kudu {
 
 class LinkedListTester;
 class PartitionSchema;
 
-namespace tools {
-class TsAdminClient;
-} // namespace tools
-
 namespace client {
 
 class KuduLoggingCallback;
-class KuduRowResult;
 class KuduSession;
 class KuduStatusCallback;
 class KuduTable;
@@ -101,6 +108,13 @@ void KUDU_EXPORT SetVerboseLogLevel(int level);
 // workaround conflicts.
 Status KUDU_EXPORT SetInternalSignalNumber(int signum);
 
+// Return a single-version string identifying the Kudu client.
+std::string KUDU_EXPORT GetShortVersionString();
+
+// Return a longer multi-line version string identifying the client, including
+// build time, etc.
+std::string KUDU_EXPORT GetAllVersionInfo();
+
 // Creates a new KuduClient with the desired options.
 //
 // Note that KuduClients are shared amongst multiple threads and, as such,
@@ -134,7 +148,7 @@ class KUDU_EXPORT KuduClientBuilder {
   // The return value may indicate an error in the create operation, or a
   // misuse of the builder; in the latter case, only the last error is
   // returned.
-  Status Build(std::tr1::shared_ptr<KuduClient>* client);
+  Status Build(sp::shared_ptr<KuduClient>* client);
  private:
   class KUDU_NO_EXPORT Data;
 
@@ -168,7 +182,7 @@ class KUDU_EXPORT KuduClientBuilder {
 // as well.
 //
 // This class is thread-safe.
-class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClient> {
+class KUDU_EXPORT KuduClient : public sp::enable_shared_from_this<KuduClient> {
  public:
   ~KuduClient();
 
@@ -211,12 +225,12 @@ class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClie
   // TODO: should we offer an async version of this as well?
   // TODO: probably should have a configurable timeout in KuduClientBuilder?
   Status OpenTable(const std::string& table_name,
-                   std::tr1::shared_ptr<KuduTable>* table);
+                   sp::shared_ptr<KuduTable>* table);
 
   // Create a new session for interacting with the cluster.
   // User is responsible for destroying the session object.
   // This is a fully local operation (no RPCs or blocking).
-  std::tr1::shared_ptr<KuduSession> NewSession();
+  sp::shared_ptr<KuduSession> NewSession();
 
   // Policy with which to choose amongst multiple replicas.
   enum ReplicaSelection {
@@ -245,6 +259,15 @@ class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClie
   // this client. See KuduScanner for more details on timestamps.
   uint64_t GetLatestObservedTimestamp() const;
 
+  // Sets the latest observed HybridTime timestamp, encoded in the HybridTime format.
+  // This is only useful when forwarding timestamps between clients to enforce
+  // external consistency when using KuduSession::CLIENT_PROPAGATED external consistency
+  // mode.
+  // To use this the user must obtain the HybridTime encoded timestamp from the first
+  // client with KuduClient::GetLatestObservedTimestamp() and the set it in the new
+  // client with this method.
+  void SetLatestObservedTimestamp(uint64_t ht_timestamp);
+
  private:
   class KUDU_NO_EXPORT Data;
 
@@ -269,7 +292,7 @@ class KUDU_EXPORT KuduClient : public std::tr1::enable_shared_from_this<KuduClie
   FRIEND_TEST(ClientTest, TestScanFaultTolerance);
   FRIEND_TEST(ClientTest, TestScanTimeout);
   FRIEND_TEST(ClientTest, TestWriteWithDeadMaster);
-  FRIEND_TEST(MasterFailoverTest, DISABLED_TestPauseAfterCreateTableIssued);
+  FRIEND_TEST(MasterFailoverTest, TestPauseAfterCreateTableIssued);
 
   KuduClient();
 
@@ -377,7 +400,7 @@ class KUDU_EXPORT KuduTableCreator {
 // and the schema fetched for introspection.
 //
 // This class is thread-safe.
-class KUDU_EXPORT KuduTable : public std::tr1::enable_shared_from_this<KuduTable> {
+class KUDU_EXPORT KuduTable : public sp::enable_shared_from_this<KuduTable> {
  public:
   ~KuduTable();
 
@@ -424,7 +447,7 @@ class KUDU_EXPORT KuduTable : public std::tr1::enable_shared_from_this<KuduTable
 
   friend class KuduClient;
 
-  KuduTable(const std::tr1::shared_ptr<KuduClient>& client,
+  KuduTable(const sp::shared_ptr<KuduClient>& client,
             const std::string& name,
             const std::string& table_id,
             const KuduSchema& schema,
@@ -591,7 +614,7 @@ class KUDU_EXPORT KuduError {
 // concept of a Session familiar.
 //
 // This class is not thread-safe except where otherwise specified.
-class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSession> {
+class KUDU_EXPORT KuduSession : public sp::enable_shared_from_this<KuduSession> {
  public:
   ~KuduSession();
 
@@ -615,6 +638,8 @@ class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSes
     // TODO: specify which threads the background activity runs on (probably the
     // messenger IO threads?)
     //
+    // NOTE: This is not implemented yet, see KUDU-456.
+    //
     // The Flush() call can be used to block until the buffer is empty.
     AUTO_FLUSH_BACKGROUND,
 
@@ -627,6 +652,42 @@ class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSes
   // Set the flush mode.
   // REQUIRES: there should be no pending writes -- call Flush() first to ensure.
   Status SetFlushMode(FlushMode m) WARN_UNUSED_RESULT;
+
+  // The possible external consistency modes on which Kudu operates.
+  enum ExternalConsistencyMode {
+    // The response to any write will contain a timestamp. Any further calls from the same
+    // client to other servers will update those servers with that timestamp. Following
+    // write operations from the same client will be assigned timestamps that are strictly
+    // higher, enforcing external consistency without having to wait or incur any latency
+    // penalties.
+    //
+    // In order to maintain external consistency for writes between two different clients
+    // in this mode, the user must forward the timestamp from the first client to the
+    // second by using KuduClient::GetLatestObservedTimestamp() and
+    // KuduClient::SetLatestObservedTimestamp().
+    //
+    // WARNING: Failure to propagate timestamp information through back-channels between
+    // two different clients will negate any external consistency guarantee under this
+    // mode.
+    //
+    // This is the default mode.
+    CLIENT_PROPAGATED,
+
+    // The server will guarantee that write operations from the same or from other client
+    // are externally consistent, without the need to propagate timestamps across clients.
+    // This is done by making write operations wait until there is certainty that all
+    // follow up write operations (operations that start after the previous one finishes)
+    // will be assigned a timestamp that is strictly higher, enforcing external consistency.
+    //
+    // WARNING: Depending on the clock synchronization state of TabletServers this may
+    // imply considerable latency. Moreover operations in COMMIT_WAIT external consistency
+    // mode will outright fail if TabletServer clocks are either unsynchronized or
+    // synchronized but with a maximum error which surpasses a pre-configured threshold.
+    COMMIT_WAIT
+  };
+
+  // Set the new external consistency mode for this session.
+  Status SetExternalConsistencyMode(ExternalConsistencyMode m) WARN_UNUSED_RESULT;
 
   // Set the amount of buffer space used by this session for outbound writes.
   // The effect of the buffer size varies based on the flush mode of the
@@ -643,13 +704,6 @@ class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSes
 
   // Set the timeout for writes made in this session.
   void SetTimeoutMillis(int millis);
-
-  // Set priority for calls made from this session. Higher priority calls may skip
-  // lower priority calls.
-  // TODO: this is not yet implemented and needs further design work to know what
-  // exactly it will mean in practice. The API is just here to show at what layer
-  // call priorities will be exposed to the client.
-  void SetPriority(int priority);
 
   // TODO: add "doAs" ability here for proxy servers to be able to act on behalf of
   // other users, assuming access rights.
@@ -763,7 +817,7 @@ class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSes
 
   friend class KuduClient;
   friend class internal::Batcher;
-  explicit KuduSession(const std::tr1::shared_ptr<KuduClient>& client);
+  explicit KuduSession(const sp::shared_ptr<KuduClient>& client);
 
   // Owned.
   Data* data_;
@@ -776,37 +830,32 @@ class KUDU_EXPORT KuduSession : public std::tr1::enable_shared_from_this<KuduSes
 // scanners on different threads may share a single KuduTable object.
 class KUDU_EXPORT KuduScanner {
  public:
-  // The possible read modes for clients.
+  // The possible read modes for scanners.
   enum ReadMode {
-    // When READ_LATEST is specified the server will execute the read independently
-    // of the clock and will always return all visible writes at the time the request
-    // was received. This type of read does not return a snapshot timestamp since
-    // it might not be repeatable, i.e. a later read executed at the same snapshot
-    // timestamp might yield rows that were committed by in-flight transactions.
+    // When READ_LATEST is specified the server will always return committed writes at
+    // the time the request was received. This type of read does not return a snapshot
+    // timestamp and is not repeatable.
+    //
+    // In ACID terms this corresponds to Isolation mode: "Read Committed"
     //
     // This is the default mode.
     READ_LATEST,
 
     // When READ_AT_SNAPSHOT is specified the server will attempt to perform a read
-    // at the required snapshot. If no snapshot is defined the server will take the
-    // current time as the snapshot timestamp. Snapshot reads are repeatable, i.e.
-    // all future reads at the same timestamp will yield the same rows. This is
+    // at the provided timestamp. If no timestamp is provided the server will take the
+    // current time as the snapshot timestamp. In this mode reads are repeatable, i.e.
+    // all future reads at the same timestamp will yield the same data. This is
     // performed at the expense of waiting for in-flight transactions whose timestamp
-    // is lower than the snapshot's timestamp to complete.
+    // is lower than the snapshot's timestamp to complete, so it might incur a latency
+    // penalty.
     //
-    // When mixing reads and writes clients that specify COMMIT_WAIT as their
-    // external consistency mode and then use the returned write_timestamp to
-    // to perform snapshot reads are guaranteed that that snapshot time is
-    // considered in the past by all servers and no additional action is
-    // necessary. Clients using CLIENT_PROPAGATED however must forcibly propagate
-    // the timestamps even at read time, so that the server will not generate
-    // any more transactions before the snapshot requested by the client.
-    // The latter option is implemented by allowing the client to specify one or
-    // two timestamps, the first one obtained from the previous CLIENT_PROPAGATED
-    // write, directly or through back-channels, must be signed and will be
-    // checked by the server. The second one, if defined, is the actual snapshot
-    // read time. When selecting both, the latter must be lower than or equal to
-    // the former.
+    // In ACID terms this, by itself, corresponds to Isolation mode "Repeatable
+    // Read". If all writes to the scanned tablet are made externally consistent,
+    // then this corresponds to Isolation mode "Strict-Serializable".
+    //
+    // Note: there currently "holes", which happen in rare edge conditions, by which writes
+    // are sometimes not externally consistent even when action was taken to make them so.
+    // In these cases Isolation may degenerate to mode "Read Committed". See KUDU-430.
     READ_AT_SNAPSHOT
   };
 
@@ -838,6 +887,14 @@ class KUDU_EXPORT KuduScanner {
   // Set the projection used for this scanner by passing the column names to read.
   //
   // This overrides any previous call to SetProjectedColumns.
+  Status SetProjectedColumnNames(const std::vector<std::string>& col_names) WARN_UNUSED_RESULT;
+
+  // Set the projection used for this scanner by passing the column indexes to read.
+  //
+  // This overrides any previous call to SetProjectedColumns/SetProjectedColumnIndexes.
+  Status SetProjectedColumnIndexes(const std::vector<int>& col_indexes) WARN_UNUSED_RESULT;
+
+  // DEPRECATED: See SetProjectedColumnNames
   Status SetProjectedColumns(const std::vector<std::string>& col_names) WARN_UNUSED_RESULT;
 
   // Add a predicate to this scanner.
@@ -928,7 +985,16 @@ class KUDU_EXPORT KuduScanner {
   // Clears 'rows' and populates it with the next batch of rows from the tablet server.
   // A call to NextBatch() invalidates all previously fetched results which might
   // now be pointing to garbage memory.
+  //
+  // DEPRECATED: Use NextBatch(KuduScanBatch*) instead.
   Status NextBatch(std::vector<KuduRowResult>* rows);
+
+  // Fetches the next batch of results for this scanner.
+  //
+  // A single KuduScanBatch instance may be reused. Each subsequent call replaces the data
+  // from the previous call, and invalidates any KuduScanBatch::RowPtr objects previously
+  // obtained from the batch.
+  Status NextBatch(KuduScanBatch* batch);
 
   // Get the KuduTabletServer that is currently handling the scan.
   // More concretely, this is the server that handled the most recent Open or NextBatch
@@ -959,7 +1025,8 @@ class KUDU_EXPORT KuduScanner {
   // in the case of failure.
   //
   // Fault tolerant scans typically have lower throughput than non
-  // fault-tolerant scans. Fault tolerant scans must use READ_AT_SNAPSHOT mode.
+  // fault-tolerant scans. Fault tolerant scans use READ_AT_SNAPSHOT mode,
+  // if no snapshot timestamp is provided, the server will pick one.
   Status SetFaultTolerant() WARN_UNUSED_RESULT;
 
   // Sets the snapshot timestamp, in microseconds since the epoch, for scans in
@@ -973,11 +1040,13 @@ class KUDU_EXPORT KuduScanner {
   // Sets the maximum time that Open() and NextBatch() are allowed to take.
   Status SetTimeoutMillis(int millis);
 
+  // Returns the schema of the projection being scanned.
+  KuduSchema GetProjectionSchema() const;
+
   // Returns a string representation of this scan.
   std::string ToString() const;
  private:
   class KUDU_NO_EXPORT Data;
-  friend class kudu::tools::TsAdminClient;
 
   FRIEND_TEST(ClientTest, TestScanCloseProxy);
   FRIEND_TEST(ClientTest, TestScanFaultTolerance);

@@ -1,23 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/fs/file_block_manager.h"
 
-#include <boost/foreach.hpp>
 #include <deque>
 #include <string>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/fs/block_manager_metrics.h"
@@ -38,9 +40,9 @@
 #include "kudu/util/status.h"
 
 using kudu::env_util::ScopedFileDeleter;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_set;
+using std::unordered_set;
 using std::vector;
 using strings::Substitute;
 
@@ -111,11 +113,8 @@ class FileBlockLocation {
   const BlockId& block_id() const { return block_id_; }
 
  private:
-  FileBlockLocation(const string& root_path,
-                    const BlockId& block_id)
-    : root_path_(root_path),
-      block_id_(block_id) {
-  }
+  FileBlockLocation(string root_path, BlockId block_id)
+      : root_path_(std::move(root_path)), block_id_(std::move(block_id)) {}
 
   // These per-byte accessors yield subdirectories in which blocks are grouped.
   string byte2() const {
@@ -213,9 +212,8 @@ void FileBlockLocation::GetAllParentDirs(vector<string>* parent_dirs) const {
 // FileWritableBlock instances is expected to be low.
 class FileWritableBlock : public WritableBlock {
  public:
-  FileWritableBlock(FileBlockManager* block_manager,
-                    const FileBlockLocation& location,
-                    const shared_ptr<WritableFile>& writer);
+  FileWritableBlock(FileBlockManager* block_manager, FileBlockLocation location,
+                    shared_ptr<WritableFile> writer);
 
   virtual ~FileWritableBlock();
 
@@ -264,13 +262,13 @@ class FileWritableBlock : public WritableBlock {
 };
 
 FileWritableBlock::FileWritableBlock(FileBlockManager* block_manager,
-                                     const FileBlockLocation& location,
-                                     const shared_ptr<WritableFile>& writer) :
-  block_manager_(block_manager),
-  location_(location),
-  writer_(writer),
-  state_(CLEAN),
-  bytes_appended_(0) {
+                                     FileBlockLocation location,
+                                     shared_ptr<WritableFile> writer)
+    : block_manager_(block_manager),
+      location_(std::move(location)),
+      writer_(std::move(writer)),
+      state_(CLEAN),
+      bytes_appended_(0) {
   if (block_manager_->metrics_) {
     block_manager_->metrics_->blocks_open_writing->Increment();
     block_manager_->metrics_->total_writable_blocks->Increment();
@@ -278,8 +276,10 @@ FileWritableBlock::FileWritableBlock(FileBlockManager* block_manager,
 }
 
 FileWritableBlock::~FileWritableBlock() {
-  WARN_NOT_OK(Close(), Substitute("Failed to close block $0",
-                                  id().ToString()));
+  if (state_ != CLOSED) {
+    WARN_NOT_OK(Abort(), Substitute("Failed to close block $0",
+                                    id().ToString()));
+  }
 }
 
 Status FileWritableBlock::Close() {
@@ -372,9 +372,8 @@ Status FileWritableBlock::Close(SyncMode mode) {
 // embed a FileBlockLocation, using the simpler BlockId instead.
 class FileReadableBlock : public ReadableBlock {
  public:
-  FileReadableBlock(const FileBlockManager* block_manager,
-                    const BlockId& block_id,
-                    const shared_ptr<RandomAccessFile>& reader);
+  FileReadableBlock(const FileBlockManager* block_manager, BlockId block_id,
+                    shared_ptr<RandomAccessFile> reader);
 
   virtual ~FileReadableBlock();
 
@@ -382,7 +381,7 @@ class FileReadableBlock : public ReadableBlock {
 
   virtual const BlockId& id() const OVERRIDE;
 
-  virtual Status Size(size_t* sz) const OVERRIDE;
+  virtual Status Size(uint64_t* sz) const OVERRIDE;
 
   virtual Status Read(uint64_t offset, size_t length,
                       Slice* result, uint8_t* scratch) const OVERRIDE;
@@ -407,12 +406,12 @@ class FileReadableBlock : public ReadableBlock {
 };
 
 FileReadableBlock::FileReadableBlock(const FileBlockManager* block_manager,
-                                     const BlockId& block_id,
-                                     const shared_ptr<RandomAccessFile>& reader) :
-  block_manager_(block_manager),
-  block_id_(block_id),
-  reader_(reader),
-  closed_(false) {
+                                     BlockId block_id,
+                                     shared_ptr<RandomAccessFile> reader)
+    : block_manager_(block_manager),
+      block_id_(std::move(block_id)),
+      reader_(std::move(reader)),
+      closed_(false) {
   if (block_manager_->metrics_) {
     block_manager_->metrics_->blocks_open_reading->Increment();
     block_manager_->metrics_->total_readable_blocks->Increment();
@@ -439,7 +438,7 @@ const BlockId& FileReadableBlock::id() const {
   return block_id_;
 }
 
-Status FileReadableBlock::Size(size_t* sz) const {
+Status FileReadableBlock::Size(uint64_t* sz) const {
   DCHECK(!closed_.Load());
 
   return reader_->Size(sz);
@@ -479,7 +478,7 @@ Status FileBlockManager::SyncMetadata(const internal::FileBlockLocation& locatio
   vector<string> to_sync;
   {
     lock_guard<simple_spinlock> l(&lock_);
-    BOOST_FOREACH(const string& parent_dir, parent_dirs) {
+    for (const string& parent_dir : parent_dirs) {
       if (dirty_dirs_.erase(parent_dir)) {
         to_sync.push_back(parent_dir);
       }
@@ -488,7 +487,7 @@ Status FileBlockManager::SyncMetadata(const internal::FileBlockLocation& locatio
 
   // Sync them.
   if (FLAGS_enable_data_block_fsync) {
-    BOOST_FOREACH(const string& s, to_sync) {
+    for (const string& s : to_sync) {
       RETURN_NOT_OK(env_->SyncDir(s));
     }
   }
@@ -503,7 +502,7 @@ bool FileBlockManager::FindBlockPath(const BlockId& block_id,
     *path = internal::FileBlockLocation::FromBlockId(
         metadata_file->path(), block_id).GetFullPath();
   }
-  return metadata_file != NULL;
+  return metadata_file != nullptr;
 }
 
 FileBlockManager::FileBlockManager(Env* env, const BlockManagerOptions& opts)
@@ -539,14 +538,14 @@ Status FileBlockManager::Create() {
   // The UUIDs and indices will be included in every instance file.
   ObjectIdGenerator oid_generator;
   vector<string> all_uuids(root_paths_.size());
-  BOOST_FOREACH(string& u, all_uuids) {
+  for (string& u : all_uuids) {
     u = oid_generator.Next();
   }
   int idx = 0;
 
   // Ensure the data paths exist and create the instance files.
   unordered_set<string> to_sync;
-  BOOST_FOREACH(const string& root_path, root_paths_) {
+  for (const string& root_path : root_paths_) {
     bool created;
     RETURN_NOT_OK_PREPEND(env_util::CreateDirIfMissing(env_, root_path, &created),
                           Substitute("Could not create directory $0", root_path));
@@ -567,14 +566,14 @@ Status FileBlockManager::Create() {
 
   // Ensure newly created directories are synchronized to disk.
   if (FLAGS_enable_data_block_fsync) {
-    BOOST_FOREACH(const string& dir, to_sync) {
+    for (const string& dir : to_sync) {
       RETURN_NOT_OK_PREPEND(env_->SyncDir(dir),
                             Substitute("Unable to synchronize directory $0", dir));
     }
   }
 
   // Success: don't delete any files.
-  BOOST_FOREACH(ScopedFileDeleter* deleter, delete_on_failure) {
+  for (ScopedFileDeleter* deleter : delete_on_failure) {
     deleter->Cancel();
   }
   return Status::OK();
@@ -585,7 +584,7 @@ Status FileBlockManager::Open() {
   ElementDeleter deleter(&instances);
   instances.reserve(root_paths_.size());
 
-  BOOST_FOREACH(const string& root_path, root_paths_) {
+  for (const string& root_path : root_paths_) {
     if (!env_->FileExists(root_path)) {
       return Status::NotFound(Substitute(
           "FileBlockManager at $0 not found", root_path));
@@ -620,7 +619,7 @@ Status FileBlockManager::Open() {
                                    JoinStrings(root_paths_, ",")));
 
   PathMap instances_by_idx;
-  BOOST_FOREACH(PathInstanceMetadataFile* instance, instances) {
+  for (PathInstanceMetadataFile* instance : instances) {
     const PathSetPB& path_set = instance->metadata()->path_set();
     uint32_t idx = -1;
     for (int i = 0; i < path_set.all_uuids_size(); i++) {
@@ -691,7 +690,7 @@ Status FileBlockManager::CreateBlock(const CreateBlockOptions& opts,
       // directory, which may not have been created but is definitely dirty
       // (because we added a file to it).
       lock_guard<simple_spinlock> l(&lock_);
-      BOOST_FOREACH(const string& created, created_dirs) {
+      for (const string& created : created_dirs) {
         dirty_dirs_.insert(created);
       }
       dirty_dirs_.insert(DirName(path));
@@ -749,13 +748,13 @@ Status FileBlockManager::CloseBlocks(const vector<WritableBlock*>& blocks) {
     // Ask the kernel to begin writing out each block's dirty data. This is
     // done up-front to give the kernel opportunities to coalesce contiguous
     // dirty pages.
-    BOOST_FOREACH(WritableBlock* block, blocks) {
+    for (WritableBlock* block : blocks) {
       RETURN_NOT_OK(block->FlushDataAsync());
     }
   }
 
   // Now close each block, waiting for each to become durable.
-  BOOST_FOREACH(WritableBlock* block, blocks) {
+  for (WritableBlock* block : blocks) {
     RETURN_NOT_OK(block->Close());
   }
   return Status::OK();

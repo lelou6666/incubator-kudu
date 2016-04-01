@@ -1,21 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_ROWSET_METADATA_H
 #define KUDU_TABLET_ROWSET_METADATA_H
 
+#include <map>
 #include <string>
-#include <tr1/unordered_map>
 #include <vector>
 
 #include "kudu/common/schema.h"
@@ -63,7 +66,7 @@ class TabletMetadata;
 //
 class RowSetMetadata {
  public:
-  typedef std::tr1::unordered_map<int, BlockId> ColumnIdToBlockIdMap;
+  typedef std::map<ColumnId, BlockId> ColumnIdToBlockIdMap;
 
   // Create a new RowSetMetadata
   static Status CreateNew(TabletMetadata* tablet_metadata,
@@ -118,7 +121,7 @@ class RowSetMetadata {
     return !adhoc_index_block_.IsNull();
   }
 
-  BlockId column_data_block_for_col_id(int col_id) {
+  BlockId column_data_block_for_col_id(ColumnId col_id) {
     lock_guard<LockType> l(&lock_);
     return FindOrDie(blocks_by_col_id_, col_id);
   }
@@ -150,7 +153,7 @@ class RowSetMetadata {
     last_durable_redo_dms_id_ = redo_dms_id;
   }
 
-  bool HasDataForColumnIdForTests(int col_id) const {
+  bool HasDataForColumnIdForTests(ColumnId col_id) const {
     BlockId b;
     lock_guard<LockType> l(&lock_);
     if (!FindCopy(blocks_by_col_id_, col_id, &b)) return false;
@@ -232,10 +235,10 @@ class RowSetMetadataUpdate {
                                                const std::vector<BlockId>& to_add);
 
   // Replace the CFile for the given column ID.
-  RowSetMetadataUpdate& ReplaceColumnId(int col_id, const BlockId& block_id);
+  RowSetMetadataUpdate& ReplaceColumnId(ColumnId col_id, const BlockId& block_id);
 
   // Remove the CFile for the given column ID.
-  RowSetMetadataUpdate& RemoveColumnId(int col_id);
+  RowSetMetadataUpdate& RemoveColumnId(ColumnId col_id);
 
   // Add a new UNDO delta block to the list of UNDO files.
   // We'll need to replace them instead when we start GCing.
@@ -244,7 +247,7 @@ class RowSetMetadataUpdate {
  private:
   friend class RowSetMetadata;
   RowSetMetadata::ColumnIdToBlockIdMap cols_to_replace_;
-  std::vector<int> col_ids_to_remove_;
+  std::vector<ColumnId> col_ids_to_remove_;
   std::vector<BlockId> new_redo_blocks_;
 
   struct ReplaceDeltaBlocks {

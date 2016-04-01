@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tserver/ts_tablet_manager.h"
 
@@ -20,8 +23,8 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/shared_mutex.hpp>
 #include <glog/logging.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/common/wire_protocol.h"
@@ -35,8 +38,8 @@
 #include "kudu/gutil/strings/util.h"
 #include "kudu/master/master.pb.h"
 #include "kudu/tablet/metadata.pb.h"
-#include "kudu/tablet/tablet.pb.h"
 #include "kudu/tablet/tablet.h"
+#include "kudu/tablet/tablet.pb.h"
 #include "kudu/tablet/tablet_bootstrap.h"
 #include "kudu/tablet/tablet_metadata.h"
 #include "kudu/tablet/tablet_peer.h"
@@ -124,15 +127,15 @@ using consensus::StartRemoteBootstrapRequestPB;
 using log::Log;
 using master::ReportedTabletPB;
 using master::TabletReportPB;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::Substitute;
+using tablet::Tablet;
 using tablet::TABLET_DATA_COPYING;
 using tablet::TABLET_DATA_DELETED;
 using tablet::TABLET_DATA_READY;
 using tablet::TABLET_DATA_TOMBSTONED;
-using tablet::Tablet;
 using tablet::TabletDataState;
 using tablet::TabletMetadata;
 using tablet::TabletPeer;
@@ -187,7 +190,7 @@ Status TSTabletManager::Init() {
   // First, load all of the tablet metadata. We do this before we start
   // submitting the actual OpenTablet() tasks so that we don't have to compete
   // for disk resources, etc, with bootstrap processes and running tablets.
-  BOOST_FOREACH(const string& tablet_id, tablet_ids) {
+  for (const string& tablet_id : tablet_ids) {
     scoped_refptr<TabletMetadata> meta;
     RETURN_NOT_OK_PREPEND(OpenTabletMeta(tablet_id, &meta),
                           "Failed to open tablet metadata for tablet: " + tablet_id);
@@ -199,7 +202,7 @@ Status TSTabletManager::Init() {
   }
 
   // Now submit the "Open" task for each.
-  BOOST_FOREACH(const scoped_refptr<TabletMetadata>& meta, metas) {
+  for (const scoped_refptr<TabletMetadata>& meta : metas) {
     scoped_refptr<TransitionInProgressDeleter> deleter;
     {
       boost::lock_guard<rw_spinlock> lock(lock_);
@@ -227,7 +230,7 @@ Status TSTabletManager::WaitForAllBootstrapsToFinish() {
   Status s = Status::OK();
 
   boost::shared_lock<rw_spinlock> shared_lock(lock_);
-  BOOST_FOREACH(const TabletMap::value_type& entry, tablet_map_) {
+  for (const TabletMap::value_type& entry : tablet_map_) {
     if (entry.second->state() == tablet::FAILED) {
       if (s.ok()) {
         s = entry.second->error();
@@ -334,7 +337,9 @@ Status TSTabletManager::CheckLeaderTermNotLower(const string& tablet_id,
   return Status::OK();
 }
 
-Status TSTabletManager::StartRemoteBootstrap(const StartRemoteBootstrapRequestPB& req) {
+Status TSTabletManager::StartRemoteBootstrap(
+    const StartRemoteBootstrapRequestPB& req,
+    boost::optional<TabletServerErrorPB::Code>* error_code) {
   const string& tablet_id = req.tablet_id();
   const string& bootstrap_peer_uuid = req.bootstrap_peer_uuid();
   HostPort bootstrap_peer_addr;
@@ -353,8 +358,12 @@ Status TSTabletManager::StartRemoteBootstrap(const StartRemoteBootstrapRequestPB
       meta = old_tablet_peer->tablet_metadata();
       replacing_tablet = true;
     }
-    RETURN_NOT_OK(StartTabletStateTransitionUnlocked(tablet_id, "remote bootstrapping tablet",
-                                                     &deleter));
+    Status ret = StartTabletStateTransitionUnlocked(tablet_id, "remote bootstrapping tablet",
+                                                    &deleter);
+    if (!ret.ok()) {
+      *error_code = TabletServerErrorPB::ALREADY_INPROGRESS;
+      return ret;
+    }
   }
 
   if (replacing_tablet) {
@@ -494,12 +503,17 @@ Status TSTabletManager::DeleteTablet(
     }
   }
 
+  // If the tablet is already deleted, the CAS check isn't possible because
+  // consensus and therefore the log is not available.
+  TabletDataState data_state = tablet_peer->tablet_metadata()->tablet_data_state();
+  bool tablet_deleted = (data_state == TABLET_DATA_DELETED || data_state == TABLET_DATA_TOMBSTONED);
+
   // They specified an "atomic" delete. Check the committed config's opid_index.
   // TODO: There's actually a race here between the check and shutdown, but
   // it's tricky to fix. We could try checking again after the shutdown and
   // restarting the tablet if the local replica committed a higher config
   // change op during that time, or potentially something else more invasive.
-  if (cas_config_opid_index_less_or_equal) {
+  if (cas_config_opid_index_less_or_equal && !tablet_deleted) {
     scoped_refptr<consensus::Consensus> consensus = tablet_peer->shared_consensus();
     if (!consensus) {
       *error_code = TabletServerErrorPB::TABLET_NOT_RUNNING;
@@ -529,14 +543,18 @@ Status TSTabletManager::DeleteTablet(
     s = s.CloneAndPrepend(Substitute("Unable to delete on-disk data from tablet $0",
                                      tablet_id));
     LOG(WARNING) << s.ToString();
+    tablet_peer->SetFailed(s);
     return s;
   }
+
+  tablet_peer->status_listener()->StatusMessage("Deleted tablet blocks from disk");
 
   // We only remove DELETED tablets from the tablet map.
   if (delete_type == TABLET_DATA_DELETED) {
     boost::lock_guard<rw_spinlock> lock(lock_);
     RETURN_NOT_OK(CheckRunningUnlocked(error_code));
     CHECK_EQ(1, tablet_map_.erase(tablet_id)) << tablet_id;
+    InsertOrDie(&perm_deleted_tablet_ids_, tablet_id);
   }
 
   return Status::OK();
@@ -561,6 +579,22 @@ Status TSTabletManager::StartTabletStateTransitionUnlocked(
     const string& reason,
     scoped_refptr<TransitionInProgressDeleter>* deleter) {
   DCHECK(lock_.is_write_locked());
+  if (ContainsKey(perm_deleted_tablet_ids_, tablet_id)) {
+    // When a table is deleted, the master sends a DeleteTablet() RPC to every
+    // replica of every tablet with the TABLET_DATA_DELETED parameter, which
+    // indicates a "permanent" tablet deletion. If a follower services
+    // DeleteTablet() before the leader does, it's possible for the leader to
+    // react to the missing replica by asking the follower to remote bootstrap
+    // itself.
+    //
+    // If the tablet was permanently deleted, we should not allow it to
+    // transition back to "liveness" because that can result in flapping back
+    // and forth between deletion and remote bootstrapping.
+    return Status::IllegalState(
+        Substitute("Tablet $0 was permanently deleted. Cannot transition from state $1.",
+                   tablet_id, TabletDataState_Name(TABLET_DATA_DELETED)));
+  }
+
   if (!InsertIfNotPresent(&transition_in_progress_, tablet_id, reason)) {
     return Status::IllegalState(
         Substitute("State transition of tablet $0 already in progress: $1",
@@ -604,6 +638,7 @@ void TSTabletManager::OpenTablet(const scoped_refptr<TabletMetadata>& meta,
   LOG_TIMING_PREFIX(INFO, LogPrefix(tablet_id), "bootstrapping tablet") {
     // TODO: handle crash mid-creation of tablet? do we ever end up with a
     // partially created tablet here?
+    tablet_peer->SetBootstrapping();
     s = BootstrapTablet(meta,
                         scoped_refptr<server::Clock>(server_->clock()),
                         server_->mem_tracker(),
@@ -692,7 +727,7 @@ void TSTabletManager::Shutdown() {
   vector<scoped_refptr<TabletPeer> > peers_to_shutdown;
   GetTabletPeers(&peers_to_shutdown);
 
-  BOOST_FOREACH(const scoped_refptr<TabletPeer>& peer, peers_to_shutdown) {
+  for (const scoped_refptr<TabletPeer>& peer : peers_to_shutdown) {
     peer->Shutdown();
   }
 
@@ -771,13 +806,26 @@ void TSTabletManager::MarkTabletDirty(const std::string& tablet_id, const std::s
 }
 
 int TSTabletManager::GetNumDirtyTabletsForTests() const {
-  boost::lock_guard<rw_spinlock> lock(lock_);
+  boost::shared_lock<rw_spinlock> lock(lock_);
   return dirty_tablets_.size();
+}
+
+int TSTabletManager::GetNumLiveTablets() const {
+  int count = 0;
+  boost::shared_lock<rw_spinlock> lock(lock_);
+  for (const auto& entry : tablet_map_) {
+    tablet::TabletStatePB state = entry.second->state();
+    if (state == tablet::BOOTSTRAPPING ||
+        state == tablet::RUNNING) {
+      count++;
+    }
+  }
+  return count;
 }
 
 void TSTabletManager::MarkDirtyUnlocked(const std::string& tablet_id, const std::string& reason) {
   TabletReportState* state = FindOrNull(dirty_tablets_, tablet_id);
-  if (state != NULL) {
+  if (state != nullptr) {
     CHECK_GE(next_report_seq_, state->change_seq);
     state->change_seq = next_report_seq_;
   } else {
@@ -825,7 +873,7 @@ void TSTabletManager::GenerateIncrementalTabletReport(TabletReportPB* report) {
   report->Clear();
   report->set_sequence_number(next_report_seq_++);
   report->set_is_incremental(true);
-  BOOST_FOREACH(const DirtyMap::value_type& dirty_entry, dirty_tablets_) {
+  for (const DirtyMap::value_type& dirty_entry : dirty_tablets_) {
     const string& tablet_id = dirty_entry.first;
     scoped_refptr<tablet::TabletPeer>* tablet_peer = FindOrNull(tablet_map_, tablet_id);
     if (tablet_peer) {
@@ -843,7 +891,7 @@ void TSTabletManager::GenerateFullTabletReport(TabletReportPB* report) {
   report->Clear();
   report->set_is_incremental(false);
   report->set_sequence_number(next_report_seq_++);
-  BOOST_FOREACH(const TabletMap::value_type& entry, tablet_map_) {
+  for (const TabletMap::value_type& entry : tablet_map_) {
     CreateReportedTabletPB(entry.first, entry.second, report->add_updated_tablets());
   }
   dirty_tablets_.clear();
@@ -857,7 +905,7 @@ void TSTabletManager::MarkTabletReportAcknowledged(const TabletReportPB& report)
 
   // Clear the "dirty" state for any tablets which have not changed since
   // this report.
-  DirtyMap::iterator it = dirty_tablets_.begin();
+  auto it = dirty_tablets_.begin();
   while (it != dirty_tablets_.end()) {
     const TabletReportState& state = it->second;
     if (state.change_seq <= acked_seq) {
@@ -960,13 +1008,9 @@ void TSTabletManager::LogAndTombstone(const scoped_refptr<TabletMetadata>& meta,
   }
 }
 
-TransitionInProgressDeleter::TransitionInProgressDeleter(TransitionInProgressMap* map,
-                                                         rw_spinlock* lock,
-                                                         const string& entry)
-    : in_progress_(map),
-      lock_(lock),
-      entry_(entry) {
-}
+TransitionInProgressDeleter::TransitionInProgressDeleter(
+    TransitionInProgressMap* map, rw_spinlock* lock, string entry)
+    : in_progress_(map), lock_(lock), entry_(std::move(entry)) {}
 
 TransitionInProgressDeleter::~TransitionInProgressDeleter() {
   boost::lock_guard<rw_spinlock> lock(*lock_);

@@ -1,26 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/consensus/consensus_queue.h"
 
 #include <algorithm>
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <gflags/gflags.h>
 #include <iostream>
 #include <string>
-#include <tr1/memory>
 #include <utility>
 
 #include "kudu/common/wire_protocol.h"
@@ -69,8 +69,6 @@ namespace consensus {
 using log::AsyncLogReader;
 using log::Log;
 using rpc::Messenger;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
 using strings::Substitute;
 
 METRIC_DEFINE_gauge_int64(tablet, majority_done_ops, "Leader Operations Acked by Majority",
@@ -151,7 +149,7 @@ void PeerMessageQueue::SetLeaderMode(const OpId& committed_index,
   // Reset last communication time with all peers to reset the clock on the
   // failure timeout.
   MonoTime now(MonoTime::Now(MonoTime::FINE));
-  BOOST_FOREACH(const PeersMap::value_type& entry, peers_map_) {
+  for (const PeersMap::value_type& entry : peers_map_) {
     entry.second->last_successful_communication_time = now;
   }
 }
@@ -196,7 +194,7 @@ void PeerMessageQueue::TrackPeerUnlocked(const string& uuid) {
 void PeerMessageQueue::UntrackPeer(const string& uuid) {
   boost::lock_guard<simple_spinlock> lock(queue_lock_);
   TrackedPeer* peer = EraseKeyReturnValuePtr(&peers_map_, uuid);
-  if (peer != NULL) {
+  if (peer != nullptr) {
     delete peer;
   }
 }
@@ -204,10 +202,10 @@ void PeerMessageQueue::UntrackPeer(const string& uuid) {
 void PeerMessageQueue::CheckPeersInActiveConfigIfLeaderUnlocked() const {
   if (queue_state_.mode != LEADER) return;
   unordered_set<string> config_peer_uuids;
-  BOOST_FOREACH(const RaftPeerPB& peer_pb, queue_state_.active_config->peers()) {
+  for (const RaftPeerPB& peer_pb : queue_state_.active_config->peers()) {
     InsertOrDie(&config_peer_uuids, peer_pb.permanent_uuid());
   }
-  BOOST_FOREACH(const PeersMap::value_type& entry, peers_map_) {
+  for (const PeersMap::value_type& entry : peers_map_) {
     if (!ContainsKey(config_peer_uuids, entry.first)) {
       LOG_WITH_PREFIX_UNLOCKED(FATAL) << Substitute("Peer $0 is not in the active config. "
                                                     "Queue state: $1",
@@ -241,7 +239,7 @@ void PeerMessageQueue::LocalPeerAppendFinished(const OpId& id,
 }
 
 Status PeerMessageQueue::AppendOperation(const ReplicateRefPtr& msg) {
-  return AppendOperations(boost::assign::list_of(msg), Bind(DoNothingStatusCB));
+  return AppendOperations({ msg }, Bind(DoNothingStatusCB));
 }
 
 Status PeerMessageQueue::AppendOperations(const vector<ReplicateRefPtr>& msgs,
@@ -277,7 +275,7 @@ Status PeerMessageQueue::RequestForPeer(const string& uuid,
                                         ConsensusRequestPB* request,
                                         vector<ReplicateRefPtr>* msg_refs,
                                         bool* needs_remote_bootstrap) {
-  TrackedPeer* peer = NULL;
+  TrackedPeer* peer = nullptr;
   OpId preceding_id;
   {
     lock_guard<simple_spinlock> lock(&queue_lock_);
@@ -285,12 +283,12 @@ Status PeerMessageQueue::RequestForPeer(const string& uuid,
     DCHECK_NE(uuid, local_peer_pb_.permanent_uuid());
 
     peer = FindPtrOrNull(peers_map_, uuid);
-    if (PREDICT_FALSE(peer == NULL || queue_state_.mode == NON_LEADER)) {
+    if (PREDICT_FALSE(peer == nullptr || queue_state_.mode == NON_LEADER)) {
       return Status::NotFound("Peer not tracked or queue not in leader mode.");
     }
 
     // Clear the requests without deleting the entries, as they may be in use by other peers.
-    request->mutable_ops()->ExtractSubrange(0, request->ops_size(), NULL);
+    request->mutable_ops()->ExtractSubrange(0, request->ops_size(), nullptr);
 
     // This is initialized to the queue's last appended op but gets set to the id of the
     // log entry preceding the first one in 'messages' if messages are found for the peer.
@@ -315,7 +313,7 @@ Status PeerMessageQueue::RequestForPeer(const string& uuid,
   }
 
   if (PREDICT_FALSE(peer->needs_remote_bootstrap)) {
-    LOG_WITH_PREFIX_UNLOCKED(INFO) << "Peer needs remote bootstrap: " << peer->ToString();
+    VLOG_WITH_PREFIX_UNLOCKED(1) << "Peer needs remote bootstrap: " << peer->ToString();
     *needs_remote_bootstrap = true;
     return Status::OK();
   }
@@ -363,7 +361,7 @@ Status PeerMessageQueue::RequestForPeer(const string& uuid,
     // "all replicated" point. At some point we may want to allow partially loading
     // (and not pinning) earlier messages. At that point we'll need to do something
     // smarter here, like copy or ref-count.
-    BOOST_FOREACH(const ReplicateRefPtr& msg, messages) {
+    for (const ReplicateRefPtr& msg : messages) {
       request->mutable_ops()->AddAllocated(msg->get());
     }
     msg_refs->swap(messages);
@@ -390,13 +388,13 @@ Status PeerMessageQueue::RequestForPeer(const string& uuid,
 
 Status PeerMessageQueue::GetRemoteBootstrapRequestForPeer(const string& uuid,
                                                           StartRemoteBootstrapRequestPB* req) {
-  TrackedPeer* peer = NULL;
+  TrackedPeer* peer = nullptr;
   {
     lock_guard<simple_spinlock> lock(&queue_lock_);
     DCHECK_EQ(queue_state_.state, kQueueOpen);
     DCHECK_NE(uuid, local_peer_pb_.permanent_uuid());
     peer = FindPtrOrNull(peers_map_, uuid);
-    if (PREDICT_FALSE(peer == NULL || queue_state_.mode == NON_LEADER)) {
+    if (PREDICT_FALSE(peer == nullptr || queue_state_.mode == NON_LEADER)) {
       return Status::NotFound("Peer not tracked or queue not in leader mode.");
     }
   }
@@ -436,7 +434,7 @@ void PeerMessageQueue::AdvanceQueueWatermark(const char* type,
   // - Find the vector.size() - 'num_peers_required' position, this
   //   will be the new 'watermark'.
   vector<const OpId*> watermarks;
-  BOOST_FOREACH(const PeersMap::value_type& peer, peers_map_) {
+  for (const PeersMap::value_type& peer : peers_map_) {
     if (peer.second->is_last_exchange_successful) {
       watermarks.push_back(&peer.second->last_received);
     }
@@ -457,11 +455,11 @@ void PeerMessageQueue::AdvanceQueueWatermark(const char* type,
       << "from " << old_watermark << " to " << new_watermark;
   if (VLOG_IS_ON(3)) {
     VLOG_WITH_PREFIX_UNLOCKED(3) << "Peers: ";
-    BOOST_FOREACH(const PeersMap::value_type& peer, peers_map_) {
+    for (const PeersMap::value_type& peer : peers_map_) {
       VLOG_WITH_PREFIX_UNLOCKED(3) << "Peer: " << peer.second->ToString();
     }
     VLOG_WITH_PREFIX_UNLOCKED(3) << "Sorted watermarks:";
-    BOOST_FOREACH(const OpId* watermark, watermarks) {
+    for (const OpId* watermark : watermarks) {
       VLOG_WITH_PREFIX_UNLOCKED(3) << "Watermark: " << watermark->ShortDebugString();
     }
   }
@@ -487,7 +485,7 @@ void PeerMessageQueue::ResponseFromPeer(const std::string& peer_uuid,
     DCHECK_NE(kQueueConstructed, queue_state_.state);
 
     TrackedPeer* peer = FindPtrOrNull(peers_map_, peer_uuid);
-    if (PREDICT_FALSE(queue_state_.state != kQueueOpen || peer == NULL)) {
+    if (PREDICT_FALSE(queue_state_.state != kQueueOpen || peer == nullptr)) {
       LOG_WITH_PREFIX_UNLOCKED(WARNING) << "Queue is closed or peer was untracked, disregarding "
           "peer response. Response: " << response.ShortDebugString();
       *more_pending = false;
@@ -501,7 +499,7 @@ void PeerMessageQueue::ResponseFromPeer(const std::string& peer_uuid,
           << response.ShortDebugString();
 
       peer->needs_remote_bootstrap = true;
-      LOG_WITH_PREFIX_UNLOCKED(INFO) << "Marked peer as needing remote bootstrap: "
+      VLOG_WITH_PREFIX_UNLOCKED(1) << "Marked peer as needing remote bootstrap: "
                                      << peer->ToString();
       *more_pending = true;
       return;
@@ -687,7 +685,7 @@ void PeerMessageQueue::DumpToStrings(vector<string>* lines) const {
 
 void PeerMessageQueue::DumpToStringsUnlocked(vector<string>* lines) const {
   lines->push_back("Watermarks:");
-  BOOST_FOREACH(const PeersMap::value_type& entry, peers_map_) {
+  for (const PeersMap::value_type& entry : peers_map_) {
     lines->push_back(
         Substitute("Peer: $0 Watermark: $1", entry.first, entry.second->ToString()));
   }
@@ -702,7 +700,7 @@ void PeerMessageQueue::DumpToHtml(std::ostream& out) const {
   out << "<h3>Watermarks</h3>" << endl;
   out << "<table>" << endl;;
   out << "  <tr><th>Peer</th><th>Watermark</th></tr>" << endl;
-  BOOST_FOREACH(const PeersMap::value_type& entry, peers_map_) {
+  for (const PeersMap::value_type& entry : peers_map_) {
     out << Substitute("  <tr><td>$0</td><td>$1</td></tr>",
                       EscapeForHtmlToString(entry.first),
                       EscapeForHtmlToString(entry.second->ToString())) << endl;
@@ -743,8 +741,7 @@ string PeerMessageQueue::ToStringUnlocked() const {
 
 void PeerMessageQueue::RegisterObserver(PeerMessageQueueObserver* observer) {
   boost::lock_guard<simple_spinlock> lock(queue_lock_);
-  std::vector<PeerMessageQueueObserver*>::iterator iter =
-        std::find(observers_.begin(), observers_.end(), observer);
+  auto iter = std::find(observers_.begin(), observers_.end(), observer);
   if (iter == observers_.end()) {
     observers_.push_back(observer);
   }
@@ -752,8 +749,7 @@ void PeerMessageQueue::RegisterObserver(PeerMessageQueueObserver* observer) {
 
 Status PeerMessageQueue::UnRegisterObserver(PeerMessageQueueObserver* observer) {
   boost::lock_guard<simple_spinlock> lock(queue_lock_);
-  std::vector<PeerMessageQueueObserver*>::iterator iter =
-      std::find(observers_.begin(), observers_.end(), observer);
+  auto iter = std::find(observers_.begin(), observers_.end(), observer);
   if (iter == observers_.end()) {
     return Status::NotFound("Can't find observer.");
   }
@@ -801,7 +797,7 @@ void PeerMessageQueue::NotifyObserversOfMajorityReplOpChangeTask(
   // TODO move commit index advancement here so that the queue is not dependent on
   // consensus at all, but that requires a bit more work.
   OpId new_committed_index;
-  BOOST_FOREACH(PeerMessageQueueObserver* observer, copy) {
+  for (PeerMessageQueueObserver* observer : copy) {
     observer->UpdateMajorityReplicated(new_majority_replicated_op, &new_committed_index);
   }
 
@@ -822,7 +818,7 @@ void PeerMessageQueue::NotifyObserversOfTermChangeTask(int64_t term) {
     copy = observers_;
   }
   OpId new_committed_index;
-  BOOST_FOREACH(PeerMessageQueueObserver* observer, copy) {
+  for (PeerMessageQueueObserver* observer : copy) {
     observer->NotifyTermChange(term);
   }
 }
@@ -846,7 +842,7 @@ void PeerMessageQueue::NotifyObserversOfFailedFollowerTask(const string& uuid,
     observers_copy = observers_;
   }
   OpId new_committed_index;
-  BOOST_FOREACH(PeerMessageQueueObserver* observer, observers_copy) {
+  for (PeerMessageQueueObserver* observer : observers_copy) {
     observer->NotifyFailedFollower(uuid, term, reason);
   }
 }

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import org.kududb.ColumnSchema;
@@ -56,49 +59,44 @@ public class TestKuduTable extends BaseKuduTest {
     createTable(tableName, basicSchema, null);
 
     // Add a col.
-    AlterTableBuilder atb = new AlterTableBuilder();
-    atb.addColumn("testaddint", Type.INT32, 4);
-    submitAlterAndCheck(atb, tableName);
+    AlterTableOptions ato = new AlterTableOptions().addColumn("testaddint", Type.INT32, 4);
+    submitAlterAndCheck(ato, tableName);
 
     // Rename that col.
-    atb = new AlterTableBuilder();
-    atb.renameColumn("testaddint", "newtestaddint");
-    submitAlterAndCheck(atb, tableName);
+    ato = new AlterTableOptions().renameColumn("testaddint", "newtestaddint");
+    submitAlterAndCheck(ato, tableName);
 
     // Delete it.
-    atb = new AlterTableBuilder();
-    atb.dropColumn("newtestaddint");
-    submitAlterAndCheck(atb, tableName);
+    ato = new AlterTableOptions().dropColumn("newtestaddint");
+    submitAlterAndCheck(ato, tableName);
 
     String newTableName = tableName +"new";
 
     // Rename our table.
-    atb = new AlterTableBuilder();
-    atb.renameTable(newTableName);
-    submitAlterAndCheck(atb, tableName, newTableName);
+    ato = new AlterTableOptions().renameTable(newTableName);
+    submitAlterAndCheck(ato, tableName, newTableName);
 
     // Rename it back.
-    atb = new AlterTableBuilder();
-    atb.renameTable(tableName);
-    submitAlterAndCheck(atb, newTableName, tableName);
+    ato = new AlterTableOptions().renameTable(tableName);
+    submitAlterAndCheck(ato, newTableName, tableName);
 
     // Try adding two columns, where one is nullable.
-    atb = new AlterTableBuilder();
-    atb.addColumn("testaddmulticolnotnull", Type.INT32, 4);
-    atb.addNullableColumn("testaddmulticolnull", Type.STRING);
-    submitAlterAndCheck(atb, tableName);
+    ato = new AlterTableOptions()
+        .addColumn("testaddmulticolnotnull", Type.INT32, 4)
+        .addNullableColumn("testaddmulticolnull", Type.STRING);
+    submitAlterAndCheck(ato, tableName);
   }
 
   /**
    * Helper method to submit an Alter and wait for it to happen, using the default table name to
    * check.
    */
-  private void submitAlterAndCheck(AlterTableBuilder atb, String tableToAlter)
+  private void submitAlterAndCheck(AlterTableOptions ato, String tableToAlter)
       throws Exception {
-    submitAlterAndCheck(atb, tableToAlter, tableToAlter);
+    submitAlterAndCheck(ato, tableToAlter, tableToAlter);
   }
 
-  private void submitAlterAndCheck(AlterTableBuilder atb,
+  private void submitAlterAndCheck(AlterTableOptions ato,
                                          String tableToAlter, String tableToCheck) throws
       Exception {
     if (masterHostPorts.size() > 1) {
@@ -106,7 +104,7 @@ public class TestKuduTable extends BaseKuduTest {
           "-DnumMasters=1 on the command line to start a single-master cluster to run this test.");
       return;
     }
-    AlterTableResponse alterResponse = syncClient.alterTable(tableToAlter, atb);
+    AlterTableResponse alterResponse = syncClient.alterTable(tableToAlter, ato);
     boolean done  = syncClient.isAlterTableDone(tableToCheck);
     assertTrue(done);
   }
@@ -128,7 +126,7 @@ public class TestKuduTable extends BaseKuduTest {
     }
     // Test with defaults
     String tableWithDefault = BASE_TABLE_NAME + "WithDefault" + System.currentTimeMillis();
-    CreateTableBuilder builder = new CreateTableBuilder();
+    CreateTableOptions builder = new CreateTableOptions();
     List<ColumnSchema> columns = new ArrayList<ColumnSchema>(schema.getColumnCount());
     int defaultInt = 30;
     String defaultString = "data";
@@ -174,28 +172,35 @@ public class TestKuduTable extends BaseKuduTest {
 
     List<LocatedTablet>tablets = table.getTabletsLocations(null, getKeyInBytes(9), DEFAULT_SLEEP);
     assertEquals(10, tablets.size());
+    assertEquals(10, table.asyncGetTabletsLocations(null, getKeyInBytes(9), DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(getKeyInBytes(0), getKeyInBytes(9), DEFAULT_SLEEP);
     assertEquals(10, tablets.size());
+    assertEquals(10, table.asyncGetTabletsLocations(getKeyInBytes(0), getKeyInBytes(9), DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(getKeyInBytes(5), getKeyInBytes(9), DEFAULT_SLEEP);
     assertEquals(5, tablets.size());
+    assertEquals(5, table.asyncGetTabletsLocations(getKeyInBytes(5), getKeyInBytes(9), DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(getKeyInBytes(5), getKeyInBytes(14), DEFAULT_SLEEP);
     assertEquals(10, tablets.size());
+    assertEquals(10, table.asyncGetTabletsLocations(getKeyInBytes(5), getKeyInBytes(14), DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(getKeyInBytes(5), getKeyInBytes(31), DEFAULT_SLEEP);
     assertEquals(26, tablets.size());
+    assertEquals(26, table.asyncGetTabletsLocations(getKeyInBytes(5), getKeyInBytes(31), DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(getKeyInBytes(5), null, DEFAULT_SLEEP);
     assertEquals(26, tablets.size());
+    assertEquals(26, table.asyncGetTabletsLocations(getKeyInBytes(5), null, DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(null, getKeyInBytes(10000), DEFAULT_SLEEP);
     assertEquals(31, tablets.size());
+    assertEquals(31, table.asyncGetTabletsLocations(null, getKeyInBytes(10000), DEFAULT_SLEEP).join().size());
 
     tablets = table.getTabletsLocations(getKeyInBytes(20), getKeyInBytes(10000), DEFAULT_SLEEP);
     assertEquals(11, tablets.size());
-
+    assertEquals(11, table.asyncGetTabletsLocations(getKeyInBytes(20), getKeyInBytes(10000), DEFAULT_SLEEP).join().size());
 
     // Test listing tables.
     assertEquals(0, client.getTablesList(table1).join(DEFAULT_SLEEP).getTablesList().size());
@@ -217,11 +222,11 @@ public class TestKuduTable extends BaseKuduTest {
 
   public KuduTable createTableWithSplitsAndTest(int splitsCount) throws Exception {
     String tableName = BASE_TABLE_NAME + System.currentTimeMillis();
-    CreateTableBuilder builder = new CreateTableBuilder();
+    CreateTableOptions builder = new CreateTableOptions();
 
     if (splitsCount != 0) {
-      PartialRow row = schema.newPartialRow();
       for (int i = 1; i <= splitsCount; i++) {
+        PartialRow row = schema.newPartialRow();
         row.addInt(0, i);
         builder.addSplitRow(row);
       }
@@ -234,8 +239,9 @@ public class TestKuduTable extends BaseKuduTest {
 
     List<LocatedTablet> tablets = table.getTabletsLocations(DEFAULT_SLEEP);
     assertEquals(splitsCount + 1, tablets.size());
+    assertEquals(splitsCount + 1, table.asyncGetTabletsLocations(DEFAULT_SLEEP).join().size());
     for (LocatedTablet tablet : tablets) {
-      assertEquals(1, tablet.getReplicas().size());
+      assertEquals(3, tablet.getReplicas().size());
     }
     return table;
   }

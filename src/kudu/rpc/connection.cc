@@ -1,30 +1,34 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/connection.h"
 
-#include <boost/foreach.hpp>
+#include <algorithm>
 #include <boost/intrusive/list.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
-#include <stdint.h>
-
 #include <iostream>
+#include <set>
+#include <stdint.h>
 #include <string>
 #include <vector>
 
 #include "kudu/gutil/map-util.h"
+#include "kudu/gutil/strings/human_readable.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/rpc/auth_store.h"
 #include "kudu/rpc/rpc_introspection.pb.h"
@@ -41,7 +45,10 @@
 #include "kudu/util/status.h"
 #include "kudu/util/trace.h"
 
-using std::tr1::shared_ptr;
+using std::function;
+using std::includes;
+using std::set;
+using std::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
@@ -51,19 +58,18 @@ namespace rpc {
 ///
 /// Connection
 ///
-Connection::Connection(ReactorThread *reactor_thread, const Sockaddr &remote,
+Connection::Connection(ReactorThread *reactor_thread, Sockaddr remote,
                        int socket, Direction direction)
-  : reactor_thread_(reactor_thread),
-    socket_(socket),
-    remote_(remote),
-    direction_(direction),
-    last_activity_time_(MonoTime::Now(MonoTime::FINE)),
-    is_epoll_registered_(false),
-    next_call_id_(1),
-    sasl_client_(kSaslAppName, socket),
-    sasl_server_(kSaslAppName, socket),
-    negotiation_complete_(false) {
-}
+    : reactor_thread_(reactor_thread),
+      socket_(socket),
+      remote_(std::move(remote)),
+      direction_(direction),
+      last_activity_time_(MonoTime::Now(MonoTime::FINE)),
+      is_epoll_registered_(false),
+      next_call_id_(1),
+      sasl_client_(kSaslAppName, socket),
+      sasl_server_(kSaslAppName, socket),
+      negotiation_complete_(false) {}
 
 Status Connection::SetNonBlocking(bool enabled) {
   return socket_.SetNonBlocking(enabled);
@@ -128,8 +134,17 @@ void Connection::Shutdown(const Status &status) {
   DCHECK(reactor_thread_->IsCurrentThread());
   shutdown_status_ = status;
 
+  if (inbound_ && inbound_->TransferStarted()) {
+    double secs_since_active = reactor_thread_->cur_time()
+        .GetDeltaSince(last_activity_time_).ToSeconds();
+    LOG(WARNING) << "Shutting down connection " << ToString() << " with pending inbound data ("
+                 << inbound_->StatusAsString() << ", last active "
+                 << HumanReadableElapsedTime::ToShortString(secs_since_active)
+                 << " ago, status=" << status.ToString() << ")";
+  }
+
   // Clear any calls which have been sent and were awaiting a response.
-  BOOST_FOREACH(const car_map_t::value_type &v, awaiting_response_) {
+  for (const car_map_t::value_type &v : awaiting_response_) {
     CallAwaitingResponse *c = v.second;
     if (c->call) {
       c->call->SetFailed(status);
@@ -203,15 +218,13 @@ void Connection::HandleOutboundCallTimeout(CallAwaitingResponse *car) {
   // already timed out.
 }
 
-
 // Callbacks after sending a call on the wire.
 // This notifies the OutboundCall object to change its state to SENT once it
 // has been fully transmitted.
 struct CallTransferCallbacks : public TransferCallbacks {
  public:
-  explicit CallTransferCallbacks(const shared_ptr<OutboundCall> &call)
-    : call_(call) {
-  }
+  explicit CallTransferCallbacks(shared_ptr<OutboundCall> call)
+      : call_(std::move(call)) {}
 
   virtual void NotifyTransferFinished() OVERRIDE {
     // TODO: would be better to cancel the transfer while it is still on the queue if we
@@ -281,7 +294,7 @@ void Connection::QueueOutboundCall(const shared_ptr<OutboundCall> &call) {
   TransferCallbacks *cb = new CallTransferCallbacks(call);
   awaiting_response_[call_id] = car.release();
   QueueOutbound(gscoped_ptr<OutboundTransfer>(
-                  new OutboundTransfer(slices_tmp_, cb)));
+        new OutboundTransfer(call_id, slices_tmp_, call->RequiredRpcFeatures(), cb)));
 }
 
 // Callbacks for sending an RPC call response from the server.
@@ -291,7 +304,7 @@ struct ResponseTransferCallbacks : public TransferCallbacks {
  public:
   ResponseTransferCallbacks(gscoped_ptr<InboundCall> call,
                             Connection *conn) :
-    call_(call.Pass()),
+    call_(std::move(call)),
     conn_(conn)
   {}
 
@@ -322,12 +335,12 @@ class QueueTransferTask : public ReactorTask {
  public:
   QueueTransferTask(gscoped_ptr<OutboundTransfer> transfer,
                     Connection *conn)
-    : transfer_(transfer.Pass()),
+    : transfer_(std::move(transfer)),
       conn_(conn)
   {}
 
   virtual void Run(ReactorThread *thr) OVERRIDE {
-    conn_->QueueOutbound(transfer_.Pass());
+    conn_->QueueOutbound(std::move(transfer_));
     delete this;
   }
 
@@ -355,11 +368,13 @@ void Connection::QueueResponseForCall(gscoped_ptr<InboundCall> call) {
   std::vector<Slice> slices;
   call->SerializeResponseTo(&slices);
 
-  TransferCallbacks *cb = new ResponseTransferCallbacks(call.Pass(), this);
+  TransferCallbacks *cb = new ResponseTransferCallbacks(std::move(call), this);
   // After the response is sent, can delete the InboundCall object.
-  gscoped_ptr<OutboundTransfer> t(new OutboundTransfer(slices, cb));
+  // We set a dummy call ID and required feature set, since these are not needed
+  // when sending responses.
+  gscoped_ptr<OutboundTransfer> t(new OutboundTransfer(-1, slices, {}, cb));
 
-  QueueTransferTask *task = new QueueTransferTask(t.Pass(), this);
+  QueueTransferTask *task = new QueueTransferTask(std::move(t), this);
   reactor_thread_->reactor()->ScheduleReactorTask(task);
 }
 
@@ -399,9 +414,9 @@ void Connection::ReadHandler(ev::io &watcher, int revents) {
     DVLOG(3) << ToString() << ": finished reading " << inbound_->data().size() << " bytes";
 
     if (direction_ == CLIENT) {
-      HandleCallResponse(inbound_.Pass());
+      HandleCallResponse(std::move(inbound_));
     } else if (direction_ == SERVER) {
-      HandleIncomingCall(inbound_.Pass());
+      HandleIncomingCall(std::move(inbound_));
     } else {
       LOG(FATAL) << "Invalid direction: " << direction_;
     }
@@ -421,7 +436,7 @@ void Connection::HandleIncomingCall(gscoped_ptr<InboundTransfer> transfer) {
   DCHECK(reactor_thread_->IsCurrentThread());
 
   gscoped_ptr<InboundCall> call(new InboundCall(this));
-  Status s = call->ParseFrom(transfer.Pass());
+  Status s = call->ParseFrom(std::move(transfer));
   if (!s.ok()) {
     LOG(WARNING) << ToString() << ": received bad data: " << s.ToString();
     // TODO: shutdown? probably, since any future stuff on this socket will be
@@ -438,17 +453,17 @@ void Connection::HandleIncomingCall(gscoped_ptr<InboundTransfer> transfer) {
     return;
   }
 
-  reactor_thread_->reactor()->messenger()->QueueInboundCall(call.Pass());
+  reactor_thread_->reactor()->messenger()->QueueInboundCall(std::move(call));
 }
 
 void Connection::HandleCallResponse(gscoped_ptr<InboundTransfer> transfer) {
   DCHECK(reactor_thread_->IsCurrentThread());
   gscoped_ptr<CallResponse> resp(new CallResponse);
-  CHECK_OK(resp->ParseFrom(transfer.Pass()));
+  CHECK_OK(resp->ParseFrom(std::move(transfer)));
 
   CallAwaitingResponse *car_ptr =
     EraseKeyReturnValuePtr(&awaiting_response_, resp->call_id());
-  if (PREDICT_FALSE(car_ptr == NULL)) {
+  if (PREDICT_FALSE(car_ptr == nullptr)) {
     LOG(WARNING) << ToString() << ": Got a response for call id " << resp->call_id() << " which "
                  << "was not pending! Ignoring.";
     return;
@@ -457,13 +472,13 @@ void Connection::HandleCallResponse(gscoped_ptr<InboundTransfer> transfer) {
   // The car->timeout_timer ev::timer will be stopped automatically by its destructor.
   scoped_car car(car_pool_.make_scoped_ptr(car_ptr));
 
-  if (PREDICT_FALSE(car->call.get() == NULL)) {
+  if (PREDICT_FALSE(car->call.get() == nullptr)) {
     // The call already failed due to a timeout.
     VLOG(1) << "Got response to call id " << resp->call_id() << " after client already timed out";
     return;
   }
 
-  car->call->SetResponse(resp.Pass());
+  car->call->SetResponse(std::move(resp));
 }
 
 void Connection::WriteHandler(ev::io &watcher, int revents) {
@@ -487,6 +502,26 @@ void Connection::WriteHandler(ev::io &watcher, int revents) {
   while (!outbound_transfers_.empty()) {
     transfer = &(outbound_transfers_.front());
 
+    if (!transfer->TransferStarted()) {
+      // If this is the start of the transfer, then check if the server has the
+      // required RPC flags. We have to wait until just before the transfer in
+      // order to ensure that the negotiation has taken place, so that the flags
+      // are available.
+      const set<RpcFeatureFlag>& required_features = transfer->required_features();
+      const set<RpcFeatureFlag>& server_features = sasl_client_.server_features();
+      if (!includes(server_features.begin(), server_features.end(),
+                    required_features.begin(), required_features.end())) {
+        outbound_transfers_.pop_front();
+        CallAwaitingResponse* car = FindOrDie(awaiting_response_, transfer->call_id());
+        Status s = Status::NotSupported("server does not support the required RPC features");
+        transfer->Abort(s);
+        car->call->SetFailed(s);
+        car->call.reset();
+        delete transfer;
+        continue;
+      }
+    }
+
     last_activity_time_ = reactor_thread_->cur_time();
     Status status = transfer->SendBuffer(socket_);
     if (PREDICT_FALSE(!status.ok())) {
@@ -504,7 +539,6 @@ void Connection::WriteHandler(ev::io &watcher, int revents) {
     delete transfer;
   }
 
-
   // If we were able to write all of our outbound transfers,
   // we don't have any more to write.
   write_io_.stop();
@@ -515,8 +549,8 @@ std::string Connection::ToString() const {
   // include anything in the output about the current state,
   // which might concurrently change from another thread.
   return strings::Substitute(
-    "$0 Connection to $1",
-    direction_ == SERVER ? "server" : "client",
+    "$0 $1",
+    direction_ == SERVER ? "server connection from" : "client connection to",
     remote_.ToString());
 }
 
@@ -533,7 +567,7 @@ Status Connection::InitSaslServer() {
   // Right now we just enable PLAIN with a "dummy" auth store, which allows everyone in.
   RETURN_NOT_OK(sasl_server().Init(kSaslProtoName));
   gscoped_ptr<AuthStore> auth_store(new DummyAuthStore());
-  RETURN_NOT_OK(sasl_server().EnablePlain(auth_store.Pass()));
+  RETURN_NOT_OK(sasl_server().EnablePlain(std::move(auth_store)));
   return Status::OK();
 }
 
@@ -565,8 +599,7 @@ class NegotiationCompletedTask : public ReactorTask {
 };
 
 void Connection::CompleteNegotiation(const Status& negotiation_status) {
-  NegotiationCompletedTask *task =
-      new NegotiationCompletedTask(this, negotiation_status);
+  auto task = new NegotiationCompletedTask(this, negotiation_status);
   reactor_thread_->reactor()->ScheduleReactorTask(task);
 }
 
@@ -589,14 +622,14 @@ Status Connection::DumpPB(const DumpRunningRpcsRequestPB& req,
   }
 
   if (direction_ == CLIENT) {
-    BOOST_FOREACH(const car_map_t::value_type& entry, awaiting_response_) {
+    for (const car_map_t::value_type& entry : awaiting_response_) {
       CallAwaitingResponse *c = entry.second;
       if (c->call) {
         c->call->DumpPB(req, resp->add_calls_in_flight());
       }
     }
   } else if (direction_ == SERVER) {
-    BOOST_FOREACH(const inbound_call_map_t::value_type& entry, calls_being_handled_) {
+    for (const inbound_call_map_t::value_type& entry : calls_being_handled_) {
       InboundCall* c = entry.second;
       c->DumpPB(req, resp->add_calls_in_flight());
     }

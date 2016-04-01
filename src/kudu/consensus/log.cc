@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log.h"
 
@@ -39,10 +42,10 @@
 #include "kudu/util/path_util.h"
 #include "kudu/util/pb_util.h"
 #include "kudu/util/random.h"
+#include "kudu/util/stopwatch.h"
 #include "kudu/util/thread.h"
 #include "kudu/util/threadpool.h"
 #include "kudu/util/trace.h"
-#include "kudu/util/stopwatch.h"
 
 // Log retention configuration.
 // -----------------------------
@@ -111,8 +114,8 @@ using consensus::CommitMsg;
 using consensus::OpId;
 using consensus::ReplicateRefPtr;
 using env_util::OpenFileForRandom;
+using std::shared_ptr;
 using strings::Substitute;
-using std::tr1::shared_ptr;
 
 // This class is responsible for managing the thread that appends to
 // the log file.
@@ -175,7 +178,7 @@ void Log::AppendThread::RunThread() {
     SCOPED_LATENCY_METRIC(log_->metrics_, group_commit_latency);
 
     bool is_all_commits = true;
-    BOOST_FOREACH(LogEntryBatch* entry_batch, entry_batches) {
+    for (LogEntryBatch* entry_batch : entry_batches) {
       entry_batch->WaitForReady();
       TRACE_EVENT_FLOW_END0("log", "Batch", entry_batch);
       Status s = log_->DoAppend(entry_batch);
@@ -203,7 +206,7 @@ void Log::AppendThread::RunThread() {
     if (PREDICT_FALSE(!s.ok())) {
       LOG(ERROR) << "Error syncing log" << s.ToString();
       DLOG(FATAL) << "Aborting: " << s.ToString();
-      BOOST_FOREACH(LogEntryBatch* entry_batch, entry_batches) {
+      for (LogEntryBatch* entry_batch : entry_batches) {
         if (!entry_batch->callback().is_null()) {
           entry_batch->callback().Run(s);
         }
@@ -212,7 +215,7 @@ void Log::AppendThread::RunThread() {
       TRACE_EVENT0("log", "Callbacks");
       VLOG(2) << "Synchronized " << entry_batches.size() << " entry batches";
       SCOPED_WATCH_STACK(100);
-      BOOST_FOREACH(LogEntryBatch* entry_batch, entry_batches) {
+      for (LogEntryBatch* entry_batch : entry_batches) {
         if (PREDICT_TRUE(!entry_batch->failed_to_append()
                          && !entry_batch->callback().is_null())) {
           entry_batch->callback().Run(Status::OK());
@@ -273,28 +276,24 @@ Status Log::Open(const LogOptions &options,
   return Status::OK();
 }
 
-Log::Log(const LogOptions &options,
-         FsManager *fs_manager,
-         const string& log_path,
-         const string& tablet_id,
-         const Schema& schema,
-         uint32_t schema_version,
+Log::Log(LogOptions options, FsManager* fs_manager, string log_path,
+         string tablet_id, const Schema& schema, uint32_t schema_version,
          const scoped_refptr<MetricEntity>& metric_entity)
-  : options_(options),
-    fs_manager_(fs_manager),
-    log_dir_(log_path),
-    tablet_id_(tablet_id),
-    schema_(schema),
-    schema_version_(schema_version),
-    active_segment_sequence_number_(0),
-    log_state_(kLogInitialized),
-    max_segment_size_(options_.segment_size_mb * 1024 * 1024),
-    entry_batch_queue_(FLAGS_group_commit_queue_size_bytes),
-    append_thread_(new AppendThread(this)),
-    force_sync_all_(options_.force_fsync_all),
-    sync_disabled_(false),
-    allocation_state_(kAllocationNotStarted),
-    metric_entity_(metric_entity) {
+    : options_(std::move(options)),
+      fs_manager_(fs_manager),
+      log_dir_(std::move(log_path)),
+      tablet_id_(std::move(tablet_id)),
+      schema_(schema),
+      schema_version_(schema_version),
+      active_segment_sequence_number_(0),
+      log_state_(kLogInitialized),
+      max_segment_size_(options_.segment_size_mb * 1024 * 1024),
+      entry_batch_queue_(FLAGS_group_commit_queue_size_bytes),
+      append_thread_(new AppendThread(this)),
+      force_sync_all_(options_.force_fsync_all),
+      sync_disabled_(false),
+      allocation_state_(kAllocationNotStarted),
+      metric_entity_(metric_entity) {
   CHECK_OK(ThreadPoolBuilder("log-alloc").set_max_threads(1).Build(&allocation_pool_));
   if (metric_entity_) {
     metrics_.reset(new LogMetrics(metric_entity_));
@@ -388,7 +387,7 @@ Status Log::Reserve(LogEntryTypePB type,
                     gscoped_ptr<LogEntryBatchPB> entry_batch,
                     LogEntryBatch** reserved_entry) {
   TRACE_EVENT0("log", "Log::Reserve");
-  DCHECK(reserved_entry != NULL);
+  DCHECK(reserved_entry != nullptr);
   {
     boost::shared_lock<rw_spinlock> read_lock(state_lock_.get_lock());
     CHECK_EQ(kLogWriting, log_state_);
@@ -397,13 +396,14 @@ Status Log::Reserve(LogEntryTypePB type,
   // In DEBUG builds, verify that all of the entries in the batch match the specified type.
   // In non-debug builds the foreach loop gets optimized out.
   #ifndef NDEBUG
-  BOOST_FOREACH(const LogEntryPB& entry, entry_batch->entry()) {
+  for (const LogEntryPB& entry : entry_batch->entry()) {
     DCHECK_EQ(entry.type(), type) << "Bad batch: " << entry_batch->DebugString();
   }
   #endif
 
   int num_ops = entry_batch->entry_size();
-  gscoped_ptr<LogEntryBatch> new_entry_batch(new LogEntryBatch(type, entry_batch.Pass(), num_ops));
+  gscoped_ptr<LogEntryBatch> new_entry_batch(new LogEntryBatch(
+      type, std::move(entry_batch), num_ops));
   new_entry_batch->MarkReserved();
 
   if (PREDICT_FALSE(!entry_batch_queue_.BlockingPut(new_entry_batch.get()))) {
@@ -441,7 +441,7 @@ Status Log::AsyncAppendReplicates(const vector<ReplicateRefPtr>& msgs,
   CreateBatchFromAllocatedOperations(msgs, &batch);
 
   LogEntryBatch* reserved_entry_batch;
-  RETURN_NOT_OK(Reserve(REPLICATE, batch.Pass(), &reserved_entry_batch));
+  RETURN_NOT_OK(Reserve(REPLICATE, std::move(batch), &reserved_entry_batch));
   // If we're able to reserve set the vector of replicate scoped ptrs in
   // the LogEntryBatch. This will make sure there's a reference for each
   // replicate while we're appending.
@@ -461,7 +461,7 @@ Status Log::AsyncAppendCommit(gscoped_ptr<consensus::CommitMsg> commit_msg,
   entry->set_allocated_commit(commit_msg.release());
 
   LogEntryBatch* reserved_entry_batch;
-  RETURN_NOT_OK(Reserve(COMMIT, batch.Pass(), &reserved_entry_batch));
+  RETURN_NOT_OK(Reserve(COMMIT, std::move(batch), &reserved_entry_batch));
 
   RETURN_NOT_OK(AsyncAppend(reserved_entry_batch, callback));
   return Status::OK();
@@ -550,7 +550,7 @@ Status Log::UpdateIndexForBatch(const LogEntryBatch& batch,
     return Status::OK();
   }
 
-  BOOST_FOREACH(const LogEntryPB& entry_pb, batch.entry_batch_pb_->entry()) {
+  for (const LogEntryPB& entry_pb : batch.entry_batch_pb_->entry()) {
     LogIndexEntry index_entry;
 
     index_entry.op_id = entry_pb.replicate().id();
@@ -571,7 +571,7 @@ void Log::UpdateFooterForBatch(LogEntryBatch* batch) {
   // immediately.
   if (batch->type_ == REPLICATE) {
     // Update the index bounds for the current segment.
-    BOOST_FOREACH(const LogEntryPB& entry_pb, batch->entry_batch_pb_->entry()) {
+    for (const LogEntryPB& entry_pb : batch->entry_batch_pb_->entry()) {
       int64_t index = entry_pb.replicate().id().index();
       if (!footer_builder_.has_min_replicate_index() ||
           index < footer_builder_.min_replicate_index()) {
@@ -671,7 +671,7 @@ Status Log::GetSegmentsToGCUnlocked(int64_t min_op_idx, SegmentSequence* segment
 Status Log::Append(LogEntryPB* phys_entry) {
   gscoped_ptr<LogEntryBatchPB> entry_batch_pb(new LogEntryBatchPB);
   entry_batch_pb->mutable_entry()->AddAllocated(phys_entry);
-  LogEntryBatch entry_batch(phys_entry->type(), entry_batch_pb.Pass(), 1);
+  LogEntryBatch entry_batch(phys_entry->type(), std::move(entry_batch_pb), 1);
   entry_batch.state_ = LogEntryBatch::kEntryReserved;
   Status s = entry_batch.Serialize();
   if (s.ok()) {
@@ -681,7 +681,7 @@ Status Log::Append(LogEntryPB* phys_entry) {
       s = Sync();
     }
   }
-  entry_batch.entry_batch_pb_->mutable_entry()->ExtractSubrange(0, 1, NULL);
+  entry_batch.entry_batch_pb_->mutable_entry()->ExtractSubrange(0, 1, nullptr);
   return s;
 }
 
@@ -691,7 +691,7 @@ Status Log::WaitUntilAllFlushed() {
   gscoped_ptr<LogEntryBatchPB> entry_batch(new LogEntryBatchPB);
   entry_batch->add_entry()->set_type(log::FLUSH_MARKER);
   LogEntryBatch* reserved_entry_batch;
-  RETURN_NOT_OK(Reserve(FLUSH_MARKER, entry_batch.Pass(), &reserved_entry_batch));
+  RETURN_NOT_OK(Reserve(FLUSH_MARKER, std::move(entry_batch), &reserved_entry_batch));
   Synchronizer s;
   RETURN_NOT_OK(AsyncAppend(reserved_entry_batch, s.AsStatusCallback()));
   return s.Wait();
@@ -732,7 +732,7 @@ Status Log::GC(int64_t min_op_idx, int32_t* num_gced) {
 
     // Now that they are no longer referenced by the Log, delete the files.
     *num_gced = 0;
-    BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments_to_delete) {
+    for (const scoped_refptr<ReadableLogSegment>& segment : segments_to_delete) {
       LOG(INFO) << "Deleting log segment in path: " << segment->path()
                 << " (GCed ops < " << min_op_idx << ")";
       RETURN_NOT_OK(fs_manager_->env()->DeleteFile(segment->path()));
@@ -762,7 +762,7 @@ void Log::GetGCableDataSize(int64_t min_op_idx, int64_t* total_size) const {
       return;
     }
   }
-  BOOST_FOREACH(const scoped_refptr<ReadableLogSegment>& segment, segments_to_delete) {
+  for (const scoped_refptr<ReadableLogSegment>& segment : segments_to_delete) {
     *total_size += segment->file_size();
   }
 }
@@ -777,12 +777,11 @@ void Log::GetMaxIndexesToSegmentSizeMap(int64_t min_op_idx,
   if (segments_count == 0) {
     return;
   }
-  reader_->GetMaxIndexesToSegmentSizeMap(min_op_idx, segments_count,
-                                         max_idx_to_segment_size);
-}
 
-LogReader* Log::GetLogReader() const {
-  return reader_.get();
+  int64_t now = GetCurrentTimeMicros();
+  int64_t max_close_time_us = now - (FLAGS_log_min_seconds_to_retain * 1000000);
+  reader_->GetMaxIndexesToSegmentSizeMap(min_op_idx, segments_count, max_close_time_us,
+                                         max_idx_to_segment_size);
 }
 
 void Log::SetSchemaForNextLogSegment(const Schema& schema,
@@ -808,20 +807,24 @@ Status Log::Close() {
       RETURN_NOT_OK(ReplaceSegmentInReaderUnlocked());
       log_state_ = kLogClosed;
       VLOG(1) << "Log closed";
+
+      // Release FDs held by these objects.
+      log_index_.reset();
+      reader_.reset();
+
+      if (log_hooks_) {
+        RETURN_NOT_OK_PREPEND(log_hooks_->PostClose(),
+                              "PostClose hook failed");
+      }
       return Status::OK();
+
     case kLogClosed:
       VLOG(1) << "Log already closed";
       return Status::OK();
+
     default:
       return Status::IllegalState(Substitute("Bad state for Close() $0", log_state_));
   }
-
-  if (log_hooks_) {
-    RETURN_NOT_OK_PREPEND(log_hooks_->PostClose(),
-                          "PostClose hook failed");
-  }
-
-  return Status::OK();
 }
 
 Status Log::DeleteOnDiskData(FsManager* fs_manager, const string& tablet_id) {
@@ -840,7 +843,6 @@ Status Log::PreAllocateNewSegment() {
   CHECK_EQ(allocation_state(), kAllocationInProgress);
 
   WritableFileOptions opts;
-  opts.mmap_file = false;
   opts.sync_on_close = force_sync_all_;
   RETURN_NOT_OK(CreatePlaceholderSegment(opts, &next_segment_path_, &next_segment_file_));
 
@@ -900,7 +902,7 @@ Status Log::SwitchToAllocatedSegment() {
   // Transform the currently-active segment into a readable one, since we
   // need to be able to replay the segments for other peers.
   {
-    if (active_segment_.get() != NULL) {
+    if (active_segment_.get() != nullptr) {
       boost::lock_guard<percpu_rwlock> l(state_lock_);
       CHECK_OK(ReplaceSegmentInReaderUnlocked());
     }
@@ -909,11 +911,7 @@ Status Log::SwitchToAllocatedSegment() {
   // Open the segment we just created in readable form and add it to the reader.
   gscoped_ptr<RandomAccessFile> readable_file;
 
-  // Don't allow mmapping the file. The mmapped IO path does
-  // not support reading from files which change length. In the case
-  // of reading from the in-progress segment, that's likely to happen.
   RandomAccessFileOptions opts;
-  opts.mmap_file = false;
   RETURN_NOT_OK(fs_manager_->env()->NewRandomAccessFile(opts, new_segment_path, &readable_file));
   scoped_refptr<ReadableLogSegment> readable_segment(
     new ReadableLogSegment(new_segment_path,
@@ -968,7 +966,7 @@ Log::~Log() {
 LogEntryBatch::LogEntryBatch(LogEntryTypePB type,
                              gscoped_ptr<LogEntryBatchPB> entry_batch_pb, size_t count)
     : type_(type),
-      entry_batch_pb_(entry_batch_pb.Pass()),
+      entry_batch_pb_(std::move(entry_batch_pb)),
       total_size_bytes_(
           PREDICT_FALSE(count == 1 && entry_batch_pb_->entry(0).type() == FLUSH_MARKER) ?
           0 : entry_batch_pb_->ByteSize()),

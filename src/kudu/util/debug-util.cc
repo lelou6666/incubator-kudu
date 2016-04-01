@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/debug-util.h"
 
@@ -28,6 +31,27 @@
 #include "kudu/util/env.h"
 #include "kudu/util/errno.h"
 #include "kudu/util/monotime.h"
+#include "kudu/util/thread.h"
+
+#if defined(__APPLE__)
+typedef sig_t sighandler_t;
+#endif
+
+// In coverage builds, this symbol will be defined and allows us to flush coverage info
+// to disk before exiting.
+#if defined(__APPLE__)
+  // OS X does not support weak linking at compile time properly.
+  #if defined(COVERAGE_BUILD)
+extern "C" void __gcov_flush() __attribute__((weak_import));
+  #else
+extern "C" void (*__gcov_flush)() = nullptr;
+  #endif
+#else
+extern "C" {
+__attribute__((weak))
+void __gcov_flush();
+}
+#endif
 
 // Evil hack to grab a few useful functions from glog
 namespace google {
@@ -60,6 +84,25 @@ static int g_stack_trace_signum = SIGUSR2;
 static base::SpinLock g_dumper_thread_lock(base::LINKER_INITIALIZED);
 
 namespace kudu {
+
+bool IsCoverageBuild() {
+  return __gcov_flush != nullptr;
+}
+
+void TryFlushCoverage() {
+  static base::SpinLock lock(base::LINKER_INITIALIZED);
+
+  // Flushing coverage is not reentrant or thread-safe.
+  if (!__gcov_flush || !lock.TryLock()) {
+    return;
+  }
+
+  __gcov_flush();
+
+  lock.Unlock();
+}
+
+
 
 namespace {
 
@@ -111,7 +154,7 @@ void HandleStackTraceSignal(int signum) {
   // case the dumper thread would have already timed out and moved on with
   // its life. In that case, we don't want to race with some other thread's
   // dump.
-  pid_t my_tid = syscall(SYS_gettid);
+  int64_t my_tid = Thread::CurrentThreadId();
   if (g_comm.target_tid != my_tid) {
     return;
   }
@@ -130,10 +173,9 @@ bool InitSignalHandlerUnlocked(int signum) {
 
   // If we've already registered a handler, but we're being asked to
   // change our signal, unregister the old one.
-  if (signum != g_stack_trace_signum &&
-      state == INITIALIZED) {
+  if (signum != g_stack_trace_signum && state == INITIALIZED) {
     struct sigaction old_act;
-    PCHECK(sigaction(g_stack_trace_signum, NULL, &old_act) == 0);
+    PCHECK(sigaction(g_stack_trace_signum, nullptr, &old_act) == 0);
     if (old_act.sa_handler == &HandleStackTraceSignal) {
       signal(g_stack_trace_signum, SIG_DFL);
     }
@@ -148,7 +190,7 @@ bool InitSignalHandlerUnlocked(int signum) {
 
   if (state == UNINITIALIZED) {
     struct sigaction old_act;
-    PCHECK(sigaction(g_stack_trace_signum, NULL, &old_act) == 0);
+    PCHECK(sigaction(g_stack_trace_signum, nullptr, &old_act) == 0);
     if (old_act.sa_handler != SIG_DFL &&
         old_act.sa_handler != SIG_IGN) {
       state = INIT_ERROR;
@@ -180,7 +222,8 @@ Status SetStackTraceSignal(int signum) {
   return Status::OK();
 }
 
-std::string DumpThreadStack(pid_t tid) {
+std::string DumpThreadStack(int64_t tid) {
+#if defined(__linux__)
   base::SpinLockHolder h(&g_dumper_thread_lock);
 
   // Ensure that our signal handler is installed. We don't need any fancy GoogleOnce here
@@ -235,9 +278,13 @@ std::string DumpThreadStack(pid_t tid) {
     g_comm.result_ready = 0;
   }
   return ret;
+#else // defined(__linux__)
+  return "(unsupported platform)";
+#endif
 }
 
 Status ListThreads(vector<pid_t> *tids) {
+#if defined(__linux__)
   DIR *dir = opendir("/proc/self/task/");
   if (dir == NULL) {
     return Status::IOError("failed to open task dir", ErrnoToString(errno), errno);
@@ -254,6 +301,7 @@ Status ListThreads(vector<pid_t> *tids) {
     }
   }
   closedir(dir);
+#endif // defined(__linux__)
   return Status::OK();
 }
 

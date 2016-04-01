@@ -1,22 +1,26 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CLIENT_CLIENT_INTERNAL_H
 #define KUDU_CLIENT_CLIENT_INTERNAL_H
 
 #include <boost/function.hpp>
 #include <set>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/client/client.h"
@@ -49,7 +53,7 @@ class KuduClient::Data {
   Data();
   ~Data();
 
-  // Returns a ts that hosts a tablet with the given tablet ID, subject
+  // Selects a TS replica from the given RemoteTablet subject
   // to liveness and the provided selection criteria and blacklist.
   //
   // If no appropriate replica can be found, a non-OK status is returned and 'ts' is untouched.
@@ -58,7 +62,7 @@ class KuduClient::Data {
   // criteria, but are possibly filtered by the blacklist. This is useful for implementing
   // retry logic.
   Status GetTabletServer(KuduClient* client,
-                         const std::string& tablet_id,
+                         const scoped_refptr<internal::RemoteTablet>& rt,
                          ReplicaSelection selection,
                          const std::set<std::string>& blacklist,
                          std::vector<internal::RemoteTabletServer*>* candidates,
@@ -148,7 +152,7 @@ class KuduClient::Data {
   Status SetMasterServerProxy(KuduClient* client,
                               const MonoTime& deadline);
 
-  std::tr1::shared_ptr<master::MasterServiceProxy> master_proxy() const;
+  std::shared_ptr<master::MasterServiceProxy> master_proxy() const;
 
   HostPort leader_master_hostport() const;
 
@@ -168,7 +172,8 @@ class KuduClient::Data {
   //
   // NOTE: 'rpc_timeout' is a per-call timeout, while 'deadline' is a
   // per operation deadline. If 'deadline' is not initialized, 'func' is
-  // retried forever.
+  // retried forever. If 'deadline' expires, 'func_name' is included in
+  // the resulting Status.
   template<class ReqClass, class RespClass>
   Status SyncLeaderMasterRpc(
       const MonoTime& deadline,
@@ -176,17 +181,18 @@ class KuduClient::Data {
       const ReqClass& req,
       RespClass* resp,
       int* num_attempts,
+      const char* func_name,
       const boost::function<Status(master::MasterServiceProxy*,
                                    const ReqClass&, RespClass*,
                                    rpc::RpcController*)>& func);
 
-  std::tr1::shared_ptr<rpc::Messenger> messenger_;
+  std::shared_ptr<rpc::Messenger> messenger_;
   gscoped_ptr<DnsResolver> dns_resolver_;
   scoped_refptr<internal::MetaCache> meta_cache_;
 
   // Set of hostnames and IPs on the local host.
   // This is initialized at client startup.
-  std::tr1::unordered_set<std::string> local_host_names_;
+  std::unordered_set<std::string> local_host_names_;
 
   // Options the client was built with.
   std::vector<std::string> master_server_addrs_;
@@ -199,7 +205,7 @@ class KuduClient::Data {
   HostPort leader_master_hostport_;
 
   // Proxy to the leader master.
-  std::tr1::shared_ptr<master::MasterServiceProxy> master_proxy_;
+  std::shared_ptr<master::MasterServiceProxy> master_proxy_;
 
   // Ref-counted RPC instance: since 'SetMasterServerProxyAsync' call
   // is asynchronous, we need to hold a reference in this class

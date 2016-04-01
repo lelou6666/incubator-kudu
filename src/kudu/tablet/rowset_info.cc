@@ -1,29 +1,31 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/rowset_info.h"
 
 #include <algorithm>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <memory>
+#include <unordered_map>
 #include <string>
 #include <utility>
 
 #include <glog/logging.h>
 #include <inttypes.h>
 
-#include "kudu/gutil/algorithm.h"
 #include "kudu/gutil/casts.h"
 #include "kudu/gutil/endian.h"
 #include "kudu/gutil/map-util.h"
@@ -32,8 +34,8 @@
 #include "kudu/tablet/rowset_tree.h"
 #include "kudu/util/slice.h"
 
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
+using std::shared_ptr;
+using std::unordered_map;
 using std::vector;
 
 // Enforce a minimum size of 1MB, since otherwise the knapsack algorithm
@@ -141,7 +143,7 @@ double WidthByDataSize(const Slice& prev, const Slice& next,
                        const unordered_map<RowSet*, RowSetInfo*>& active) {
   double weight = 0;
 
-  BOOST_FOREACH(const RowSetRowSetInfoPair& rsi, active) {
+  for (const RowSetRowSetInfoPair& rsi : active) {
     RowSet* rs = rsi.first;
     double fraction = StringFractionInRange(rs, prev, next);
     weight += rs->EstimateOnDiskSize() * fraction;
@@ -160,8 +162,8 @@ void CheckCollectOrderedCorrectness(const vector<RowSetInfo>& min_key,
     CHECK_EQ(min_key.front().cdf_min_key(), 0.0f);
     CHECK_EQ(max_key.back().cdf_max_key(), total_width);
   }
-  DCHECK(util::gtl::is_sorted(min_key.begin(), min_key.end(), LessCDFAndRSMin));
-  DCHECK(util::gtl::is_sorted(max_key.begin(), max_key.end(), LessCDFAndRSMax));
+  DCHECK(std::is_sorted(min_key.begin(), min_key.end(), LessCDFAndRSMin));
+  DCHECK(std::is_sorted(max_key.begin(), max_key.end(), LessCDFAndRSMax));
 }
 
 } // anonymous namespace
@@ -170,7 +172,7 @@ void CheckCollectOrderedCorrectness(const vector<RowSetInfo>& min_key,
 
 void RowSetInfo::Collect(const RowSetTree& tree, vector<RowSetInfo>* rsvec) {
   rsvec->reserve(tree.all_rowsets().size());
-  BOOST_FOREACH(const shared_ptr<RowSet>& ptr, tree.all_rowsets()) {
+  for (const shared_ptr<RowSet>& ptr : tree.all_rowsets()) {
     rsvec->push_back(RowSetInfo(ptr.get(), 0));
   }
 }
@@ -206,7 +208,7 @@ void RowSetInfo::CollectOrdered(const RowSetTree& tree,
   // else there's a race since we see endpoints twice and a delta compaction might finish in
   // between.
   RowSetVector available_rowsets;
-  BOOST_FOREACH(const shared_ptr<RowSet> rs, tree.all_rowsets()) {
+  for (const shared_ptr<RowSet> rs : tree.all_rowsets()) {
     if (rs->IsAvailableForCompaction()) {
       available_rowsets.push_back(rs);
     }
@@ -214,14 +216,14 @@ void RowSetInfo::CollectOrdered(const RowSetTree& tree,
 
   RowSetTree available_rs_tree;
   available_rs_tree.Reset(available_rowsets);
-  BOOST_FOREACH(const RowSetTree::RSEndpoint& rse,
+  for (const RowSetTree::RSEndpoint& rse :
                 available_rs_tree.key_endpoints()) {
     RowSet* rs = rse.rowset_;
     const Slice& next = rse.slice_;
     double interval_width = WidthByDataSize(prev, next, active);
 
     // Increment active rowsets in min_key by the interval_width.
-    BOOST_FOREACH(const RowSetRowSetInfoPair& rsi, active) {
+    for (const RowSetRowSetInfoPair& rsi : active) {
       RowSetInfo& cdf_rs = *rsi.second;
       cdf_rs.cdf_max_key_ += interval_width;
     }
@@ -269,7 +271,7 @@ RowSetInfo::RowSetInfo(RowSet* rs, double init_cdf)
 void RowSetInfo::FinalizeCDFVector(vector<RowSetInfo>* vec,
                                  double quot) {
   if (quot == 0) return;
-  BOOST_FOREACH(RowSetInfo& cdf_rs, *vec) {
+  for (RowSetInfo& cdf_rs : *vec) {
     CHECK_GT(cdf_rs.size_mb_, 0) << "Expected file size to be at least 1MB "
                                  << "for RowSet " << cdf_rs.rowset_->ToString()
                                  << ", was " << cdf_rs.rowset_->EstimateOnDiskSize()

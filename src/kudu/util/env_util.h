@@ -1,20 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_ENV_UTIL_H
 #define KUDU_UTIL_ENV_UTIL_H
 
-#include <tr1/memory>
+#include <memory>
 #include <string>
 
 #include "kudu/gutil/macros.h"
@@ -23,21 +26,18 @@
 namespace kudu {
 namespace env_util {
 
-using std::string;
-using std::tr1::shared_ptr;
-
-Status OpenFileForWrite(Env *env, const string &path,
-                        shared_ptr<WritableFile> *file);
+Status OpenFileForWrite(Env *env, const std::string &path,
+                        std::shared_ptr<WritableFile> *file);
 
 Status OpenFileForWrite(const WritableFileOptions& opts,
-                        Env *env, const string &path,
-                        shared_ptr<WritableFile> *file);
+                        Env *env, const std::string &path,
+                        std::shared_ptr<WritableFile> *file);
 
-Status OpenFileForRandom(Env *env, const string &path,
-                         shared_ptr<RandomAccessFile> *file);
+Status OpenFileForRandom(Env *env, const std::string &path,
+                         std::shared_ptr<RandomAccessFile> *file);
 
-Status OpenFileForSequential(Env *env, const string &path,
-                             shared_ptr<SequentialFile> *file);
+Status OpenFileForSequential(Env *env, const std::string &path,
+                             std::shared_ptr<SequentialFile> *file);
 
 // Read exactly 'n' bytes from the given file. If fewer than 'n' bytes
 // are read, returns an IOError. This differs from the underlying
@@ -61,6 +61,13 @@ Status ReadFully(RandomAccessFile* file, uint64_t offset, size_t n,
 Status CreateDirIfMissing(Env* env, const std::string& path,
                           bool* created = NULL);
 
+// Copy the contents of file source_path to file dest_path.
+// This is not atomic, and if there is an error while reading or writing,
+// a partial copy may be left in 'dest_path'. Does not fsync the parent
+// directory of dest_path -- if you need durability then do that yourself.
+Status CopyFile(Env* env, const std::string& source_path, const std::string& dest_path,
+                WritableFileOptions opts);
+
 // Deletes a file or directory when this object goes out of scope.
 //
 // The deletion may be cancelled by calling .Cancel().
@@ -68,7 +75,7 @@ Status CreateDirIfMissing(Env* env, const std::string& path,
 // creation of the tmp file may fail.
 class ScopedFileDeleter {
  public:
-  ScopedFileDeleter(Env* env, const std::string& path);
+  ScopedFileDeleter(Env* env, std::string path);
   ~ScopedFileDeleter();
 
   // Do not delete the file when this object goes out of scope.

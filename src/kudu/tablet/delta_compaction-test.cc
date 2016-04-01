@@ -1,18 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
@@ -25,7 +27,6 @@
 #include "kudu/tablet/delta_compaction.h"
 #include "kudu/tablet/delta_iterator_merger.h"
 #include "kudu/gutil/strings/util.h"
-#include "kudu/gutil/algorithm.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
@@ -38,14 +39,16 @@
 DEFINE_int32(num_rows, 2100, "the first row to update");
 DEFINE_int32(num_delta_files, 3, "number of delta files");
 
+using std::is_sorted;
+using std::shared_ptr;
+using std::string;
+using std::vector;
+
 namespace kudu {
 namespace tablet {
 
 using fs::ReadableBlock;
 using fs::WritableBlock;
-using std::string;
-using std::vector;
-using util::gtl::is_sorted;
 
 class TestDeltaCompaction : public KuduTest {
  public:
@@ -65,7 +68,7 @@ class TestDeltaCompaction : public KuduTest {
     gscoped_ptr<WritableBlock> block;
     RETURN_NOT_OK(fs_manager_->CreateNewBlock(&block));
     *block_id = block->id();
-    dfw->reset(new DeltaFileWriter(block.Pass()));
+    dfw->reset(new DeltaFileWriter(std::move(block)));
     RETURN_NOT_OK((*dfw)->Start());
     return Status::OK();
   }
@@ -75,7 +78,7 @@ class TestDeltaCompaction : public KuduTest {
     gscoped_ptr<ReadableBlock> block;
     RETURN_NOT_OK(fs_manager_->OpenBlock(block_id, &block));
     shared_ptr<DeltaFileReader> delta_reader;
-    return DeltaFileReader::Open(block.Pass(), block_id, dfr, REDO);
+    return DeltaFileReader::Open(std::move(block), block_id, dfr, REDO);
   }
 
   virtual void SetUp() OVERRIDE {
@@ -113,7 +116,7 @@ TEST_F(TestDeltaCompaction, TestMergeMultipleSchemas) {
   int row_id = 0;
   int curr_timestamp = 0;
   int deltafile_idx = 0;
-  BOOST_FOREACH(const Schema& schema, schemas) {
+  for (const Schema& schema : schemas) {
     // Write the Deltas
     BlockId block_id;
     gscoped_ptr<DeltaFileWriter> dfw;
@@ -130,10 +133,10 @@ TEST_F(TestDeltaCompaction, TestMergeMultipleSchemas) {
       buf.clear();
       RowChangeListEncoder update(&buf);
       for (size_t col_idx = schema.num_key_columns(); col_idx < schema.num_columns(); ++col_idx) {
-        int col_id = schema.column_id(col_idx);
+        ColumnId col_id = schema.column_id(col_idx);
         DCHECK_GE(col_id, 0);
 
-        stats.IncrUpdateCount(col_idx, 1);
+        stats.IncrUpdateCount(col_id, 1);
         const ColumnSchema& col_schema = schema.column(col_idx);
         int update_value = deltafile_idx * 100 + i;
         switch (col_schema.type_info()->physical_type()) {
@@ -198,7 +201,7 @@ TEST_F(TestDeltaCompaction, TestMergeMultipleSchemas) {
   vector<string> results;
   ASSERT_OK(DebugDumpDeltaIterator(REDO, scoped_iter.get(), merge_schema,
                                           ITERATE_OVER_ALL_ROWS, &results));
-  BOOST_FOREACH(const string &str, results) {
+  for (const string &str : results) {
     VLOG(1) << str;
   }
   ASSERT_TRUE(is_sorted(results.begin(), results.end()));

@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_RPC_SASL_CLIENT_H
 #define KUDU_RPC_SASL_CLIENT_H
@@ -22,6 +25,7 @@
 #include <sasl/sasl.h>
 
 #include "kudu/gutil/gscoped_ptr.h"
+#include "kudu/rpc/rpc_header.pb.h"
 #include "kudu/rpc/sasl_common.h"
 #include "kudu/rpc/sasl_helper.h"
 #include "kudu/util/monotime.h"
@@ -42,31 +46,37 @@ class SaslMessagePB_SaslAuth;
 class SaslClient {
  public:
   // Does not take ownership of the socket indicated by the fd.
-  SaslClient(const string& app_name, int fd);
+  SaslClient(string app_name, int fd);
   ~SaslClient();
 
   // Enable ANONYMOUS authentication.
-  // Call after Init().
+  // Must be called after Init().
   Status EnableAnonymous();
 
   // Enable PLAIN authentication.
-  // Call after Init().
+  // Must be called after Init().
   Status EnablePlain(const string& user, const string& pass);
 
   // Returns mechanism negotiated by this connection.
-  // Call after Negotiate().
+  // Must be called after Negotiate().
   SaslMechanism::Type negotiated_mechanism() const;
 
+  // Returns the set of RPC system features supported by the remote server.
+  // Must be called after Negotiate().
+  const std::set<RpcFeatureFlag>& server_features() const {
+    return server_features_;
+  }
+
   // Specify IP:port of local side of connection.
-  // Call before Init(). Required for some mechanisms.
+  // Must be called before Init(). Required for some mechanisms.
   void set_local_addr(const Sockaddr& addr);
 
   // Specify IP:port of remote side of connection.
-  // Call before Init(). Required for some mechanisms.
+  // Must be called before Init(). Required for some mechanisms.
   void set_remote_addr(const Sockaddr& addr);
 
   // Specify the fully-qualified domain name of the remote server.
-  // Call before Init(). Required for some mechanisms.
+  // Must be called before Init(). Required for some mechanisms.
   void set_server_fqdn(const string& domain_name);
 
   // Set deadline for connection negotiation.
@@ -142,6 +152,9 @@ class SaslClient {
   string plain_auth_user_;
   string plain_pass_;
   gscoped_ptr<sasl_secret_t, FreeDeleter> psecret_;
+
+  // The set of features supported by the server.
+  std::set<RpcFeatureFlag> server_features_;
 
   SaslNegotiationState::Type client_state_;
 

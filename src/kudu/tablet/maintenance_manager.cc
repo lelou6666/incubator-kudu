@@ -1,26 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/maintenance_manager.h"
 
-#include <boost/foreach.hpp>
+#include <gflags/gflags.h>
+#include <memory>
 #include <stdint.h>
 #include <string>
-#include <tr1/memory>
 #include <utility>
-
-#include <gflags/gflags.h>
 
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/gutil/strings/substitute.h"
@@ -33,7 +34,7 @@
 #include "kudu/util/thread.h"
 
 using std::pair;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
 
 DEFINE_int32(maintenance_manager_num_threads, 1,
@@ -73,11 +74,8 @@ void MaintenanceOpStats::Clear() {
   perf_improvement_ = 0;
 }
 
-MaintenanceOp::MaintenanceOp(const std::string &name, IOUsage io_usage)
-  : name_(name),
-    running_(0),
-    io_usage_(io_usage) {
-}
+MaintenanceOp::MaintenanceOp(std::string name, IOUsage io_usage)
+    : name_(std::move(name)), running_(0), io_usage_(io_usage) {}
 
 MaintenanceOp::~MaintenanceOp() {
   CHECK(!manager_.get()) << "You must unregister the " << name_
@@ -162,7 +160,7 @@ void MaintenanceManager::UnregisterOp(MaintenanceOp* op) {
     lock_guard<Mutex> guard(&lock_);
     CHECK(op->manager_.get() == this) << "Tried to unregister " << op->name()
           << ", but it is not currently registered with this maintenance manager.";
-    OpMapTy::iterator iter = ops_.find(op);
+    auto iter = ops_.find(op);
     CHECK(iter != ops_.end()) << "Tried to unregister " << op->name()
         << ", but it was never registered";
     // While the op is running, wait for it to be finished.
@@ -249,27 +247,27 @@ MaintenanceOp* MaintenanceManager::FindBestOp() {
 
   if (!FLAGS_enable_maintenance_manager) {
     VLOG_AND_TRACE("maintenance", 1) << "Maintenance manager is disabled. Doing nothing";
-    return NULL;
+    return nullptr;
   }
   size_t free_threads = num_threads_ - running_ops_;
   if (free_threads == 0) {
     VLOG_AND_TRACE("maintenance", 1) << "there are no free threads, so we can't run anything.";
-    return NULL;
+    return nullptr;
   }
 
   int64_t low_io_most_logs_retained_bytes = 0;
-  MaintenanceOp* low_io_most_logs_retained_bytes_op = NULL;
+  MaintenanceOp* low_io_most_logs_retained_bytes_op = nullptr;
 
   uint64_t most_mem_anchored = 0;
-  MaintenanceOp* most_mem_anchored_op = NULL;
+  MaintenanceOp* most_mem_anchored_op = nullptr;
 
   int64_t most_logs_retained_bytes = 0;
   int64_t most_logs_retained_bytes_ram_anchored = 0;
-  MaintenanceOp* most_logs_retained_bytes_op = NULL;
+  MaintenanceOp* most_logs_retained_bytes_op = nullptr;
 
   double best_perf_improvement = 0;
-  MaintenanceOp* best_perf_improvement_op = NULL;
-  BOOST_FOREACH(OpMapTy::value_type &val, ops_) {
+  MaintenanceOp* best_perf_improvement_op = nullptr;
+  for (OpMapTy::value_type &val : ops_) {
     MaintenanceOp* op(val.first);
     MaintenanceOpStats& stats(val.second);
     // Update op stats.
@@ -326,7 +324,7 @@ MaintenanceOp* MaintenanceManager::FindBestOp() {
           "(current capacity is %.2f%%).  However, there are no ops currently "
           "runnable which would free memory.", capacity_pct);
       LOG(INFO) << msg;
-      return NULL;
+      return nullptr;
     }
     VLOG_AND_TRACE("maintenance", 1) << "we have exceeded our soft memory limit "
             << "(current capacity is " << capacity_pct << "%).  Running the op "
@@ -350,7 +348,7 @@ MaintenanceOp* MaintenanceManager::FindBestOp() {
       return best_perf_improvement_op;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 void MaintenanceManager::LaunchOp(MaintenanceOp* op) {
@@ -380,10 +378,10 @@ void MaintenanceManager::LaunchOp(MaintenanceOp* op) {
 }
 
 void MaintenanceManager::GetMaintenanceManagerStatusDump(MaintenanceManagerStatusPB* out_pb) {
-  DCHECK(out_pb != NULL);
+  DCHECK(out_pb != nullptr);
   lock_guard<Mutex> guard(&lock_);
   MaintenanceOp* best_op = FindBestOp();
-  BOOST_FOREACH(MaintenanceManager::OpMapTy::value_type& val, ops_) {
+  for (MaintenanceManager::OpMapTy::value_type& val : ops_) {
     MaintenanceManagerStatusPB_MaintenanceOpPB* op_pb = out_pb->add_registered_operations();
     MaintenanceOp* op(val.first);
     MaintenanceOpStats& stat(val.second);
@@ -399,7 +397,7 @@ void MaintenanceManager::GetMaintenanceManagerStatusDump(MaintenanceManagerStatu
     }
   }
 
-  BOOST_FOREACH(const CompletedOp& completed_op, completed_ops_) {
+  for (const CompletedOp& completed_op : completed_ops_) {
     if (!completed_op.name.empty()) {
       MaintenanceManagerStatusPB_CompletedOpPB* completed_pb = out_pb->add_completed_operations();
       completed_pb->set_name(completed_op.name);

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Copied from Impala and adapted to Kudu.
 
@@ -191,6 +194,9 @@ class Thread : public RefCountedThreadSafe<Thread> {
   // support retrieving the tid, returns Thread::INVALID_TID.
   int64_t tid() const { return tid_; }
 
+  // Returns the thread's pthread ID.
+  pthread_t pthread_id() const { return thread_; }
+
   const std::string& name() const { return name_; }
   const std::string& category() const { return category_; }
 
@@ -201,21 +207,48 @@ class Thread : public RefCountedThreadSafe<Thread> {
   // This call is signal-safe.
   static Thread* current_thread() { return tls_; }
 
-  // Return a unique identifier assigned by the platform for this thread. Note that
-  // this is a static method and thus can be used on any thread, including the main
-  // thread of the process. This is in contrast to Thread::tid() which is at least as fast,
-  // but only works on kudu::Threads.
+  // Returns a unique, stable identifier for this thread. Note that this is a static
+  // method and thus can be used on any thread, including the main thread of the
+  // process.
   //
-  // In general, this should be used when a value is required that is unique to a thread
-  // and must work on any thread including the main process thread.
+  // In general, this should be used when a value is required that is unique to
+  // a thread and must work on any thread including the main process thread.
   //
-  // NOTE: this is _not_ the TID, but rather a unique value assigned by the pthread library.
-  // So, this value should not be presented to the user in log messages, etc.
-  static int64_t PlatformThreadId() {
-    // This cast is a little bit ugly, and not likely to be portable, but
-    // it is significantly faster than calling syscall(SYS_gettid). In particular,
-    // this speeds up some code paths in the tracing implementation.
+  // NOTE: this is _not_ the TID, but rather a unique value assigned by the
+  // thread implementation. So, this value should not be presented to the user
+  // in log messages, etc.
+  static int64_t UniqueThreadId() {
+#if defined(__linux__)
+    // This cast is a little bit ugly, but it is significantly faster than
+    // calling syscall(SYS_gettid). In particular, this speeds up some code
+    // paths in the tracing implementation.
     return static_cast<int64_t>(pthread_self());
+#elif defined(__APPLE__)
+    uint64_t tid;
+    CHECK_EQ(0, pthread_threadid_np(NULL, &tid));
+    return tid;
+#else
+#error Unsupported platform
+#endif
+  }
+
+  // Returns the system thread ID (tid on Linux) for the current thread. Note
+  // that this is a static method and thus can be used from any thread,
+  // including the main thread of the process. This is in contrast to
+  // Thread::tid(), which only works on kudu::Threads.
+  //
+  // Thread::tid() will return the same value, but the value is cached in the
+  // Thread object, so will be faster to call.
+  //
+  // Thread::UniqueThreadId() (or Thread::tid()) should be preferred for
+  // performance sensistive code, however it is only guaranteed to return a
+  // unique and stable thread ID, not necessarily the system thread ID.
+  static int64_t CurrentThreadId() {
+#if defined(__linux__)
+    return syscall(SYS_gettid);
+#else
+    return UniqueThreadId();
+#endif
   }
 
  private:
@@ -232,15 +265,14 @@ class Thread : public RefCountedThreadSafe<Thread> {
   // Function object that wraps the user-supplied function to run in a separate thread.
   typedef boost::function<void ()> ThreadFunctor;
 
-  Thread(const std::string& category, const std::string& name, const ThreadFunctor& functor)
-    : thread_(0),
-      category_(category),
-      name_(name),
-      tid_(CHILD_WAITING_TID),
-      functor_(functor),
-      done_(1),
-      joinable_(false) {
-  }
+  Thread(std::string category, std::string name, ThreadFunctor functor)
+      : thread_(0),
+        category_(std::move(category)),
+        name_(std::move(name)),
+        tid_(CHILD_WAITING_TID),
+        functor_(std::move(functor)),
+        done_(1),
+        joinable_(false) {}
 
   // Library-specific thread ID.
   pthread_t thread_;

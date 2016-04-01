@@ -1,23 +1,27 @@
 #!/usr/bin/env python
-# Copyright 2015 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 #
 # Script to generate a CM-compatible MDL file from the metrics
 # metadata dumped by our daemon processes.
 #
 # Requires that the daemon processes have already been built and available
-# in the build/latest directory.
+# in the build/latest/bin directory.
 #
 # Outputs the MDL file on stdout by default or to a file specified in the first
 # argument.
@@ -33,7 +37,7 @@ import sys
 
 BINARIES=["kudu-master", "kudu-tserver"]
 
-RELATIVE_BUILD_DIR="../../build/latest"
+RELATIVE_BUILD_DIR="../../build/latest/bin"
 
 def find_binary(bin_name):
   dirname, _ = os.path.split(os.path.abspath(__file__))
@@ -128,7 +132,7 @@ def main():
 
   output = dict(
     name="KUDU",
-    version="0.5.0",
+    version="0.6.0",
     metricDefinitions=[],
     nameForCrossEntityAggregateMetrics="kudus",
     roles=[

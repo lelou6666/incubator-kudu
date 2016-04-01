@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/common/partial_row.h"
 
@@ -24,6 +27,7 @@
 #include "kudu/common/wire_protocol.pb.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/bitmap.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/status.h"
 
 using strings::Substitute;
@@ -47,7 +51,7 @@ KuduPartialRow::KuduPartialRow(const Schema* schema)
   size_t column_bitmap_size = BitmapSize(schema_->num_columns());
   size_t row_size = ContiguousRowHelper::row_size(*schema);
 
-  uint8_t* dst = new uint8_t[2 * column_bitmap_size + row_size];
+  auto dst = new uint8_t[2 * column_bitmap_size + row_size];
   isset_bitmap_ = dst;
   owned_strings_bitmap_ = isset_bitmap_ + column_bitmap_size;
 
@@ -87,7 +91,7 @@ KuduPartialRow::KuduPartialRow(const KuduPartialRow& other)
     if (BitmapTest(owned_strings_bitmap_, col_idx)) {
       ContiguousRow row(schema_, row_data_);
       Slice* slice = reinterpret_cast<Slice*>(row.mutable_cell_ptr(col_idx));
-      uint8_t* data = new uint8_t[slice->size()];
+      auto data = new uint8_t[slice->size()];
       slice->relocate(data);
     }
   }
@@ -296,7 +300,7 @@ Status KuduPartialRow::SetStringCopy(int col_idx, const Slice& val) {
 
 template<typename T>
 Status KuduPartialRow::SetSliceCopy(const Slice& col_name, const Slice& val) {
-  uint8_t* relocated = new uint8_t[val.size()];
+  auto relocated = new uint8_t[val.size()];
   memcpy(relocated, val.data(), val.size());
   Slice relocated_val(relocated, val.size());
   Status s = Set<T>(col_name, relocated_val, true);
@@ -308,7 +312,7 @@ Status KuduPartialRow::SetSliceCopy(const Slice& col_name, const Slice& val) {
 
 template<typename T>
 Status KuduPartialRow::SetSliceCopy(int col_idx, const Slice& val) {
-  uint8_t* relocated = new uint8_t[val.size()];
+  auto relocated = new uint8_t[val.size()];
   memcpy(relocated, val.data(), val.size());
   Slice relocated_val(relocated, val.size());
   Status s = Set<T>(col_idx, relocated_val, true);

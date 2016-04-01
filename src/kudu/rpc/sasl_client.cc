@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/sasl_client.h"
 
@@ -20,7 +23,6 @@
 #include <set>
 #include <string>
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <sasl/sasl.h>
 
@@ -36,6 +38,7 @@
 #include "kudu/util/faststring.h"
 #include "kudu/util/net/sockaddr.h"
 #include "kudu/util/net/socket.h"
+#include "kudu/util/trace.h"
 
 namespace kudu {
 namespace rpc {
@@ -77,21 +80,20 @@ static Status StatusFromRpcError(const ErrorStatusPB& error) {
   }
 }
 
-SaslClient::SaslClient(const string& app_name, int fd)
-  : app_name_(app_name),
-    sock_(fd),
-    helper_(SaslHelper::CLIENT),
-    client_state_(SaslNegotiationState::NEW),
-    negotiated_mech_(SaslMechanism::INVALID),
-    deadline_(MonoTime::Max()) {
-
+SaslClient::SaslClient(string app_name, int fd)
+    : app_name_(std::move(app_name)),
+      sock_(fd),
+      helper_(SaslHelper::CLIENT),
+      client_state_(SaslNegotiationState::NEW),
+      negotiated_mech_(SaslMechanism::INVALID),
+      deadline_(MonoTime::Max()) {
   callbacks_.push_back(SaslBuildCallback(SASL_CB_GETOPT,
       reinterpret_cast<int (*)()>(&SaslClientGetoptCb), this));
   callbacks_.push_back(SaslBuildCallback(SASL_CB_AUTHNAME,
       reinterpret_cast<int (*)()>(&SaslClientSimpleCb), this));
   callbacks_.push_back(SaslBuildCallback(SASL_CB_PASS,
       reinterpret_cast<int (*)()>(&SaslClientSecretCb), this));
-  callbacks_.push_back(SaslBuildCallback(SASL_CB_LIST_END, NULL, NULL));
+  callbacks_.push_back(SaslBuildCallback(SASL_CB_LIST_END, nullptr, nullptr));
 }
 
 SaslClient::~SaslClient() {
@@ -148,7 +150,7 @@ Status SaslClient::Init(const string& service_type) {
   // TODO: Support security flags.
   unsigned secflags = 0;
 
-  sasl_conn_t* sasl_conn = NULL;
+  sasl_conn_t* sasl_conn = nullptr;
   int result = sasl_client_new(
       service_type.c_str(),         // Registered name of the service using SASL. Required.
       helper_.server_fqdn(),        // The fully qualified domain name of the remote server.
@@ -169,7 +171,7 @@ Status SaslClient::Init(const string& service_type) {
 }
 
 Status SaslClient::Negotiate() {
-  DVLOG(4) << "Called SaslClient::Negotiate()";
+  TRACE("Called SaslClient::Negotiate()");
 
   // Ensure we called exactly once, and in the right order.
   if (client_state_ == SaslNegotiationState::NEW) {
@@ -223,7 +225,7 @@ Status SaslClient::Negotiate() {
     }
   }
 
-  DVLOG(3) << "SASL Client: Successful negotiation";
+  TRACE("SASL Client: Successful negotiation");
   client_state_ = SaslNegotiationState::NEGOTIATED;
   return Status::OK();
 }
@@ -254,7 +256,13 @@ Status SaslClient::ParseSaslMsgResponse(const ResponseHeader& header, const Slic
 Status SaslClient::SendNegotiateMessage() {
   SaslMessagePB msg;
   msg.set_state(SaslMessagePB::NEGOTIATE);
-  DVLOG(4) << "SASL Client: Sending NEGOTIATE request to server.";
+
+  // Advertise our supported features.
+  for (RpcFeatureFlag feature : kSupportedClientRpcFeatureFlags) {
+    msg.add_supported_features(feature);
+  }
+
+  TRACE("SASL Client: Sending NEGOTIATE request to server.");
   RETURN_NOT_OK(SendSaslMessage(msg));
   nego_response_expected_ = true;
   return Status::OK();
@@ -266,7 +274,7 @@ Status SaslClient::SendInitiateMessage(const SaslMessagePB_SaslAuth& auth,
   msg.set_state(SaslMessagePB::INITIATE);
   msg.mutable_token()->assign(init_msg, init_msg_len);
   msg.add_auths()->CopyFrom(auth);
-  DVLOG(4) << "SASL Client: Sending INITIATE request to server.";
+  TRACE("SASL Client: Sending INITIATE request to server.");
   RETURN_NOT_OK(SendSaslMessage(msg));
   nego_response_expected_ = true;
   return Status::OK();
@@ -276,15 +284,15 @@ Status SaslClient::SendResponseMessage(const char* resp_msg, unsigned resp_msg_l
   SaslMessagePB reply;
   reply.set_state(SaslMessagePB::RESPONSE);
   reply.mutable_token()->assign(resp_msg, resp_msg_len);
-  DVLOG(4) << "SASL Client: Sending RESPONSE request to server.";
+  TRACE("SASL Client: Sending RESPONSE request to server.");
   RETURN_NOT_OK(SendSaslMessage(reply));
   nego_response_expected_ = true;
   return Status::OK();
 }
 
 Status SaslClient::DoSaslStep(const string& in, const char** out, unsigned* out_len, int* result) {
-  DVLOG(5) << "SASL Client: Calling sasl_client_step()";
-  int res = sasl_client_step(sasl_conn_.get(), in.c_str(), in.length(), NULL, out, out_len);
+  TRACE("SASL Client: Calling sasl_client_step()");
+  int res = sasl_client_step(sasl_conn_.get(), in.c_str(), in.length(), nullptr, out, out_len);
   *result = res;
   if (res == SASL_OK) {
     nego_ok_ = true;
@@ -297,22 +305,34 @@ Status SaslClient::DoSaslStep(const string& in, const char** out, unsigned* out_
 }
 
 Status SaslClient::HandleNegotiateResponse(const SaslMessagePB& response) {
-  DVLOG(4) << "SASL Client: Received NEGOTIATE response from server";
+  TRACE("SASL Client: Received NEGOTIATE response from server");
   map<string, SaslMessagePB::SaslAuth> mech_auth_map;
 
+  // Fill in the set of features supported by the server.
+  for (int flag : response.supported_features()) {
+    // We only add the features that our local build knows about.
+    RpcFeatureFlag feature_flag = RpcFeatureFlag_IsValid(flag) ?
+                                  static_cast<RpcFeatureFlag>(flag) : UNKNOWN;
+    if (ContainsKey(kSupportedClientRpcFeatureFlags, feature_flag)) {
+      server_features_.insert(feature_flag);
+    }
+  }
+
+  // Build the list of SASL mechanisms requested by the client, and a map
+  // back to to the SaslAuth PBs.
   string mech_list;
   mech_list.reserve(64);  // Avoid resizing the buffer later.
-  BOOST_FOREACH(const SaslMessagePB::SaslAuth& auth, response.auths()) {
+  for (const SaslMessagePB::SaslAuth& auth : response.auths()) {
     if (mech_list.length() > 0) mech_list.append(" ");
     string mech = auth.mechanism();
     mech_list.append(mech);
     mech_auth_map[mech] = auth;
   }
-  DVLOG(4) << "SASL Client: Server mech list: " << mech_list;
+  TRACE("SASL Client: Server mech list: $0", mech_list);
 
-  const char* init_msg = NULL;
+  const char* init_msg = nullptr;
   unsigned init_msg_len = 0;
-  const char* negotiated_mech = NULL;
+  const char* negotiated_mech = nullptr;
 
   /* select a mechanism for a connection
    *  mechlist      -- mechanisms server has available (punctuation ignored)
@@ -328,11 +348,11 @@ Status SaslClient::HandleNegotiateResponse(const SaslMessagePB& response) {
    *  SASL_NOMECH   -- no mechanism meets requested properties
    *  SASL_INTERACT -- user interaction needed to fill in prompt_need list
    */
-  DVLOG(5) << "SASL Client: Calling sasl_client_start()";
+  TRACE("SASL Client: Calling sasl_client_start()");
   int result = sasl_client_start(
       sasl_conn_.get(),     // The SASL connection context created by init()
       mech_list.c_str(),    // The list of mechanisms from the server.
-      NULL,                 // Disables INTERACT return if NULL.
+      nullptr,              // Disables INTERACT return if NULL.
       &init_msg,            // Filled in on success.
       &init_msg_len,        // Filled in on success.
       &negotiated_mech);    // Filled in on success.
@@ -346,7 +366,7 @@ Status SaslClient::HandleNegotiateResponse(const SaslMessagePB& response) {
 
   // The server matched one of our mechanisms.
   SaslMessagePB::SaslAuth* auth = FindOrNull(mech_auth_map, negotiated_mech);
-  if (PREDICT_FALSE(auth == NULL)) {
+  if (PREDICT_FALSE(auth == nullptr)) {
     return Status::IllegalState("Unable to find auth in map, unexpected error", negotiated_mech);
   }
   negotiated_mech_ = SaslMechanism::value_of(negotiated_mech);
@@ -364,7 +384,7 @@ Status SaslClient::HandleNegotiateResponse(const SaslMessagePB& response) {
 }
 
 Status SaslClient::HandleChallengeResponse(const SaslMessagePB& response) {
-  DVLOG(4) << "SASL Client: Received CHALLENGE response from server";
+  TRACE("SASL Client: Received CHALLENGE response from server");
   if (PREDICT_FALSE(nego_ok_)) {
     LOG(DFATAL) << "Server sent CHALLENGE response after client library returned SASL_OK";
   }
@@ -373,7 +393,7 @@ Status SaslClient::HandleChallengeResponse(const SaslMessagePB& response) {
     return Status::InvalidArgument("No token in CHALLENGE response from server");
   }
 
-  const char* out = NULL;
+  const char* out = nullptr;
   unsigned out_len = 0;
   int result = 0;
   RETURN_NOT_OK(DoSaslStep(response.token(), &out, &out_len, &result));
@@ -383,9 +403,9 @@ Status SaslClient::HandleChallengeResponse(const SaslMessagePB& response) {
 }
 
 Status SaslClient::HandleSuccessResponse(const SaslMessagePB& response) {
-  DVLOG(4) << "SASL Client: Received SUCCESS response from server";
+  TRACE("SASL Client: Received SUCCESS response from server");
   if (!nego_ok_) {
-    const char* out = NULL;
+    const char* out = nullptr;
     unsigned out_len = 0;
     int result = 0;
     RETURN_NOT_OK(DoSaslStep(response.token(), &out, &out_len, &result));
@@ -410,7 +430,7 @@ Status SaslClient::ParseError(const Slice& err_data) {
         error.InitializationErrorString());
   }
   Status s = StatusFromRpcError(error);
-  DVLOG(2) << "SASL Client: Received error response from server: " << s.ToString();
+  TRACE("SASL Client: Received error response from server: $0", s.ToString());
   return s;
 }
 
@@ -422,8 +442,7 @@ int SaslClient::GetOptionCb(const char* plugin_name, const char* option,
 // Used for PLAIN and ANONYMOUS.
 // SASL callback for SASL_CB_USER, SASL_CB_AUTHNAME, SASL_CB_LANGUAGE
 int SaslClient::SimpleCb(int id, const char** result, unsigned* len) {
-  DVLOG(3) << "SASL Client: Simple Callback called: " << StringPrintf("0x%04x", id);
-  if (PREDICT_FALSE(result == NULL)) {
+  if (PREDICT_FALSE(result == nullptr)) {
     LOG(DFATAL) << "SASL Client: result outparam is NULL";
     return SASL_BADPARAM;
   }
@@ -431,19 +450,19 @@ int SaslClient::SimpleCb(int id, const char** result, unsigned* len) {
     // TODO: Support impersonation?
     // For impersonation, USER is the impersonated user, AUTHNAME is the "sudoer".
     case SASL_CB_USER:
-      DVLOG(3) << "SASL Client: callback for SASL_CB_USER";
+      TRACE("SASL Client: callback for SASL_CB_USER");
       if (helper_.IsPlainEnabled()) {
         *result = plain_auth_user_.c_str();
-        if (len != NULL) *len = plain_auth_user_.length();
+        if (len != nullptr) *len = plain_auth_user_.length();
       } else if (helper_.IsAnonymousEnabled()) {
-        *result = NULL;
+        *result = nullptr;
       }
       break;
     case SASL_CB_AUTHNAME:
-      DVLOG(3) << "SASL Client: callback for SASL_CB_AUTHNAME";
+      TRACE("SASL Client: callback for SASL_CB_AUTHNAME");
       if (helper_.IsPlainEnabled()) {
         *result = plain_auth_user_.c_str();
-        if (len != NULL) *len = plain_auth_user_.length();
+        if (len != nullptr) *len = plain_auth_user_.length();
       }
       break;
     case SASL_CB_LANGUAGE:
@@ -461,7 +480,6 @@ int SaslClient::SimpleCb(int id, const char** result, unsigned* len) {
 // Used for PLAIN.
 // SASL callback for SASL_CB_PASS: User password.
 int SaslClient::SecretCb(sasl_conn_t* conn, int id, sasl_secret_t** psecret) {
-  DVLOG(3) << "SASL Client: Secret Callback called: " << StringPrintf("0x%04x", id);
   if (PREDICT_FALSE(!helper_.IsPlainEnabled())) {
     LOG(DFATAL) << "SASL Client: Plain secret callback called, but PLAIN auth is not enabled";
     return SASL_FAIL;

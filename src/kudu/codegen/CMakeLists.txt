@@ -1,34 +1,24 @@
-# Copyright 2014 Cloudera, Inc.
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 
 ################################################################################
 # This target relies on special LLVM-configured cmake functions
 # see http://llvm.org/docs/CMake.html#embedding-llvm-in-your-project
 ################################################################################
-
-#######################################
-# codegen
-#######################################
-
-add_library(codegen
-  code_cache.cc
-  code_generator.cc
-  compilation_manager.cc
-  jit_wrapper.cc
-  module_builder.cc
-  row_projector.cc
-)
 
 #######################################
 # Configure LLVM-specific dependencies
@@ -54,17 +44,7 @@ add_definitions(${LLVM_DEFINITIONS})
 add_definitions(-DLLVM_SUPPORT_VALGRIND_H)
 
 ## Get the required libraries to link to in llvm
-# as of llvm 3.5, there are two different functions for this
-if (${LLVM_PACKAGE_VERSION} VERSION_LESS 3.5)
-  llvm_map_components_to_libraries(llvm_LIBRARIES "${LLVM_REQ_COMPONENTS}")
-else()
-  llvm_map_components_to_libnames(llvm_LIBRARIES "${LLVM_REQ_COMPONENETS}")
-endif()
-target_link_libraries(codegen
-  ${llvm_LIBRARIES}
-  kudu_common
-  kudu_util
-  gutil)
+llvm_map_components_to_libnames(llvm_LIBRARIES "${LLVM_REQ_COMPONENTS}")
 
 #######################################
 # Precompiling to LLVM bytecode
@@ -73,13 +53,24 @@ target_link_libraries(codegen
 ## Create .ll file for precompiled functions (and their dependencies)
 set(CLANG_EXEC ${THIRDPARTY_PREFIX}/bin/clang++)
 set(IR_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/precompiled.cc)
-set(IR_OUTPUT ${BUILD_OUTPUT_ROOT_DIRECTORY}/precompiled.ll)
-set(IR_OUTPUT_ELF ${IR_OUTPUT}.o)
+set(IR_OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/precompiled.ll)
+set(IR_OUTPUT_CC ${IR_OUTPUT}.cc)
+
 # Retrieve all includes directories needed for precompilation
-set(IR_INCLUDES
-  -I ${CMAKE_SOURCE_DIR}/src
-  -I ${GLOG_INCLUDE_DIR}
-  -I ${GTEST_INCLUDE_DIR})
+get_directory_property(IR_INCLUDES
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  INCLUDE_DIRECTORIES)
+foreach(noprefix ${IR_INCLUDES})
+  set(PREFIXED_IR_INCLUDES ${PREFIXED_IR_INCLUDES} -I${noprefix})
+endforeach()
+
+if (APPLE)
+  # OS X keeps the libc++ headers in a non-standard location that the thirdparty
+  # Clang does not know about by default.
+  set(PREFIXED_IR_INCLUDES
+    ${PREFIXED_IR_INCLUDES}
+    -cxx-isystem "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/include/c++/v1")
+endif()
 
 # Get preprocessing definitions, which enable directives for glog and gtest
 get_directory_property(IR_PP_DEFINITIONS
@@ -88,14 +79,14 @@ get_directory_property(IR_PP_DEFINITIONS
 foreach(noprefix ${IR_PP_DEFINITIONS})
     set(PREFIXED_IR_PP_DEFS ${PREFIXED_IR_PP_DEFS} -D${noprefix})
 endforeach()
+
 # Get flags related to actually compiling the source
 set(IR_FLAGS
   -S -emit-llvm
   -DIR_BUILD
   ${CMAKE_CXX_FLAGS}
   ${PREFIXED_IR_PP_DEFS}
-  -Wno-c++11-extensions # OVERRIDE macro conflicts with c++11 override
-  ${IR_INCLUDES})
+  ${PREFIXED_IR_INCLUDES})
 separate_arguments(IR_FLAGS)
 
 # Avoid enabling ASAN in the precompiled IR.
@@ -137,7 +128,7 @@ list(REMOVE_ITEM IR_FLAGS "-O3" "-O2" "-O1" "-Os")
 # See: http://www.cmake.org/Bug/bug_relationship_graph.php?bug_id=13234
 add_library(ir_fake_target ${IR_SOURCE})
 # The IR uses protobufs from kudu_common, so we have to generate that code first.
-target_link_libraries(ir_fake_target kudu_common_proto)
+target_link_libraries(ir_fake_target kudu_common_proto kudu_util ${KUDU_BASE_LIBS})
 
 add_custom_command(
   OUTPUT ${IR_OUTPUT}
@@ -147,28 +138,32 @@ add_custom_command(
     -o ${IR_OUTPUT}
   DEPENDS ir_fake_target)
 
-# Use 'ld' to create an ELF wrapper around the precompiled IR. This creates
-# an elf file which exposes the following symbols:
-#   extern char _binary_precompiled_ll_start;
-#   extern char _binary_precompiled_ll_end;
-# which point to the beginning and end of the IR data, respectively.
+# Use 'xxd' to create a cc file containing the precompiled bitcode as a literal array.
 # See http://stackoverflow.com/questions/4158900/embedding-resources-in-executable-using-gcc
 add_custom_command(
-  OUTPUT ${IR_OUTPUT_ELF}
-  COMMAND ${CMAKE_SOURCE_DIR}/build-support/embed-data-in-elf.sh
-          ${IR_OUTPUT} ${IR_OUTPUT_ELF}
-  DEPENDS ${IR_OUTPUT}
-)
+  OUTPUT ${IR_OUTPUT_CC}
+  COMMAND ${CMAKE_SOURCE_DIR}/build-support/generate_precompiled_xxd.sh ${IR_OUTPUT} ${IR_OUTPUT_CC}
+  DEPENDS ${IR_OUTPUT})
 
-# Link the generated IR into an archive, and make the codegen library
-# include it.
-add_library(codegen_ir STATIC ${IR_OUTPUT_ELF})
-target_link_libraries(codegen codegen_ir)
+#######################################
+# codegen
+#######################################
 
-# We have to explicitly set the linkage language for the library since
-# it doesn't have any source files. CMake needs this in order to know
-# how to link it.
-set_target_properties(codegen_ir PROPERTIES LINKER_LANGUAGE C)
+add_library(codegen
+  code_cache.cc
+  code_generator.cc
+  compilation_manager.cc
+  jit_wrapper.cc
+  module_builder.cc
+  row_projector.cc
+  ${IR_OUTPUT_CC})
+
+target_link_libraries(codegen
+  ${llvm_LIBRARIES}
+  kudu_common
+  kudu_util
+  gutil
+  kudu_common_proto)
 
 #######################################
 # Unit tests

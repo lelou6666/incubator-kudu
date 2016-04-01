@@ -1,21 +1,24 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
+#include <glog/stl_logging.h>
+#include <signal.h>
 #include <string>
 #include <vector>
-#include <glog/stl_logging.h>
 
 #include "kudu/gutil/ref_counted.h"
 #include "kudu/util/countdown_latch.h"
@@ -38,20 +41,9 @@ TEST_F(DebugUtilTest, TestStackTrace) {
   ASSERT_STR_CONTAINS(trace, "kudu::DebugUtilTest_TestStackTrace_Test::TestBody");
 }
 
-TEST_F(DebugUtilTest, TestStackTraceInvalidTid) {
-  string s = DumpThreadStack(1);
-  ASSERT_STR_CONTAINS(s, "unable to deliver signal");
-}
-
-TEST_F(DebugUtilTest, TestStackTraceSelf) {
-  string s = DumpThreadStack(syscall(SYS_gettid));
-  ASSERT_STR_CONTAINS(s, "kudu::DebugUtilTest_TestStackTraceSelf_Test::TestBody()");
-}
-
-TEST_F(DebugUtilTest, TestStackTraceMainThread) {
-  string s = DumpThreadStack(getpid());
-  ASSERT_STR_CONTAINS(s, "kudu::DebugUtilTest_TestStackTraceMainThread_Test::TestBody()");
-}
+// DumpThreadStack is only supported on Linux, since the implementation relies
+// on the tgkill syscall which is not portable.
+#if defined(__linux__)
 
 namespace {
 void SleeperThread(CountDownLatch* l) {
@@ -67,10 +59,25 @@ void fake_signal_handler(int signum) {}
 
 bool IsSignalHandlerRegistered(int signum) {
   struct sigaction cur_action;
-  CHECK_EQ(0, sigaction(signum, NULL, &cur_action));
+  CHECK_EQ(0, sigaction(signum, nullptr, &cur_action));
   return cur_action.sa_handler != SIG_DFL;
 }
 } // anonymous namespace
+
+TEST_F(DebugUtilTest, TestStackTraceInvalidTid) {
+  string s = DumpThreadStack(1);
+  ASSERT_STR_CONTAINS(s, "unable to deliver signal");
+}
+
+TEST_F(DebugUtilTest, TestStackTraceSelf) {
+  string s = DumpThreadStack(Thread::CurrentThreadId());
+  ASSERT_STR_CONTAINS(s, "kudu::DebugUtilTest_TestStackTraceSelf_Test::TestBody()");
+}
+
+TEST_F(DebugUtilTest, TestStackTraceMainThread) {
+  string s = DumpThreadStack(getpid());
+  ASSERT_STR_CONTAINS(s, "kudu::DebugUtilTest_TestStackTraceMainThread_Test::TestBody()");
+}
 
 TEST_F(DebugUtilTest, TestSignalStackTrace) {
   CountDownLatch l(1);
@@ -133,9 +140,10 @@ TEST_F(DebugUtilTest, TestSignalStackTrace) {
 TEST_F(DebugUtilTest, TestDumpAllThreads) {
   vector<pid_t> tids;
   ASSERT_OK(ListThreads(&tids));
-  BOOST_FOREACH(pid_t tid, tids) {
+  for (pid_t tid : tids) {
     LOG(INFO) << DumpThreadStack(tid);
   }
 }
+#endif
 
 } // namespace kudu

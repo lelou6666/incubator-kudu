@@ -1,20 +1,23 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
 
 #include "kudu/client/client.h"
 #include "kudu/consensus/consensus.proxy.h"
@@ -59,7 +62,6 @@ using master::ReportedTabletPB;
 using master::TabletReportPB;
 using rpc::Messenger;
 using rpc::MessengerBuilder;
-using std::tr1::shared_ptr;
 using strings::Substitute;
 using tablet::TabletPeer;
 using tserver::MiniTabletServer;
@@ -80,8 +82,8 @@ class TsTabletManagerITest : public KuduTest {
   const KuduSchema schema_;
 
   gscoped_ptr<MiniCluster> cluster_;
-  shared_ptr<KuduClient> client_;
-  shared_ptr<Messenger> client_messenger_;
+  client::sp::shared_ptr<KuduClient> client_;
+  std::shared_ptr<Messenger> client_messenger_;
 };
 
 void TsTabletManagerITest::SetUp() {
@@ -94,7 +96,7 @@ void TsTabletManagerITest::SetUp() {
   opts.num_tablet_servers = kNumReplicas;
   cluster_.reset(new MiniCluster(env_.get(), opts));
   ASSERT_OK(cluster_->Start());
-  ASSERT_OK(cluster_->CreateClient(NULL, &client_));
+  ASSERT_OK(cluster_->CreateClient(nullptr, &client_));
 }
 
 void TsTabletManagerITest::TearDown() {
@@ -114,7 +116,7 @@ TEST_F(TsTabletManagerITest, TestReportNewLeaderOnLeaderChange) {
   OverrideFlagForSlowTests("num_election_test_loops", "10");
 
   // Create the table.
-  shared_ptr<KuduTable> table;
+  client::sp::shared_ptr<KuduTable> table;
   gscoped_ptr<KuduTableCreator> table_creator(client_->NewTableCreator());
   ASSERT_OK(table_creator->table_name(kTableName)
             .schema(&schema_)

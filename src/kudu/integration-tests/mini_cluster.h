@@ -1,24 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_INTEGRATION_TESTS_MINI_CLUSTER_H
 #define KUDU_INTEGRATION_TESTS_MINI_CLUSTER_H
 
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
+#include "kudu/client/shared_ptr.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/util/env.h"
 
@@ -146,7 +150,7 @@ class MiniCluster {
   // within kRegistrationWaitTimeSeconds.
   Status WaitForTabletServerCount(int count);
   Status WaitForTabletServerCount(int count,
-                                  std::vector<std::tr1::shared_ptr<master::TSDescriptor> >* descs);
+                                  std::vector<std::shared_ptr<master::TSDescriptor> >* descs);
 
   // Create a client configured to talk to this cluster. Builder may contain
   // override options for the client. The master address will be overridden to
@@ -155,12 +159,12 @@ class MiniCluster {
   //
   // REQUIRES: the cluster must have already been Start()ed.
   Status CreateClient(client::KuduClientBuilder* builder,
-                      std::tr1::shared_ptr<client::KuduClient>* client);
+                      client::sp::shared_ptr<client::KuduClient>* client);
 
  private:
   enum {
     kTabletReportWaitTimeSeconds = 5,
-    kRegistrationWaitTimeSeconds = 5,
+    kRegistrationWaitTimeSeconds = 15,
     kMasterLeaderElectionWaitTimeSeconds = 10
   };
 
@@ -174,8 +178,8 @@ class MiniCluster {
   const std::vector<uint16_t> master_rpc_ports_;
   const std::vector<uint16_t> tserver_rpc_ports_;
 
-  std::vector<std::tr1::shared_ptr<master::MiniMaster> > mini_masters_;
-  std::vector<std::tr1::shared_ptr<tserver::MiniTabletServer> > mini_tablet_servers_;
+  std::vector<std::shared_ptr<master::MiniMaster> > mini_masters_;
+  std::vector<std::shared_ptr<tserver::MiniTabletServer> > mini_tablet_servers_;
 };
 
 } // namespace kudu

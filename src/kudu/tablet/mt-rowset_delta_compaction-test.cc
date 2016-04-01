@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <boost/thread/thread.hpp>
-#include <tr1/unordered_map>
+#include <memory>
 
 #include "kudu/gutil/atomicops.h"
 #include "kudu/gutil/stringprintf.h"
@@ -34,6 +36,8 @@ DEFINE_int32(num_flush_threads, kDefaultNumFlushThreads, "Number of flusher thre
 DEFINE_int32(num_compaction_threads, kDefaultNumCompactionThreads, "Number of compaction threads");
 DEFINE_int32(num_seconds_per_thread, kDefaultNumSecondsPerThread,
              "Minimum number of seconds each thread should work");
+
+using std::shared_ptr;
 
 namespace kudu {
 namespace tablet {
@@ -91,7 +95,7 @@ class TestMultiThreadedRowSetDeltaCompaction : public TestRowSet {
                                  MvccSnapshot::CreateSnapshotIncludingAllTransactions(),
                                  &iter));
     uint32_t expected = NoBarrier_Load(&update_counter_);
-    ASSERT_OK(iter->Init(NULL));
+    ASSERT_OK(iter->Init(nullptr));
     while (iter->HasNext()) {
       ASSERT_OK_FAST(iter->NextBlock(&dst));
       size_t n = dst.nrows();
@@ -125,17 +129,17 @@ class TestMultiThreadedRowSetDeltaCompaction : public TestRowSet {
   }
 
   void JoinThreads() {
-    for (int i = 0; i < update_threads_.size(); i++) {
-      ASSERT_OK(ThreadJoiner(update_threads_[i].get()).Join());
+    for (const auto& thread : update_threads_) {
+      ASSERT_OK(ThreadJoiner(thread.get()).Join());
     }
-    for (int i = 0; i < flush_threads_.size(); i++) {
-      ASSERT_OK(ThreadJoiner(flush_threads_[i].get()).Join());
+    for (const auto& thread : flush_threads_) {
+      ASSERT_OK(ThreadJoiner(thread.get()).Join());
     }
-    for (int i = 0; i < compaction_threads_.size(); i++) {
-      ASSERT_OK(ThreadJoiner(compaction_threads_[i].get()).Join());
+    for (const auto& thread : compaction_threads_) {
+      ASSERT_OK(ThreadJoiner(thread.get()).Join());
     }
-    for (int i = 0; i < alter_schema_threads_.size(); i++) {
-      ASSERT_OK(ThreadJoiner(alter_schema_threads_[i].get()).Join());
+    for (const auto& thread : alter_schema_threads_) {
+      ASSERT_OK(ThreadJoiner(thread.get()).Join());
     }
   }
 

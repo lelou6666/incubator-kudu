@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/rpc-test-base.h"
 
@@ -29,6 +32,7 @@ METRIC_DECLARE_counter(rpc_connections_accepted);
 METRIC_DECLARE_counter(rpcs_queue_overflow);
 
 using std::string;
+using std::shared_ptr;
 using strings::Substitute;
 
 namespace kudu {
@@ -150,7 +154,7 @@ class BogusServicePool : public ServicePool {
   BogusServicePool(gscoped_ptr<ServiceIf> service,
                    const scoped_refptr<MetricEntity>& metric_entity,
                    size_t service_queue_length)
-    : ServicePool(service.Pass(), metric_entity, service_queue_length) {
+    : ServicePool(std::move(service), metric_entity, service_queue_length) {
   }
   virtual Status Init(int num_threads) OVERRIDE {
     // Do nothing
@@ -187,7 +191,7 @@ TEST_F(MultiThreadedRpcTest, TestBlowOutServiceQueue) {
 
   gscoped_ptr<ServiceIf> service(new GenericCalculatorService());
   service_name_ = service->service_name();
-  service_pool_ = new BogusServicePool(service.Pass(),
+  service_pool_ = new BogusServicePool(std::move(service),
                                       server_messenger_->metric_entity(),
                                       kMaxConcurrency);
   ASSERT_OK(service_pool_->Init(n_worker_threads_));
@@ -211,16 +215,16 @@ TEST_F(MultiThreadedRpcTest, TestBlowOutServiceQueue) {
   service_pool_->Shutdown();
   server_messenger_->Shutdown();
 
-  for (int i = 0; i < 3; i++) {
-    ASSERT_OK(ThreadJoiner(threads[i].get()).warn_every_ms(500).Join());
+  for (const auto& thread : threads) {
+    ASSERT_OK(ThreadJoiner(thread.get()).warn_every_ms(500).Join());
   }
 
   // Verify that one error was due to backpressure.
   int errors_backpressure = 0;
   int errors_shutdown = 0;
 
-  for (int i = 0; i < 3; i++) {
-    IncrementBackpressureOrShutdown(&status[i], &errors_backpressure, &errors_shutdown);
+  for (const auto& s : status) {
+    IncrementBackpressureOrShutdown(&s, &errors_backpressure, &errors_shutdown);
   }
 
   ASSERT_EQ(1, errors_backpressure);
@@ -277,7 +281,7 @@ TEST_F(MultiThreadedRpcTest, TestShutdownWithIncomingConnections) {
   service_pool_->Shutdown();
   server_messenger_->Shutdown();
 
-  BOOST_FOREACH(scoped_refptr<kudu::Thread>& t, threads) {
+  for (scoped_refptr<kudu::Thread>& t : threads) {
     ASSERT_OK(ThreadJoiner(t.get()).warn_every_ms(500).Join());
   }
 }

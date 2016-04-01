@@ -1,18 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <boost/lexical_cast.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
@@ -80,9 +82,9 @@ class TestTabletSchema : public KuduTabletTest {
 
     vector<string> rows;
     ASSERT_OK(DumpTablet(*tablet(), projection, &rows));
-    BOOST_FOREACH(const string& row, rows) {
+    for (const string& row : rows) {
       bool found = false;
-      BOOST_FOREACH(const StringPair& k, keys) {
+      for (const StringPair& k : keys) {
         if (row.find(k.first) != string::npos) {
           ASSERT_STR_CONTAINS(row, k.second);
           found = true;
@@ -95,10 +97,8 @@ class TestTabletSchema : public KuduTabletTest {
 
  private:
   Schema CreateBaseSchema() {
-    return Schema(boost::assign::list_of
-                   (ColumnSchema("key", INT32))
-                   (ColumnSchema("c1", INT32)),
-                   1);
+    return Schema({ ColumnSchema("key", INT32),
+                    ColumnSchema("c1", INT32) }, 1);
   }
 };
 
@@ -106,10 +106,9 @@ class TestTabletSchema : public KuduTabletTest {
 // the original schema. Verify that the server reject the request.
 TEST_F(TestTabletSchema, TestRead) {
   const size_t kNumRows = 10;
-  Schema projection(boost::assign::list_of
-                    (ColumnSchema("key", INT32))
-                    (ColumnSchema("c2", INT64))
-                    (ColumnSchema("c3", STRING)),
+  Schema projection({ ColumnSchema("key", INT32),
+                      ColumnSchema("c2", INT64),
+                      ColumnSchema("c3", STRING) },
                     1);
 
   InsertRows(client_schema_, 0, kNumRows);
@@ -117,7 +116,7 @@ TEST_F(TestTabletSchema, TestRead) {
   gscoped_ptr<RowwiseIterator> iter;
   ASSERT_OK(tablet()->NewRowIterator(projection, &iter));
 
-  Status s = iter->Init(NULL);
+  Status s = iter->Init(nullptr);
   ASSERT_TRUE(s.IsInvalidArgument());
   ASSERT_STR_CONTAINS(s.message().ToString(),
                       "Some columns are not present in the current schema: c2, c3");

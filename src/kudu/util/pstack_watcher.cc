@@ -1,42 +1,44 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/pstack_watcher.h"
 
+#include <memory>
 #include <stdio.h>
 #include <string>
 #include <sys/types.h>
-#include <tr1/memory>
 #include <unistd.h>
 #include <vector>
 
 #include "kudu/gutil/strings/substitute.h"
+#include "kudu/util/env.h"
 #include "kudu/util/errno.h"
 #include "kudu/util/status.h"
 #include "kudu/util/subprocess.h"
 
 namespace kudu {
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 using strings::Substitute;
 
-PstackWatcher::PstackWatcher(const MonoDelta& timeout)
-  : timeout_(timeout),
-    running_(true),
-    cond_(&lock_) {
+PstackWatcher::PstackWatcher(MonoDelta timeout)
+    : timeout_(std::move(timeout)), running_(true), cond_(&lock_) {
   CHECK_OK(Thread::Create("pstack_watcher", "pstack_watcher",
                  boost::bind(&PstackWatcher::Run, this), &thread_));
 }
@@ -113,7 +115,7 @@ Status PstackWatcher::DumpPidStacks(pid_t pid, int flags) {
   }
 
   // Otherwise, try to use pstack or gstack.
-  const char *progname = NULL;
+  const char *progname = nullptr;
   if (HasProgram("pstack").ok()) {
     progname = "pstack";
   } else if (HasProgram("gstack").ok()) {
@@ -144,7 +146,10 @@ Status PstackWatcher::RunGdbStackDump(pid_t pid, int flags) {
     argv.push_back("-ex");
     argv.push_back("thread apply all bt full");
   }
-  argv.push_back(Substitute("/proc/$0/exe", pid));
+  string executable;
+  Env* env = Env::Default();
+  RETURN_NOT_OK(env->GetExecutablePath(&executable));
+  argv.push_back(executable);
   argv.push_back(Substitute("$0", pid));
   return RunStackDump(prog, argv);
 }

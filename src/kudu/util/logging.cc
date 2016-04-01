@@ -1,34 +1,25 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/util/logging.h"
 
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/uuid/uuid_generators.hpp>
+#include <mutex>
 #include <sstream>
 #include <stdio.h>
 #include <iostream>
@@ -37,6 +28,7 @@
 
 #include "kudu/gutil/callback.h"
 #include "kudu/gutil/spinlock.h"
+#include "kudu/util/debug-util.h"
 #include "kudu/util/flag_tags.h"
 
 DEFINE_string(log_filename, "",
@@ -60,9 +52,7 @@ namespace {
 
 class SimpleSink : public google::LogSink {
  public:
-  explicit SimpleSink(const LoggingCallback& cb)
-    : cb_(cb) {
-  }
+  explicit SimpleSink(LoggingCallback cb) : cb_(std::move(cb)) {}
 
   virtual ~SimpleSink() OVERRIDE {
   }
@@ -101,7 +91,7 @@ SpinLock logging_mutex(base::LINKER_INITIALIZED);
 // There can only be a single instance of a SimpleSink.
 //
 // Protected by 'logging_mutex'.
-SimpleSink* registered_sink = NULL;
+SimpleSink* registered_sink = nullptr;
 
 // Records the logging severity after the first call to
 // InitGoogleLoggingSafe{Basic}. Calls to UnregisterLoggingCallback()
@@ -109,6 +99,7 @@ SimpleSink* registered_sink = NULL;
 //
 // Protected by 'logging_mutex'.
 int initial_stderr_severity;
+
 
 void UnregisterLoggingCallbackUnlocked() {
   CHECK(logging_mutex.IsHeld());
@@ -119,9 +110,51 @@ void UnregisterLoggingCallbackUnlocked() {
   google::SetStderrLogging(initial_stderr_severity);
   google::RemoveLogSink(registered_sink);
   delete registered_sink;
-  registered_sink = NULL;
+  registered_sink = nullptr;
 }
 
+void FlushCoverageOnExit() {
+  // Coverage flushing is not re-entrant, but this might be called from a
+  // crash signal context, so avoid re-entrancy.
+  static __thread bool in_call = false;
+  if (in_call) return;
+  in_call = true;
+
+  // The failure writer will be called multiple times per exit.
+  // We only need to flush coverage once. We use a 'once' here so that,
+  // if another thread is already flushing, we'll block and wait for them
+  // to finish before allowing this thread to call abort().
+  static std::once_flag once;
+  std::call_once(once, [] {
+      static const char msg[] = "Flushing coverage data before crash...\n";
+      write(STDERR_FILENO, msg, arraysize(msg));
+      TryFlushCoverage();
+    });
+  in_call = false;
+}
+
+// On SEGVs, etc, glog will call this function to write the error to stderr. This
+// implementation is copied from glog with the exception that we also flush coverage
+// the first time it's called.
+//
+// NOTE: this is only used in coverage builds!
+void FailureWriterWithCoverage(const char* data, int size) {
+  FlushCoverageOnExit();
+
+  // Original implementation from glog:
+  if (write(STDERR_FILENO, data, size) < 0) {
+    // Ignore errors.
+  }
+}
+
+// GLog "failure function". This is called in the case of LOG(FATAL) to
+// ensure that we flush coverage even on crashes.
+//
+// NOTE: this is only used in coverage builds!
+void FlushCoverageAndAbort() {
+  FlushCoverageOnExit();
+  abort();
+}
 } // anonymous namespace
 
 void InitGoogleLoggingSafe(const char* arg) {
@@ -163,6 +196,17 @@ void InitGoogleLoggingSafe(const char* arg) {
   }
 
   google::InitGoogleLogging(arg);
+
+  // In coverage builds, we should flush coverage before exiting on crash.
+  // This way, fault injection tests still capture coverage of the daemon
+  // that "crashed".
+  if (IsCoverageBuild()) {
+    // We have to use both the "failure writer" and the "FailureFunction".
+    // This allows us to handle both LOG(FATAL) and unintended crashes like
+    // SEGVs.
+    google::InstallFailureWriter(FailureWriterWithCoverage);
+    google::InstallFailureFunction(FlushCoverageAndAbort);
+  }
 
   // Needs to be done after InitGoogleLogging
   if (FLAGS_log_filename.empty()) {
@@ -256,6 +300,23 @@ void ShutdownLoggingSafe() {
 void LogCommandLineFlags() {
   LOG(INFO) << "Flags (see also /varz are on debug webserver):" << endl
             << google::CommandlineFlagsIntoString();
+}
+
+// Support for the special THROTTLE_MSG token in a log message stream.
+ostream& operator<<(ostream &os, const PRIVATE_ThrottleMsg&) {
+  using google::LogMessage;
+#ifdef DISABLE_RTTI
+  LogMessage::LogStream *log = static_cast<LogMessage::LogStream*>(&os);
+#else
+  LogMessage::LogStream *log = dynamic_cast<LogMessage::LogStream*>(&os);
+#endif
+  CHECK(log && log == log->self())
+      << "You must not use COUNTER with non-glog ostream";
+  int ctr = log->ctr();
+  if (ctr > 0) {
+    os << " [suppressed " << ctr << " similar messages]";
+  }
+  return os;
 }
 
 } // namespace kudu

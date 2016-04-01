@@ -1,5 +1,4 @@
 // Copyright (c) 2012 The Chromium Authors. All rights reserved.
-// Portions copyright 2015 Cloudera, Inc.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -1142,6 +1141,9 @@ INTERNAL_DECLARE_SET_TRACE_VALUE(const char*, arg, as_string,
                                  TRACE_VALUE_TYPE_STRING)
 INTERNAL_DECLARE_SET_TRACE_VALUE(const TraceStringWithCopy&, arg.str(),
                                  as_string, TRACE_VALUE_TYPE_COPY_STRING)
+#if defined(__APPLE__)
+INTERNAL_DECLARE_SET_TRACE_VALUE_INT(size_t, TRACE_VALUE_TYPE_UINT)
+#endif
 
 #undef INTERNAL_DECLARE_SET_TRACE_VALUE
 #undef INTERNAL_DECLARE_SET_TRACE_VALUE_INT
@@ -1286,7 +1288,7 @@ static inline kudu::debug::TraceEventHandle AddTraceEvent(
     const char* name,
     uint64_t id,
     unsigned char flags) {
-  int thread_id = static_cast<int>(kudu::Thread::PlatformThreadId());
+  int thread_id = static_cast<int>(kudu::Thread::UniqueThreadId());
   MicrosecondsInt64 now = GetMonoTimeMicros();
   return AddTraceEventWithThreadIdAndTimestamp(phase, category_group_enabled,
                                                name, id, thread_id, now, flags);
@@ -1322,7 +1324,7 @@ static inline kudu::debug::TraceEventHandle AddTraceEvent(
     unsigned char flags,
     const char* arg1_name,
     const ARG1_TYPE& arg1_val) {
-  int thread_id = static_cast<int>(kudu::Thread::PlatformThreadId());
+  int thread_id = static_cast<int>(kudu::Thread::UniqueThreadId());
   MicrosecondsInt64 now = GetMonoTimeMicros();
   return AddTraceEventWithThreadIdAndTimestamp(phase, category_group_enabled,
                                                name, id, thread_id, now, flags,
@@ -1365,7 +1367,7 @@ static inline kudu::debug::TraceEventHandle AddTraceEvent(
     const ARG1_TYPE& arg1_val,
     const char* arg2_name,
     const ARG2_TYPE& arg2_val) {
-  int thread_id = static_cast<int>(kudu::Thread::PlatformThreadId());
+  int thread_id = static_cast<int>(kudu::Thread::UniqueThreadId());
   MicrosecondsInt64 now = GetMonoTimeMicros();
   return AddTraceEventWithThreadIdAndTimestamp(phase, category_group_enabled,
                                                name, id, thread_id, now, flags,

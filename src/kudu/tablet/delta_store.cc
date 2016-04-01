@@ -1,30 +1,33 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/delta_store.h"
 
 #include <algorithm>
 
-#include "kudu/gutil/strings/substitute.h"
 #include "kudu/gutil/strings/strcat.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/tablet/deltafile.h"
 
 namespace kudu {
 namespace tablet {
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using strings::Substitute;
 
 string DeltaKeyAndUpdate::Stringify(DeltaType type, const Schema& schema) const {
@@ -65,10 +68,10 @@ Status DebugDumpDeltaIterator(DeltaType type,
     RETURN_NOT_OK(iter->PrepareBatch(n, DeltaIterator::PREPARE_FOR_COLLECT));
     vector<DeltaKeyAndUpdate> cells;
     RETURN_NOT_OK(iter->FilterColumnIdsAndCollectDeltas(
-                      vector<int>(),
+                      vector<ColumnId>(),
                       &cells,
                       &arena));
-    BOOST_FOREACH(const DeltaKeyAndUpdate& cell, cells) {
+    for (const DeltaKeyAndUpdate& cell : cells) {
       LOG_STRING(INFO, out) << cell.Stringify(type, schema);
     }
 
@@ -104,10 +107,10 @@ Status WriteDeltaIteratorToFile(DeltaIterator* iter,
 
     RETURN_NOT_OK(iter->PrepareBatch(n, DeltaIterator::PREPARE_FOR_COLLECT));
     vector<DeltaKeyAndUpdate> cells;
-    RETURN_NOT_OK(iter->FilterColumnIdsAndCollectDeltas(vector<int>(),
+    RETURN_NOT_OK(iter->FilterColumnIdsAndCollectDeltas(vector<ColumnId>(),
                                                         &cells,
                                                         &arena));
-    BOOST_FOREACH(const DeltaKeyAndUpdate& cell, cells) {
+    for (const DeltaKeyAndUpdate& cell : cells) {
       RowChangeList rcl(cell.cell);
       RETURN_NOT_OK(out->AppendDelta<Type>(cell.key, rcl));
       RETURN_NOT_OK(stats.UpdateStats(cell.key.timestamp(), rcl));

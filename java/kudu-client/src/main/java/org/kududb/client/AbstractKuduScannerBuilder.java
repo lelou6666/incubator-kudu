@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import java.util.ArrayList;
@@ -20,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import org.kududb.annotations.InterfaceAudience;
 import org.kududb.annotations.InterfaceStability;
 import org.kududb.tserver.Tserver;
+import org.kududb.util.HybridTimeUtil;
 
 /**
  * Abstract class to extend in order to create builders for scanners.
@@ -33,7 +37,7 @@ public abstract class AbstractKuduScannerBuilder
   final List<Tserver.ColumnRangePredicatePB> columnRangePredicates;
 
   AsyncKuduScanner.ReadMode readMode = AsyncKuduScanner.ReadMode.READ_LATEST;
-  int maxNumBytes = 1024*1024;
+  int batchSizeBytes = 1024*1024;
   long limit = Long.MAX_VALUE;
   boolean prefetching = false;
   boolean cacheBlocks = true;
@@ -43,6 +47,7 @@ public abstract class AbstractKuduScannerBuilder
   byte[] lowerBoundPartitionKey = AsyncKuduClient.EMPTY_ARRAY;
   byte[] upperBoundPartitionKey = AsyncKuduClient.EMPTY_ARRAY;
   List<String> projectedColumnNames = null;
+  List<Integer> projectedColumnIndexes = null;
   long scanRequestTimeout;
 
   AbstractKuduScannerBuilder(AsyncKuduClient client, KuduTable table) {
@@ -88,10 +93,13 @@ public abstract class AbstractKuduScannerBuilder
 
   /**
    * Set which columns will be read by the Scanner.
+   * Calling this method after {@link #setProjectedColumnIndexes(List)} will reset the projected
+   * columns to those specified in {@code columnNames}.
    * @param columnNames the names of columns to read, or 'null' to read all columns
    * (the default)
    */
   public S setProjectedColumnNames(List<String> columnNames) {
+    projectedColumnIndexes = null;
     if (columnNames != null) {
       projectedColumnNames = ImmutableList.copyOf(columnNames);
     } else {
@@ -101,15 +109,32 @@ public abstract class AbstractKuduScannerBuilder
   }
 
   /**
-   * Sets the maximum number of bytes returned at once by the scanner. The default is 1MB.
+   * Set which columns will be read by the Scanner.
+   * Calling this method after {@link #setProjectedColumnNames(List)} will reset the projected
+   * columns to those specified in {@code columnIndexes}.
+   * @param columnIndexes the indexes of columns to read, or 'null' to read all columns
+   * (the default)
+   */
+  public S setProjectedColumnIndexes(List<Integer> columnIndexes) {
+    projectedColumnNames = null;
+    if (columnIndexes != null) {
+      projectedColumnIndexes = ImmutableList.copyOf(columnIndexes);
+    } else {
+      projectedColumnIndexes = null;
+    }
+    return (S) this;
+  }
+
+  /**
+   * Sets the maximum number of bytes returned by the scanner, on each batch. The default is 1MB.
    * <p>
    * Kudu may actually return more than this many bytes because it will not
    * truncate a rowResult in the middle.
-   * @param maxNumBytes a strictly positive number of bytes
+   * @param batchSizeBytes a strictly positive number of bytes
    * @return this instance
    */
-  public S maxNumBytes(int maxNumBytes) {
-    this.maxNumBytes = maxNumBytes;
+  public S batchSizeBytes(int batchSizeBytes) {
+    this.batchSizeBytes = batchSizeBytes;
     return (S) this;
   }
 
@@ -125,7 +150,10 @@ public abstract class AbstractKuduScannerBuilder
   }
 
   /**
-   * Enables prefetching of rows for the scanner, disabled by default.
+   * Enables prefetching of rows for the scanner, i.e. whether to send a request for more data
+   * to the server immediately after we receive a response (instead of waiting for the user
+   * to call {@code  nextRows()}). Disabled by default.
+   * NOTE: This is risky until KUDU-1260 is resolved.
    * @param prefetching a boolean that indicates if the scanner should prefetch rows
    * @return this instance
    */
@@ -148,13 +176,29 @@ public abstract class AbstractKuduScannerBuilder
   /**
    * Sets a previously encoded HT timestamp as a snapshot timestamp, for tests. None is used by
    * default.
+   * Requires that the ReadMode is READ_AT_SNAPSHOT.
    * @param htTimestamp a long representing a HybridClock-encoded timestamp
    * @return this instance
-   * @throws IllegalArgumentException if the timestamp is less than 0
+   * @throws IllegalArgumentException on build(), if the timestamp is less than 0 or if the
+   *                                  read mode was not set to READ_AT_SNAPSHOT
    */
   @InterfaceAudience.Private
-  public S snapshotTimestamp(long htTimestamp) {
+  public S snapshotTimestampRaw(long htTimestamp) {
     this.htTimestamp = htTimestamp;
+    return (S) this;
+  }
+
+  /**
+   * Sets the timestamp the scan must be executed at, in microseconds since the Unix epoch. None is
+   * used by default.
+   * Requires that the ReadMode is READ_AT_SNAPSHOT.
+   * @param timestamp a long representing an instant in microseconds since the unix epoch.
+   * @return this instance
+   * @throws IllegalArgumentException on build(), if the timestamp is less than 0 or if the
+   *                                  read mode was not set to READ_AT_SNAPSHOT
+   */
+  public S snapshotTimestampMicros(long timestamp) {
+    this.htTimestamp = HybridTimeUtil.physicalAndLogicalToHTTimestamp(timestamp, 0);
     return (S) this;
   }
 

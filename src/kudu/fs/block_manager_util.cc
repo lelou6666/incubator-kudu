@@ -1,23 +1,25 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/fs/block_manager_util.h"
 
 #include <set>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <utility>
 
-#include <boost/foreach.hpp>
 #include <gflags/gflags.h>
 
 #include "kudu/fs/fs.pb.h"
@@ -35,17 +37,16 @@ namespace fs {
 
 using std::set;
 using std::string;
-using std::tr1::unordered_map;
+using std::unordered_map;
 using std::vector;
 using strings::Substitute;
 
 PathInstanceMetadataFile::PathInstanceMetadataFile(Env* env,
-                                                   const string& block_manager_type,
-                                                   const string& filename)
-  : env_(env),
-    block_manager_type_(block_manager_type),
-    filename_(filename) {
-}
+                                                   string block_manager_type,
+                                                   string filename)
+    : env_(env),
+      block_manager_type_(std::move(block_manager_type)),
+      filename_(std::move(filename)) {}
 
 PathInstanceMetadataFile::~PathInstanceMetadataFile() {
   if (lock_) {
@@ -67,7 +68,7 @@ Status PathInstanceMetadataFile::Create(const string& uuid, const vector<string>
   PathSetPB* new_path_set = new_instance.mutable_path_set();
   new_path_set->set_uuid(uuid);
   new_path_set->mutable_all_uuids()->Reserve(all_uuids.size());
-  BOOST_FOREACH(const string& u, all_uuids) {
+  for (const string& u : all_uuids) {
     new_path_set->add_all_uuids(u);
   }
 
@@ -126,7 +127,7 @@ Status PathInstanceMetadataFile::CheckIntegrity(
   unordered_map<string, PathInstanceMetadataFile*> uuids;
   pair<string, PathInstanceMetadataFile*> first_all_uuids;
 
-  BOOST_FOREACH(PathInstanceMetadataFile* instance, instances) {
+  for (PathInstanceMetadataFile* instance : instances) {
     const PathSetPB& path_set = instance->metadata()->path_set();
 
     // Check that this instance's UUID wasn't already claimed.

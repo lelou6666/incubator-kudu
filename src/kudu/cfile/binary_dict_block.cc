@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/cfile/binary_dict_block.h"
 
@@ -106,7 +109,7 @@ int BinaryDictBlockBuilder::AddCodeWords(const uint8_t* vals, size_t count) {
         break;
       }
       const uint8_t* s_ptr = dictionary_strings_arena_.AddSlice(*src);
-      if (s_ptr == NULL) {
+      if (s_ptr == nullptr) {
         // Arena does not have enough space for string content
         // Ideally, it should not happen.
         LOG(ERROR) << "Arena of Dictionary Encoder does not have enough memory for strings";
@@ -150,7 +153,7 @@ Status BinaryDictBlockBuilder::AppendExtraInfo(CFileWriter* c_writer, CFileFoote
   return Status::OK();
 }
 
-uint64_t BinaryDictBlockBuilder::Count() const {
+size_t BinaryDictBlockBuilder::Count() const {
   return data_builder_->Count();
 }
 
@@ -170,9 +173,9 @@ Status BinaryDictBlockBuilder::GetFirstKey(void* key_void) const {
 // Decoding
 ////////////////////////////////////////////////////////////
 
-BinaryDictBlockDecoder::BinaryDictBlockDecoder(const Slice& slice, CFileIterator* iter)
-  : data_(slice),
-    parsed_(false) {
+BinaryDictBlockDecoder::BinaryDictBlockDecoder(Slice slice, CFileIterator* iter)
+    : data_(std::move(slice)),
+      parsed_(false) {
   dict_decoder_ = iter->GetDictDecoder();
 }
 
@@ -212,7 +215,7 @@ void BinaryDictBlockDecoder::SeekToPositionInBlock(uint pos) {
 
 Status BinaryDictBlockDecoder::SeekAtOrAfterValue(const void* value_void, bool* exact) {
   if (mode_ == kCodeWordMode) {
-    DCHECK(value_void != NULL);
+    DCHECK(value_void != nullptr);
     Status s = dict_decoder_->SeekAtOrAfterValue(value_void, exact);
     if (!s.ok()) {
       // This case means the value_void is larger that the largest key

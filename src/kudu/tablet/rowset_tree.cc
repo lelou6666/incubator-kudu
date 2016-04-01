@@ -1,32 +1,37 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/rowset_tree.h"
 
 #include <algorithm>
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "kudu/gutil/stl_util.h"
 #include "kudu/tablet/rowset.h"
+#include "kudu/tablet/rowset_metadata.h"
 #include "kudu/util/interval_tree.h"
 #include "kudu/util/interval_tree-inl.h"
 #include "kudu/util/slice.h"
 
 using std::vector;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace tablet {
@@ -40,7 +45,8 @@ bool RSEndpointBySliceCompare(const RowSetTree::RSEndpoint& a,
   if (slice_cmp) return slice_cmp < 0;
   ptrdiff_t rs_cmp = a.rowset_ - b.rowset_;
   if (rs_cmp) return rs_cmp < 0;
-  return b.endpoint_ == RowSetTree::STOP;
+  if (a.endpoint_ != b.endpoint_) return a.endpoint_ == RowSetTree::START;
+  return false;
 }
 
 } // anonymous namespace
@@ -85,7 +91,7 @@ Status RowSetTree::Reset(const RowSetVector &rowsets) {
 
   // Iterate over each of the provided RowSets, fetching their
   // bounds and adding them to the local vectors.
-  BOOST_FOREACH(const shared_ptr<RowSet> &rs, rowsets) {
+  for (const shared_ptr<RowSet> &rs : rowsets) {
     gscoped_ptr<RowSetWithBounds> rsit(new RowSetWithBounds());
     rsit->rowset = rs.get();
     Slice min_key, max_key;
@@ -124,6 +130,15 @@ Status RowSetTree::Reset(const RowSetVector &rowsets) {
   tree_.reset(new IntervalTree<RowSetIntervalTraits>(entries_));
   key_endpoints_.swap(endpoints);
   all_rowsets_.assign(rowsets.begin(), rowsets.end());
+
+  // Build the mapping from DRS ID to DRS.
+  drs_by_id_.clear();
+  for (auto& rs : all_rowsets_) {
+    if (rs->metadata()) {
+      InsertOrDie(&drs_by_id_, rs->metadata()->id(), rs.get());
+    }
+  }
+
   initted_ = true;
 
   return Status::OK();
@@ -135,7 +150,7 @@ void RowSetTree::FindRowSetsIntersectingInterval(const Slice &lower_bound,
   DCHECK(initted_);
 
   // All rowsets with unknown bounds need to be checked.
-  BOOST_FOREACH(const shared_ptr<RowSet> &rs, unbounded_rowsets_) {
+  for (const shared_ptr<RowSet> &rs : unbounded_rowsets_) {
     rowsets->push_back(rs.get());
   }
 
@@ -149,7 +164,7 @@ void RowSetTree::FindRowSetsIntersectingInterval(const Slice &lower_bound,
   from_tree.reserve(all_rowsets_.size());
   tree_->FindIntersectingInterval(&query, &from_tree);
   rowsets->reserve(rowsets->size() + from_tree.size());
-  BOOST_FOREACH(RowSetWithBounds *rs, from_tree) {
+  for (RowSetWithBounds *rs : from_tree) {
     rowsets->push_back(rs->rowset);
   }
 }
@@ -159,7 +174,7 @@ void RowSetTree::FindRowSetsWithKeyInRange(const Slice &encoded_key,
   DCHECK(initted_);
 
   // All rowsets with unknown bounds need to be checked.
-  BOOST_FOREACH(const shared_ptr<RowSet> &rs, unbounded_rowsets_) {
+  for (const shared_ptr<RowSet> &rs : unbounded_rowsets_) {
     rowsets->push_back(rs.get());
   }
 
@@ -169,7 +184,7 @@ void RowSetTree::FindRowSetsWithKeyInRange(const Slice &encoded_key,
   from_tree.reserve(all_rowsets_.size());
   tree_->FindContainingPoint(encoded_key, &from_tree);
   rowsets->reserve(rowsets->size() + from_tree.size());
-  BOOST_FOREACH(RowSetWithBounds *rs, from_tree) {
+  for (RowSetWithBounds *rs : from_tree) {
     rowsets->push_back(rs->rowset);
   }
 }

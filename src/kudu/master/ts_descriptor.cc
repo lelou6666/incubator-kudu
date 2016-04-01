@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/common/wire_protocol.h"
 #include "kudu/consensus/consensus.proxy.h"
@@ -20,13 +23,13 @@
 #include "kudu/tserver/tserver_admin.proxy.h"
 #include "kudu/util/net/net_util.h"
 
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <boost/thread/mutex.hpp>
 
+#include <math.h>
 #include <vector>
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace master {
@@ -40,11 +43,14 @@ Status TSDescriptor::RegisterNew(const NodeInstancePB& instance,
   return Status::OK();
 }
 
-TSDescriptor::TSDescriptor(const std::string& perm_id)
-  : permanent_uuid_(perm_id),
-    latest_seqno_(-1),
-    last_heartbeat_(MonoTime::Now(MonoTime::FINE)),
-    has_tablet_report_(false) {
+TSDescriptor::TSDescriptor(std::string perm_id)
+    : permanent_uuid_(std::move(perm_id)),
+      latest_seqno_(-1),
+      last_heartbeat_(MonoTime::Now(MonoTime::FINE)),
+      has_tablet_report_(false),
+      recent_replica_creations_(0),
+      last_replica_creations_decay_(MonoTime::Now(MonoTime::FINE)),
+      num_live_replicas_(0) {
 }
 
 TSDescriptor::~TSDescriptor() {
@@ -54,6 +60,19 @@ Status TSDescriptor::Register(const NodeInstancePB& instance,
                               const TSRegistrationPB& registration) {
   boost::lock_guard<simple_spinlock> l(lock_);
   CHECK_EQ(instance.permanent_uuid(), permanent_uuid_);
+
+  // TODO(KUDU-418): we don't currently support changing IPs or hosts since the
+  // host/port is stored persistently in each tablet's metadata.
+  if (registration_ && registration_->ShortDebugString() != registration.ShortDebugString()) {
+    string msg = strings::Substitute(
+        "Tablet server $0 is attempting to re-register with a different host/port. "
+        "This is not currently supported. Old: {$1} New: {$2}",
+        instance.permanent_uuid(),
+        registration_->ShortDebugString(),
+        registration.ShortDebugString());
+    LOG(ERROR) << msg;
+    return Status::InvalidArgument(msg);
+  }
 
   if (instance.instance_seqno() < latest_seqno_) {
     return Status::AlreadyPresent(
@@ -105,6 +124,35 @@ void TSDescriptor::set_has_tablet_report(bool has_report) {
   has_tablet_report_ = has_report;
 }
 
+void TSDescriptor::DecayRecentReplicaCreationsUnlocked() {
+  // In most cases, we won't have any recent replica creations, so
+  // we don't need to bother calling the clock, etc.
+  if (recent_replica_creations_ == 0) return;
+
+  const double kHalflifeSecs = 60;
+  MonoTime now = MonoTime::Now(MonoTime::FINE);
+  double secs_since_last_decay = now.GetDeltaSince(last_replica_creations_decay_).ToSeconds();
+  recent_replica_creations_ *= pow(0.5, secs_since_last_decay / kHalflifeSecs);
+
+  // If sufficiently small, reset down to 0 to take advantage of the fast path above.
+  if (recent_replica_creations_ < 1e-12) {
+    recent_replica_creations_ = 0;
+  }
+  last_replica_creations_decay_ = now;
+}
+
+void TSDescriptor::IncrementRecentReplicaCreations() {
+  lock_guard<simple_spinlock> l(&lock_);
+  DecayRecentReplicaCreationsUnlocked();
+  recent_replica_creations_ += 1;
+}
+
+double TSDescriptor::RecentReplicaCreations() {
+  boost::lock_guard<simple_spinlock> l(lock_);
+  DecayRecentReplicaCreationsUnlocked();
+  return recent_replica_creations_;
+}
+
 void TSDescriptor::GetRegistration(TSRegistrationPB* reg) const {
   boost::lock_guard<simple_spinlock> l(lock_);
   CHECK(registration_) << "No registration";
@@ -121,7 +169,7 @@ Status TSDescriptor::ResolveSockaddr(Sockaddr* addr) const {
   vector<HostPort> hostports;
   {
     boost::lock_guard<simple_spinlock> l(lock_);
-    BOOST_FOREACH(const HostPortPB& addr, registration_->rpc_addresses()) {
+    for (const HostPortPB& addr : registration_->rpc_addresses()) {
       hostports.push_back(HostPort(addr.host(), addr.port()));
     }
   }
@@ -129,7 +177,7 @@ Status TSDescriptor::ResolveSockaddr(Sockaddr* addr) const {
   // Resolve DNS outside the lock.
   HostPort last_hostport;
   vector<Sockaddr> addrs;
-  BOOST_FOREACH(const HostPort& hostport, hostports) {
+  for (const HostPort& hostport : hostports) {
     RETURN_NOT_OK(hostport.ResolveAddresses(&addrs));
     if (!addrs.empty()) {
       last_hostport = hostport;

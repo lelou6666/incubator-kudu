@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import org.kududb.annotations.*;
@@ -22,7 +25,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Synchronous version of {@link AsyncKuduSession}. Offers the same API but with blocking methods.
+ * Synchronous version of {@link AsyncKuduSession}.
+ * Offers the same API but with blocking methods.<p>
+ *
+ * This class is <b>not</b> thread-safe.<p>
  *
  * A major difference with {@link AsyncKuduSession} is that the time spent waiting on operations is
  * defined by {@link #setTimeoutMillis(long)} which defaults to getting it from
@@ -48,9 +54,10 @@ public class KuduSession implements SessionConfiguration {
    * <li>AUTO_FLUSH_SYNC: the call returns when the operation is persisted,
    * else it throws an exception.
    * <li>AUTO_FLUSH_BACKGROUND: the call returns when the operation has been added to the buffer.
-   * The operation's state is then unreachable, meaning that there's no way to know if the
-   * operation is persisted. This call should normally perform only fast in-memory operations but
-   * it may have to wait when the buffer is full and there's another buffer being flushed.
+   * This call should normally perform only fast in-memory operations but
+   * it may have to wait when the buffer is full and there's another buffer being flushed. Row
+   * errors can be checked by calling {@link #countPendingErrors()} and can be retrieved by calling
+   * {@link #getPendingErrors()}.
    * <li>MANUAL_FLUSH: the call returns when the operation has been added to the buffer,
    * else it throws an exception such as a NonRecoverableException if the buffer is full.
    * </ul>
@@ -161,5 +168,15 @@ public class KuduSession implements SessionConfiguration {
   @Override
   public void setIgnoreAllDuplicateRows(boolean ignoreAllDuplicateRows) {
     session.setIgnoreAllDuplicateRows(ignoreAllDuplicateRows);
+  }
+
+  @Override
+  public int countPendingErrors() {
+    return session.countPendingErrors();
+  }
+
+  @Override
+  public RowErrorsAndOverflowStatus getPendingErrors() {
+    return session.getPendingErrors();
   }
 }

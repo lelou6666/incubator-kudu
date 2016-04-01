@@ -1,16 +1,26 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Portions of these classes were ported from Java to C++ from the sources
+// available at https://github.com/HdrHistogram/HdrHistogram .
+//
+//   The code in this repository code was Written by Gil Tene, Michael Barker,
+//   and Matt Warren, and released to the public domain, as explained at
+//   http://creativecommons.org/publicdomain/zero/1.0/
 #include "kudu/util/hdr_histogram.h"
 
 #include <algorithm>
@@ -44,7 +54,7 @@ HdrHistogram::HdrHistogram(uint64_t highest_trackable_value, int num_significant
     total_sum_(0),
     min_value_(std::numeric_limits<Atomic64>::max()),
     max_value_(0),
-    counts_(0) {
+    counts_(nullptr) {
   Init();
 }
 
@@ -61,7 +71,7 @@ HdrHistogram::HdrHistogram(const HdrHistogram& other)
     total_sum_(0),
     min_value_(std::numeric_limits<Atomic64>::max()),
     max_value_(0),
-    counts_(0) {
+    counts_(nullptr) {
   Init();
 
   // Not a consistent snapshot but we try to roughly keep it close.
@@ -100,7 +110,7 @@ void HdrHistogram::Init() {
           kMinValidNumSignificantDigits, kMaxValidNumSignificantDigits);
 
   uint32_t largest_value_with_single_unit_resolution =
-      2 * static_cast<uint32_t>(pow(10, num_significant_digits_));
+      2 * static_cast<uint32_t>(pow(10.0, num_significant_digits_));
 
   // We need to maintain power-of-two sub_bucket_count_ (for clean direct
   // indexing) that is large enough to provide unit resolution to at least
@@ -117,7 +127,7 @@ void HdrHistogram::Init() {
       (sub_bucket_count_magnitude >= 1) ? sub_bucket_count_magnitude - 1 : 0;
 
   // sub_bucket_count_ is approx. 10^num_sig_digits (as a power of 2)
-  sub_bucket_count_ = pow(2, sub_bucket_half_count_magnitude_ + 1);
+  sub_bucket_count_ = pow(2.0, sub_bucket_half_count_magnitude_ + 1);
   sub_bucket_mask_ = sub_bucket_count_ - 1;
   sub_bucket_half_count_ = sub_bucket_count_ / 2;
 
@@ -292,7 +302,7 @@ uint64_t HdrHistogram::ValueAtPercentile(double percentile) const {
   uint64_t count_at_percentile =
     static_cast<uint64_t>(((requested_percentile / 100.0) * count) + 0.5); // Round
   // Make sure we at least reach the first recorded entry
-  count_at_percentile = std::max(count_at_percentile, 1LU);
+  count_at_percentile = std::max(count_at_percentile, static_cast<uint64_t>(1));
 
   uint64_t total_to_current_iJ = 0;
   for (int i = 0; i < bucket_count_; i++) {
@@ -472,9 +482,8 @@ void PercentileIterator::IncrementIterationLevel() {
   percentile_level_to_iterate_from_ = percentile_level_to_iterate_to_;
   // TODO: Can this expression be simplified?
   uint64_t percentile_reporting_ticks = percentile_ticks_per_half_distance_ *
-    static_cast<uint64_t>(pow(2,
-      static_cast<uint64_t>(
-        log(100.0 / (100.0 - (percentile_level_to_iterate_to_))) / log(2)) + 1));
+    static_cast<uint64_t>(pow(2.0,
+          static_cast<int>(log(100.0 / (100.0 - (percentile_level_to_iterate_to_))) / log(2)) + 1));
   percentile_level_to_iterate_to_ += 100.0 / percentile_reporting_ticks;
 }
 

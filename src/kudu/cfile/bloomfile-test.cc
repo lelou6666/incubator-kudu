@@ -1,19 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/cfile/bloomfile-test-base.h"
 #include "kudu/fs/fs-test-util.h"
+
+using std::shared_ptr;
 
 namespace kudu {
 namespace cfile {
@@ -93,13 +98,13 @@ TEST_F(BloomFileTest, TestLazyInit) {
   ASSERT_OK(fs_manager_->OpenBlock(block_id_, &block));
   size_t bytes_read = 0;
   gscoped_ptr<ReadableBlock> count_block(
-      new CountingReadableBlock(block.Pass(), &bytes_read));
+      new CountingReadableBlock(std::move(block), &bytes_read));
 
   // Lazily opening the bloom file should not trigger any reads.
   gscoped_ptr<BloomFileReader> reader;
   ReaderOptions opts;
   opts.parent_mem_tracker = tracker;
-  ASSERT_OK(BloomFileReader::OpenNoInit(count_block.Pass(), opts, &reader));
+  ASSERT_OK(BloomFileReader::OpenNoInit(std::move(count_block), opts, &reader));
   ASSERT_EQ(0, bytes_read);
   int64_t lazy_mem_usage = tracker->consumption();
   ASSERT_GT(lazy_mem_usage, initial_mem_usage);
@@ -117,8 +122,8 @@ TEST_F(BloomFileTest, TestLazyInit) {
   // same number of bytes read.
   ASSERT_OK(fs_manager_->OpenBlock(block_id_, &block));
   bytes_read = 0;
-  count_block.reset(new CountingReadableBlock(block.Pass(), &bytes_read));
-  ASSERT_OK(BloomFileReader::Open(count_block.Pass(), ReaderOptions(), &reader));
+  count_block.reset(new CountingReadableBlock(std::move(block), &bytes_read));
+  ASSERT_OK(BloomFileReader::Open(std::move(count_block), ReaderOptions(), &reader));
   ASSERT_EQ(bytes_read_after_init, bytes_read);
 }
 

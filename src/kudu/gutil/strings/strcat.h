@@ -51,13 +51,19 @@ struct AlphaNum {
   AlphaNum(uint64 u64)  // NOLINT(runtime/explicit)
       : piece(digits, FastUInt64ToBufferLeft(u64, digits) - &digits[0]) {}
 
+#if defined(__APPLE__)
+  AlphaNum(size_t size)  // NOLINT(runtime/explicit)
+      : piece(digits, FastUInt64ToBufferLeft(size, digits) - &digits[0]) {}
+#endif
+
   AlphaNum(float f)  // NOLINT(runtime/explicit)
     : piece(digits, strlen(FloatToBuffer(f, digits))) {}
   AlphaNum(double f)  // NOLINT(runtime/explicit)
     : piece(digits, strlen(DoubleToBuffer(f, digits))) {}
 
   AlphaNum(const char *c_str) : piece(c_str) {}  // NOLINT(runtime/explicit)
-  AlphaNum(const StringPiece &pc) : piece(pc) {}  // NOLINT(runtime/explicit)
+  AlphaNum(StringPiece pc)
+      : piece(std::move(pc)) {}            // NOLINT(runtime/explicit)
   AlphaNum(const string &s) : piece(s) {}  // NOLINT(runtime/explicit)
 
   StringPiece::size_type size() const { return piece.size(); }

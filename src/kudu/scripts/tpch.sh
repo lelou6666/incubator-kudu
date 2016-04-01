@@ -1,18 +1,22 @@
 #!/bin/bash -xe
 ########################################################################
-# Copyright 2014 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 #
 # Run tpch benchmark and write results to the DB.
 #
@@ -36,7 +40,6 @@
 # Constants
 ##########################################################
 ROOT=$(readlink -f $(dirname $0)/../../..)
-OUTDIR=$ROOT/build/tpch
 
 ##########################################################
 # Overridable params
@@ -63,6 +66,10 @@ record_result() {
   fi
 }
 
+ensure_cpu_scaling() {
+  $(dirname $BASH_SOURCE)/ensure_cpu_scaling.sh "$@"
+}
+
 ##########################################################
 # Main
 ##########################################################
@@ -78,6 +85,13 @@ set -o pipefail
 ulimit -m $[3000*1000]
 ulimit -c unlimited # gather core dumps
 
+# Set CPU governor, and restore it on exit.
+old_governor=$(ensure_cpu_scaling performance)
+restore_governor() {
+  ensure_cpu_scaling $old_governor >/dev/null
+}
+trap restore_governor EXIT
+
 # PATH=<toolchain_stuff>:$PATH
 export TOOLCHAIN=/mnt/toolchain/toolchain.sh
 if [ -f "$TOOLCHAIN" ]; then
@@ -85,37 +99,38 @@ if [ -f "$TOOLCHAIN" ]; then
 fi
 
 # Build thirdparty
-$ROOT/thirdparty/build-if-necessary.sh
+$ROOT/build-support/enable_devtoolset.sh $ROOT/thirdparty/build-if-necessary.sh
 
 # PATH=<thirdparty_stuff>:<toolchain_stuff>:$PATH
-export PATH=$(pwd)/thirdparty/installed/bin:$PATH
-export PPROF_PATH=$(pwd)/thirdparty/installed/bin/pprof
-
-# Build Kudu
-rm -rf CMakeCache.txt CMakeFiles
+THIRDPARTY_BIN=$(pwd)/thirdparty/installed/bin
+export PPROF_PATH=$THIRDPARTY_BIN/pprof
 
 BUILD_TYPE=release
-# Workaround for gperftools issue #497
-export LD_BIND_NOW=1
 
-cmake . -DCMAKE_BUILD_TYPE=${BUILD_TYPE}
-make clean
+# Build Kudu
+mkdir -p build/$BUILD_TYPE
+pushd build/$BUILD_TYPE
+rm -rf CMakeCache CMakeFiles/
+
+$ROOT/build-support/enable_devtoolset.sh $THIRDPARTY_BIN/cmake -DCMAKE_BUILD_TYPE=${BUILD_TYPE} ../..
 
 NUM_PROCS=$(cat /proc/cpuinfo | grep processor | wc -l)
 make -j${NUM_PROCS} tpch1 2>&1 | tee build.log
+popd
 
 # Warming up the OS buffer.
 cat $LINEITEM_TBL_PATH > /dev/null
 cat $LINEITEM_TBL_PATH > /dev/null
 
+OUTDIR=$ROOT/build/$BUILD_TYPE/tpch
 rm -Rf $KUDU_DATA_DIR   # Clean up data dir.
 mkdir -p $OUTDIR        # Create log file output dir.
 
-./build/release/tpch1 -logtostderr=1 \
-                      -tpch_path_to_data=$LINEITEM_TBL_PATH \
-                      -mini_cluster_base_dir=$KUDU_DATA_DIR \
-                      -tpch_num_query_iterations=$TPCH_NUM_QUERY_ITERS \
-                      >$OUTDIR/benchmark.log 2>&1
+./build/$BUILD_TYPE/bin/tpch1 -logtostderr=1 \
+                              -tpch_path_to_data=$LINEITEM_TBL_PATH \
+                              -mini_cluster_base_dir=$KUDU_DATA_DIR \
+                              -tpch_num_query_iterations=$TPCH_NUM_QUERY_ITERS \
+                              >$OUTDIR/benchmark.log 2>&1
 
 cat $OUTDIR/benchmark.log
 INSERT_TIME=$(grep "Time spent loading" $OUTDIR/benchmark.log | \

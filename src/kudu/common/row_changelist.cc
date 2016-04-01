@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <string>
 
@@ -81,7 +84,7 @@ string RowChangeList::ToString(const Schema &schema) const {
       const ColumnSchema& col_schema = schema.column(col_idx);
       ret.append(col_schema.name());
       ret.append("=");
-      if (value == NULL) {
+      if (value == nullptr) {
         ret.append("NULL");
       } else {
         ret.append(col_schema.Stringify(value));
@@ -113,7 +116,7 @@ void RowChangeListEncoder::AddColumnUpdate(const ColumnSchema& col_schema,
                                            int col_id,
                                            const void* cell_ptr) {
   Slice val_slice;
-  if (cell_ptr != NULL) {
+  if (cell_ptr != nullptr) {
     if (col_schema.type_info()->physical_type() == BINARY) {
       memcpy(&val_slice, cell_ptr, sizeof(val_slice));
     } else {
@@ -125,7 +128,7 @@ void RowChangeListEncoder::AddColumnUpdate(const ColumnSchema& col_schema,
     DCHECK(col_schema.is_nullable());
   }
 
-  AddRawColumnUpdate(col_id, cell_ptr == NULL, val_slice);
+  AddRawColumnUpdate(col_id, cell_ptr == nullptr, val_slice);
 }
 
 Status RowChangeListDecoder::Init() {
@@ -241,7 +244,7 @@ Status RowChangeListDecoder::ApplyToOneColumn(size_t row_idx, ColumnBlock* dst_c
   DCHECK_EQ(RowChangeList::kUpdate, type_);
 
   const ColumnSchema& col_schema = dst_schema.column(col_idx);
-  int col_id = dst_schema.column_id(col_idx);
+  ColumnId col_id = dst_schema.column_id(col_idx);
 
   while (HasNext()) {
     DecodedUpdate dec;
@@ -265,7 +268,7 @@ Status RowChangeListDecoder::ApplyToOneColumn(size_t row_idx, ColumnBlock* dst_c
 }
 
 Status RowChangeListDecoder::RemoveColumnIdsFromChangeList(const RowChangeList& src,
-                                                           const std::vector<int>& col_ids,
+                                                           const std::vector<ColumnId>& col_ids,
                                                            RowChangeListEncoder* out) {
   RowChangeListDecoder decoder(src);
   RETURN_NOT_OK(decoder.Init());
@@ -333,7 +336,7 @@ Status RowChangeListDecoder::DecodedUpdate::Validate(const Schema& schema,
       return Status::Corruption("decoded set-to-NULL for non-nullable column",
                                 col.ToString());
     }
-    *value = NULL;
+    *value = nullptr;
     return Status::OK();
   }
 

@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // This file contains all of the functions that must be precompiled
 // to an LLVM IR format (note: not bitcode to preserve function
@@ -41,10 +44,22 @@
 // IR_BUILD because we use a fake static library target to workaround a cmake
 // dependencies bug. See 'ir_fake_target' in CMakeLists.txt.
 #ifdef IR_BUILD
+
+// This file uses the 'always_inline' attribute on a bunch of functions to force
+// the LLVM optimizer at runtime to inline them where it otherwise might not.
+// Because the functions themselves aren't marked 'inline', gcc is unhappy with this.
+// But, we can't mark them 'inline' or else they'll get optimized away and not even
+// included in the .ll file. So, instead, we just mark them as always_inline in
+// the IR_BUILD context.
+#define IR_ALWAYS_INLINE __attribute__((always_inline))
+
 // Workaround for an MCJIT deficiency where we see a link error when trying
 // to load the JITted library. See the following LLVM bug and suggested workaround.
 // https://llvm.org/bugs/show_bug.cgi?id=18062
 extern "C" void *__dso_handle __attribute__((__visibility__("hidden"))) = NULL;
+
+#else
+#define IR_ALWAYS_INLINE
 #endif
 
 namespace kudu {
@@ -52,11 +67,11 @@ namespace kudu {
 // Returns whether copy was successful (fails iff slice relocation fails,
 // which can only occur if is_string is true).
 // If arena is NULL, then no relocation occurs.
-static bool BasicCopyCell(uint64_t size, uint8_t* src, uint8_t* dst,
-                          bool is_string, Arena* arena) {
+IR_ALWAYS_INLINE static bool BasicCopyCell(
+    uint64_t size, uint8_t* src, uint8_t* dst, bool is_string, Arena* arena) {
   // Relocate indirect data
   if (is_string) {
-    if (PREDICT_TRUE(arena != NULL)) {
+    if (PREDICT_TRUE(arena != nullptr)) {
       return PREDICT_TRUE(arena->RelocateSlice(*reinterpret_cast<Slice*>(src),
                                                reinterpret_cast<Slice*>(dst)));
     }
@@ -96,8 +111,9 @@ extern "C" {
 //   If arena is NULL then only the direct copy will occur.
 //   Returns whether successful. If not, out-of-memory during relocation of
 //   slices has occured, which can only happen if is_string is true.
-bool _PrecompiledCopyCellToRowBlock(uint64_t size, uint8_t* src, RowBlockRow* dst,
-                                    uint64_t col, bool is_string, Arena* arena) {
+IR_ALWAYS_INLINE bool _PrecompiledCopyCellToRowBlock(
+    uint64_t size, uint8_t* src, RowBlockRow* dst,
+    uint64_t col, bool is_string, Arena* arena) {
 
   // We manually compute the destination cell pointer here, rather than
   // using dst->cell_ptr(), since we statically know the size of the column
@@ -122,9 +138,9 @@ bool _PrecompiledCopyCellToRowBlock(uint64_t size, uint8_t* src, RowBlockRow* ds
 //   bitmap indicates the cell itself is non-null).
 //   Returns whether successful. If not, out-of-memory during relocation of
 //   slices has occured, which can only happen if is_string is true.
-bool _PrecompiledCopyCellToRowBlockNullable(
-  uint64_t size, uint8_t* src, RowBlockRow* dst, uint64_t col, bool is_string,
-  Arena* arena, uint8_t* src_bitmap, uint64_t bitmap_idx) {
+IR_ALWAYS_INLINE bool _PrecompiledCopyCellToRowBlockNullable(
+    uint64_t size, uint8_t* src, RowBlockRow* dst, uint64_t col, bool is_string,
+    Arena* arena, uint8_t* src_bitmap, uint64_t bitmap_idx) {
   // Using this method implies the nullablity of the column.
   // Write whether the column is nullable to the RowBlock's ColumnBlock's bitmap
   bool is_null = BitmapTest(src_bitmap, bitmap_idx);
@@ -139,8 +155,8 @@ bool _PrecompiledCopyCellToRowBlockNullable(
 //
 //   Sets the cell at column 'col' for destination RowBlockRow 'dst'
 //   to be marked as 'is_null' (requires the column is nullable).
-void _PrecompiledCopyCellToRowBlockSetNull(
-  RowBlockRow* dst, uint64_t col, bool is_null) {
+IR_ALWAYS_INLINE void _PrecompiledCopyCellToRowBlockSetNull(
+    RowBlockRow* dst, uint64_t col, bool is_null) {
   dst->cell(col).set_null(is_null);
 }
 

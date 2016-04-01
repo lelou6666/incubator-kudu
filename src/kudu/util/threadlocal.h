@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_THREADLOCAL_H_
 #define KUDU_UTIL_THREADLOCAL_H_
 
@@ -36,13 +39,13 @@
 #define BLOCK_STATIC_THREAD_LOCAL(T, t, ...)                                    \
 static __thread T* t;                                                           \
 do {                                                                            \
-  static __thread ::kudu::threadlocal::internal::PerThreadDestructorList dtor;  \
-                                                                                \
   if (PREDICT_FALSE(t == NULL)) {                                               \
     t = new T(__VA_ARGS__);                                                     \
-    dtor.destructor = ::kudu::threadlocal::internal::Destroy<T>;                \
-    dtor.arg = t;                                                               \
-    ::kudu::threadlocal::internal::AddDestructor(&dtor);                        \
+    threadlocal::internal::PerThreadDestructorList* dtor_list =                 \
+        new threadlocal::internal::PerThreadDestructorList();                   \
+    dtor_list->destructor = threadlocal::internal::Destroy<T>;                  \
+    dtor_list->arg = t;                                                         \
+    threadlocal::internal::AddDestructor(dtor_list);                            \
   }                                                                             \
 } while (false)
 
@@ -91,12 +94,10 @@ do {                                                                            
 // Uses a mangled variable name for dtor since it must also be a member of the
 // class.
 #define DECLARE_STATIC_THREAD_LOCAL(T, t)                                                     \
-static __thread ::kudu::threadlocal::internal::PerThreadDestructorList kudu_tls_##t##dtor_;   \
 static __thread T* t
 
 // You must also define the instance in the .cc file.
 #define DEFINE_STATIC_THREAD_LOCAL(T, Class, t)                                               \
-__thread ::kudu::threadlocal::internal::PerThreadDestructorList Class::kudu_tls_##t##dtor_;   \
 __thread T* Class::t
 
 // Must be invoked at least once by each thread that will access t.
@@ -104,9 +105,11 @@ __thread T* Class::t
 do {                                                                              \
   if (PREDICT_FALSE(t == NULL)) {                                                 \
     t = new T(__VA_ARGS__);                                                       \
-    kudu_tls_##t##dtor_.destructor = ::kudu::threadlocal::internal::Destroy<T>;   \
-    kudu_tls_##t##dtor_.arg = t;                                                  \
-    ::kudu::threadlocal::internal::AddDestructor(&kudu_tls_##t##dtor_);           \
+    threadlocal::internal::PerThreadDestructorList* dtor_list =                   \
+        new threadlocal::internal::PerThreadDestructorList();                     \
+    dtor_list->destructor = threadlocal::internal::Destroy<T>;                    \
+    dtor_list->arg = t;                                                           \
+    threadlocal::internal::AddDestructor(dtor_list);                              \
   }                                                                               \
 } while (false)
 

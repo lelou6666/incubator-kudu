@@ -2,29 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include <boost/foreach.hpp>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <fts.h>
 #include <glog/logging.h>
-#include <linux/falloc.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <sys/sysinfo.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
-#include <limits.h>
-
-#include <deque>
-#include <tr1/unordered_set>
 #include <vector>
 
 #include "kudu/gutil/atomicops.h"
@@ -44,6 +38,14 @@
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/thread_restrictions.h"
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <sys/sysctl.h>
+#else
+#include <linux/falloc.h>
+#include <sys/sysinfo.h>
+#endif  // defined(__APPLE__)
+
 // Copied from falloc.h. Useful for older kernels that lack support for
 // hole punching; fallocate(2) will return EOPNOTSUPP.
 #ifndef FALLOC_FL_KEEP_SIZE
@@ -51,6 +53,16 @@
 #endif
 #ifndef FALLOC_FL_PUNCH_HOLE
 #define FALLOC_FL_PUNCH_HOLE  0x02 /* de-allocates range */
+#endif
+
+// For platforms without fdatasync (like OS X)
+#ifndef fdatasync
+#define fdatasync fsync
+#endif
+
+// For platforms without unlocked_stdio (like OS X)
+#ifndef fread_unlocked
+#define fread_unlocked fread
 #endif
 
 // See KUDU-588 for details.
@@ -71,8 +83,6 @@ TAG_FLAG(never_fsync, unsafe);
 
 using base::subtle::Atomic64;
 using base::subtle::Barrier_AtomicIncrement;
-using std::tr1::unordered_set;
-using std::deque;
 using std::vector;
 using strings::Substitute;
 
@@ -82,6 +92,41 @@ static Atomic64 cur_thread_local_id_;
 namespace kudu {
 
 namespace {
+
+#if defined(__APPLE__)
+// Simulates Linux's fallocate file preallocation API on OS X.
+int fallocate(int fd, int mode, off_t offset, off_t len) {
+  CHECK(mode == 0);
+  off_t size = offset + len;
+
+  struct stat stat;
+  int ret = fstat(fd, &stat);
+  if (ret < 0) {
+    return ret;
+  }
+
+  if (stat.st_blocks * 512 < size) {
+    // The offset field seems to have no effect; the file is always allocated
+    // with space from 0 to the size. This is probably because OS X does not
+    // support sparse files.
+    fstore_t store = {F_ALLOCATECONTIG, F_PEOFPOSMODE, 0, size};
+    if (fcntl(fd, F_PREALLOCATE, &store) < 0) {
+      LOG(INFO) << "Unable to allocate contiguous disk space, attempting non-contiguous allocation";
+      store.fst_flags = F_ALLOCATEALL;
+      ret = fcntl(fd, F_PREALLOCATE, &store);
+      if (ret < 0) {
+        return ret;
+      }
+    }
+  }
+
+  if (stat.st_size < size) {
+    // fcntl does not change the file size, so set it if necessary.
+    return ftruncate(fd, size);
+  }
+  return 0;
+}
+#endif
 
 // Close file descriptor when object goes out of scope.
 class ScopedFdCloser {
@@ -164,8 +209,8 @@ class PosixSequentialFile: public SequentialFile {
   FILE* file_;
 
  public:
-  PosixSequentialFile(const std::string& fname, FILE* f)
-      : filename_(fname), file_(f) { }
+  PosixSequentialFile(std::string fname, FILE* f)
+      : filename_(std::move(fname)), file_(f) {}
   virtual ~PosixSequentialFile() { fclose(file_); }
 
   virtual Status Read(size_t n, Slice* result, uint8_t* scratch) OVERRIDE {
@@ -203,8 +248,8 @@ class PosixRandomAccessFile: public RandomAccessFile {
   int fd_;
 
  public:
-  PosixRandomAccessFile(const std::string& fname, int fd)
-      : filename_(fname), fd_(fd) { }
+  PosixRandomAccessFile(std::string fname, int fd)
+      : filename_(std::move(fname)), fd_(fd) {}
   virtual ~PosixRandomAccessFile() { close(fd_); }
 
   virtual Status Read(uint64_t offset, size_t n, Slice* result,
@@ -238,325 +283,20 @@ class PosixRandomAccessFile: public RandomAccessFile {
   }
 };
 
-// mmap() based random-access
-class PosixMmapReadableFile: public RandomAccessFile {
- private:
-  std::string filename_;
-  void* mmapped_region_;
-  size_t length_;
-
- public:
-  // base[0,length-1] contains the mmapped contents of the file.
-  PosixMmapReadableFile(const std::string& fname, void* base, size_t length)
-      : filename_(fname), mmapped_region_(base), length_(length) { }
-  virtual ~PosixMmapReadableFile() { munmap(mmapped_region_, length_); }
-
-  virtual Status Read(uint64_t offset, size_t n, Slice* result,
-                      uint8_t *scratch) const OVERRIDE {
-    ThreadRestrictions::AssertIOAllowed();
-    Status s;
-    if (offset + n > length_) {
-      *result = Slice();
-      s = Status::IOError(
-        Substitute("cannot read $0 bytes at offset $1 (file $2 has length $3)",
-                   n, offset, filename_, length_), "", EINVAL);
-    } else {
-      *result = Slice(reinterpret_cast<uint8_t *>(mmapped_region_) + offset, n);
-    }
-    return s;
-  }
-
-  virtual Status Size(uint64_t *size) const OVERRIDE {
-    *size = length_;
-    return Status::OK();
-  }
-
-  virtual const string& filename() const OVERRIDE { return filename_; }
-
-  virtual size_t memory_footprint() const OVERRIDE {
-    return kudu_malloc_usable_size(this) + filename_.capacity();
-  }
-};
-
-// We preallocate up to an extra megabyte and use memcpy to append new
-// data to the file.  This is safe since we either properly close the
-// file before reading from it, or for log files, the reading code
-// knows enough to skip zero suffixes.
-//
-// TODO since PosixWritableFile brings significant performance
-// improvements, consider getting rid of this class and instead
-// (perhaps) adding optional buffering to PosixWritableFile.
-class PosixMmapFile : public WritableFile {
- private:
-  std::string filename_;
-  int fd_;
-  size_t page_size_;
-  bool sync_on_close_;
-  size_t map_size_;             // How much extra memory to map at a time
-
-  // These addresses are only relevant to the current mapped region.
-  uint8_t* base_;               // The base of the mapped region
-  uint8_t* limit_;              // The limit of the mapped region
-  uint8_t* start_;              // The first empty byte in the mapped region
-  uint8_t* dst_;                // Where to write next (in range [start_,limit_])
-  uint8_t* last_sync_;          // Where have we synced up to
-
-  uint64_t filesize_;           // Overall file size
-  uint64_t pre_allocated_size_; // Number of bytes known to have been preallocated
-
-  // Have we done an munmap of unsynced data?
-  bool pending_sync_;
-
-  // Roundup x to a multiple of y
-  static size_t Roundup(size_t x, size_t y) {
-    return ((x + y - 1) / y) * y;
-  }
-
-  size_t TruncateToPageBoundary(size_t s) {
-    s -= (s & (page_size_ - 1));
-    DCHECK((s % page_size_) == 0);
-    return s;
-  }
-
-  bool UnmapCurrentRegion() {
-    TRACE_EVENT1("io", "PosixMmapFile::UnmapCurrentRegion", "path", filename_);
-    bool result = true;
-    if (base_ != NULL) {
-      if (last_sync_ < dst_) {
-        // Defer syncing this data until next Sync() call, if any
-        pending_sync_ = true;
-      }
-      if (munmap(base_, limit_ - base_) != 0) {
-        result = false;
-      }
-      // Account for file growth, taking care to exclude any existing
-      // file bits that were in the mapping.
-      filesize_ += limit_ - start_;
-
-      base_ = NULL;
-      limit_ = NULL;
-      start_ = NULL;
-      dst_ = NULL;
-      last_sync_ = NULL;
-
-      // Increase the amount we map the next time, but capped at 2MB
-      if (map_size_ < (1<<20)) {
-        map_size_ *= 2;
-      }
-    }
-    return result;
-  }
-
-  bool MapNewRegion() {
-    TRACE_EVENT1("io", "PosixMmapFile::MapNewRegion", "path", filename_);
-    DCHECK(base_ == NULL);
-
-    // Mapped regions must be page-aligned.
-    //
-    // If we see a non page-aligned offset, existing file contents will be
-    // included in the mapped region but passed over in Append().
-    uint64_t map_offset = TruncateToPageBoundary(filesize_);
-
-    // Grow the file if the mapped region is to extend over the edge.
-    uint64_t required_space = map_offset + map_size_;
-    if (required_space >= pre_allocated_size_) {
-      if (ftruncate(fd_, required_space) < 0) {
-        return false;
-      }
-    }
-
-    void* ptr = mmap(NULL, map_size_, PROT_READ | PROT_WRITE, MAP_SHARED,
-                     fd_, map_offset);
-    if (ptr == MAP_FAILED) {
-      return false;
-    }
-    base_ = reinterpret_cast<uint8_t *>(ptr);
-    limit_ = base_ + map_size_;
-
-    // Part of the mapping may already be used; skip over it.
-    start_ = base_ + (filesize_ - map_offset);
-    dst_ = start_;
-    last_sync_ = start_;
-    return true;
-  }
-
- public:
-  PosixMmapFile(const std::string& fname, int fd, uint64_t file_size,
-                size_t page_size, bool sync_on_close)
-      : filename_(fname),
-        fd_(fd),
-        page_size_(page_size),
-        sync_on_close_(sync_on_close),
-        map_size_(Roundup(65536, page_size)),
-        base_(NULL),
-        limit_(NULL),
-        start_(NULL),
-        dst_(NULL),
-        last_sync_(NULL),
-        filesize_(file_size),
-        pre_allocated_size_(0),
-        pending_sync_(false) {
-    DCHECK((page_size & (page_size - 1)) == 0);
-  }
-
-
-  ~PosixMmapFile() {
-    if (fd_ >= 0) {
-      WARN_NOT_OK(PosixMmapFile::Close(),
-                  "Failed to close mmapped file");
-    }
-  }
-
-  virtual Status PreAllocate(uint64_t size) OVERRIDE {
-    ThreadRestrictions::AssertIOAllowed();
-    TRACE_EVENT1("io", "PosixMmapFile::PreAllocate", "path", filename_);
-
-    uint64_t offset = std::max(filesize_, pre_allocated_size_);
-    if (fallocate(fd_, 0, offset, size) < 0) {
-      return IOError(filename_, errno);
-    }
-    // Make sure that we set pre_allocated_size so that the file
-    // doesn't get truncated on MapNewRegion().
-    pre_allocated_size_ = offset + size;
-    return Status::OK();
-  }
-
-  virtual Status Append(const Slice& data) OVERRIDE {
-    ThreadRestrictions::AssertIOAllowed();
-    const uint8_t *src = data.data();
-    size_t left = data.size();
-    while (left > 0) {
-      DCHECK(start_ <= dst_);
-      DCHECK(dst_ <= limit_);
-      size_t avail = limit_ - dst_;
-      if (avail == 0) {
-        if (!UnmapCurrentRegion() ||
-            !MapNewRegion()) {
-          return IOError(filename_, errno);
-        }
-      }
-
-      size_t n = (left <= avail) ? left : avail;
-      memcpy(dst_, src, n);
-      dst_ += n;
-      src += n;
-      left -= n;
-    }
-    return Status::OK();
-  }
-
-  virtual Status AppendVector(const vector<Slice>& data_vector) OVERRIDE {
-    BOOST_FOREACH(const Slice& data, data_vector) {
-      RETURN_NOT_OK(Append(data));
-    }
-    return Status::OK();
-  }
-
-  virtual Status Close() OVERRIDE {
-    TRACE_EVENT1("io", "PosixMmapFile::Close", "path", filename_);
-    ThreadRestrictions::AssertIOAllowed();
-    Status s;
-    size_t unused = limit_ - dst_;
-    if (!UnmapCurrentRegion()) {
-      s = IOError(filename_, errno);
-    } else if (unused > 0) {
-      // Trim the extra space at the end of the file
-      if (ftruncate(fd_, filesize_ - unused) < 0) {
-        s = IOError(filename_, errno);
-      }
-      pending_sync_ = true;
-    }
-
-     if (sync_on_close_) {
-      Status sync_status = Sync();
-      if (!sync_status.ok()) {
-        LOG(ERROR) << "Unable to Sync " << filename_ << ": " << sync_status.ToString();
-        if (s.ok()) {
-          s = sync_status;
-        }
-      }
-     }
-
-    if (close(fd_) < 0) {
-      if (s.ok()) {
-        s = IOError(filename_, errno);
-      }
-    }
-
-    fd_ = -1;
-    base_ = NULL;
-    limit_ = NULL;
-    return s;
-  }
-
-  virtual Status Flush(FlushMode mode) OVERRIDE {
-    TRACE_EVENT1("io", "PosixMmapFile::Flush", "path", filename_);
-    ThreadRestrictions::AssertIOAllowed();
-    int flags = SYNC_FILE_RANGE_WRITE;
-    if (mode == FLUSH_SYNC) {
-      flags |= SYNC_FILE_RANGE_WAIT_AFTER;
-    }
-    if (sync_file_range(fd_, 0, 0, flags) < 0) {
-      return IOError(filename_, errno);
-    }
-    return Status::OK();
-  }
-
-  virtual Status Sync() OVERRIDE {
-    TRACE_EVENT1("io", "PosixMmapFile::Sync", "path", filename_);
-    ThreadRestrictions::AssertIOAllowed();
-    if (pending_sync_) {
-      // Some unmapped data was not synced, sync the entire file.
-      pending_sync_ = false;
-      RETURN_NOT_OK(DoSync(fd_, filename_));
-      if (base_ != NULL) {
-        // If there's no mapped region, last_sync_ is irrelevant (it's
-        // relative to the current region).
-        last_sync_ = dst_;
-      }
-    } else if (dst_ > last_sync_) {
-      // All unmapped data is synced, but let's sync any dirty pages
-      // within the current mapped region.
-
-      // Find the beginnings of the pages that contain the first and last
-      // bytes to be synced.
-      size_t p1 = TruncateToPageBoundary(last_sync_ - base_);
-      size_t p2 = TruncateToPageBoundary(dst_ - base_ - 1);
-      if (!FLAGS_never_fsync &&
-          msync(base_ + p1, p2 - p1 + page_size_, MS_SYNC) < 0) {
-        return IOError(filename_, errno);
-      }
-
-      last_sync_ = dst_;
-    }
-
-    return Status::OK();
-  }
-
-  virtual uint64_t Size() const OVERRIDE {
-    return filesize_ + (dst_ - start_);
-  }
-
-  virtual const string& filename() const OVERRIDE { return filename_; }
-};
-
 // Use non-memory mapped POSIX files to write data to a file.
 //
 // TODO (perf) investigate zeroing a pre-allocated allocated area in
 // order to further improve Sync() performance.
 class PosixWritableFile : public WritableFile {
  public:
-  PosixWritableFile(const std::string& fname,
-                    int fd,
-                    uint64_t file_size,
+  PosixWritableFile(std::string fname, int fd, uint64_t file_size,
                     bool sync_on_close)
-      : filename_(fname),
+      : filename_(std::move(fname)),
         fd_(fd),
         sync_on_close_(sync_on_close),
         filesize_(file_size),
         pre_allocated_size_(0),
-        pending_sync_(false) {
-  }
+        pending_sync_(false) {}
 
   ~PosixWritableFile() {
     if (fd_ >= 0) {
@@ -596,9 +336,8 @@ class PosixWritableFile : public WritableFile {
       } else {
         return IOError(filename_, errno);
       }
-    } else {
-      pre_allocated_size_ = offset + size;
     }
+    pre_allocated_size_ = offset + size;
     return Status::OK();
   }
 
@@ -639,6 +378,7 @@ class PosixWritableFile : public WritableFile {
   virtual Status Flush(FlushMode mode) OVERRIDE {
     TRACE_EVENT1("io", "PosixWritableFile::Flush", "path", filename_);
     ThreadRestrictions::AssertIOAllowed();
+#if defined(__linux__)
     int flags = SYNC_FILE_RANGE_WRITE;
     if (mode == FLUSH_SYNC) {
       flags |= SYNC_FILE_RANGE_WAIT_AFTER;
@@ -646,6 +386,11 @@ class PosixWritableFile : public WritableFile {
     if (sync_file_range(fd_, 0, 0, flags) < 0) {
       return IOError(filename_, errno);
     }
+#else
+    if (fsync(fd_) < 0) {
+      return IOError(filename_, errno);
+    }
+#endif
     return Status::OK();
   }
 
@@ -672,6 +417,7 @@ class PosixWritableFile : public WritableFile {
   Status DoWritev(const vector<Slice>& data_vector,
                   size_t offset, size_t n) {
     ThreadRestrictions::AssertIOAllowed();
+#if defined(__linux__)
     DCHECK_LE(n, IOV_MAX);
 
     struct iovec iov[n];
@@ -700,6 +446,24 @@ class PosixWritableFile : public WritableFile {
           Substitute("pwritev error: expected to write $0 bytes, wrote $1 bytes instead",
                      nbytes, written));
     }
+#else
+    for (size_t i = offset; i < offset + n; i++) {
+      const Slice& data = data_vector[i];
+      ssize_t written = pwrite(fd_, data.data(), data.size(), filesize_);
+      if (PREDICT_FALSE(written == -1)) {
+        int err = errno;
+        return IOError("pwrite error", err);
+      }
+
+      filesize_ += written;
+
+      if (PREDICT_FALSE(written != data.size())) {
+        return Status::IOError(
+            Substitute("pwrite error: expected to write $0 bytes, wrote $1 bytes instead",
+                       data.size(), written));
+      }
+    }
+#endif
 
     return Status::OK();
   }
@@ -716,14 +480,11 @@ class PosixWritableFile : public WritableFile {
 class PosixRWFile : public RWFile {
 // is not employed.
  public:
-  PosixRWFile(const string& fname,
-              int fd,
-              bool sync_on_close)
-  : filename_(fname),
-    fd_(fd),
-    sync_on_close_(sync_on_close),
-    pending_sync_(false) {
-  }
+  PosixRWFile(string fname, int fd, bool sync_on_close)
+      : filename_(std::move(fname)),
+        fd_(fd),
+        sync_on_close_(sync_on_close),
+        pending_sync_(false) {}
 
   ~PosixRWFile() {
     if (fd_ >= 0) {
@@ -793,17 +554,22 @@ class PosixRWFile : public RWFile {
   }
 
   virtual Status PunchHole(uint64_t offset, size_t length) OVERRIDE {
+#if defined(__linux__)
     TRACE_EVENT1("io", "PosixRWFile::PunchHole", "path", filename_);
     ThreadRestrictions::AssertIOAllowed();
     if (fallocate(fd_, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, offset, length) < 0) {
       return IOError(filename_, errno);
     }
     return Status::OK();
+#else
+    return Status::NotSupported("Hole punching not supported on this platform");
+#endif
   }
 
   virtual Status Flush(FlushMode mode, uint64_t offset, size_t length) OVERRIDE {
     TRACE_EVENT1("io", "PosixRWFile::Flush", "path", filename_);
     ThreadRestrictions::AssertIOAllowed();
+#if defined(__linux__)
     int flags = SYNC_FILE_RANGE_WRITE;
     if (mode == FLUSH_SYNC) {
       flags |= SYNC_FILE_RANGE_WAIT_AFTER;
@@ -811,6 +577,11 @@ class PosixRWFile : public RWFile {
     if (sync_file_range(fd_, offset, length, flags) < 0) {
       return IOError(filename_, errno);
     }
+#else
+    if (fsync(fd_) < 0) {
+      return IOError(filename_, errno);
+    }
+#endif
     return Status::OK();
   }
 
@@ -900,7 +671,7 @@ class PosixEnv : public Env {
     TRACE_EVENT1("io", "PosixEnv::NewSequentialFile", "path", fname);
     ThreadRestrictions::AssertIOAllowed();
     FILE* f = fopen(fname.c_str(), "r");
-    if (f == NULL) {
+    if (f == nullptr) {
       return IOError(fname, errno);
     } else {
       result->reset(new PosixSequentialFile(fname, f));
@@ -921,25 +692,6 @@ class PosixEnv : public Env {
     int fd = open(fname.c_str(), O_RDONLY);
     if (fd < 0) {
       return IOError(fname, errno);
-    }
-
-    if (opts.mmap_file) {
-      uint64_t file_size;
-      RETURN_NOT_OK_PREPEND(GetFileSize(fname, &file_size),
-                            Substitute("Unable to get size of file $0", fname));
-
-      if (file_size > 0 && sizeof(void*) >= 8) {
-        // Use mmap when virtual address-space is plentiful.
-        void* base = mmap(NULL, file_size, PROT_READ, MAP_SHARED, fd, 0);
-        Status s;
-        if (base != MAP_FAILED) {
-          result->reset(new PosixMmapReadableFile(fname, base, file_size));
-        } else {
-          s = IOError(Substitute("mmap() failed on file $0", fname), errno);
-        }
-        close(fd);
-        return s;
-      }
     }
 
     result->reset(new PosixRandomAccessFile(fname, fd));
@@ -1004,12 +756,12 @@ class PosixEnv : public Env {
     ThreadRestrictions::AssertIOAllowed();
     result->clear();
     DIR* d = opendir(dir.c_str());
-    if (d == NULL) {
+    if (d == nullptr) {
       return IOError(dir, errno);
     }
     struct dirent* entry;
     // TODO: lint: Consider using readdir_r(...) instead of readdir(...) for improved thread safety.
-    while ((entry = readdir(d)) != NULL) {
+    while ((entry = readdir(d)) != nullptr) {
       result->push_back(entry->d_name);
     }
     closedir(d);
@@ -1123,7 +875,7 @@ class PosixEnv : public Env {
   virtual Status LockFile(const std::string& fname, FileLock** lock) OVERRIDE {
     TRACE_EVENT1("io", "PosixEnv::LockFile", "path", fname);
     ThreadRestrictions::AssertIOAllowed();
-    *lock = NULL;
+    *lock = nullptr;
     Status result;
     int fd = open(fname.c_str(), O_RDWR | O_CREAT, 0644);
     if (fd < 0) {
@@ -1132,7 +884,7 @@ class PosixEnv : public Env {
       result = IOError("lock " + fname, errno);
       close(fd);
     } else {
-      PosixFileLock* my_lock = new PosixFileLock;
+      auto my_lock = new PosixFileLock;
       my_lock->fd_ = fd;
       *lock = my_lock;
     }
@@ -1153,17 +905,19 @@ class PosixEnv : public Env {
   }
 
   virtual Status GetTestDirectory(std::string* result) OVERRIDE {
+    string dir;
     const char* env = getenv("TEST_TMPDIR");
     if (env && env[0] != '\0') {
-      *result = env;
+      dir = env;
     } else {
       char buf[100];
       snprintf(buf, sizeof(buf), "/tmp/kudutest-%d", static_cast<int>(geteuid()));
-      *result = buf;
+      dir = buf;
     }
     // Directory may already exist
-    ignore_result(CreateDir(*result));
-    return Status::OK();
+    ignore_result(CreateDir(dir));
+    // /tmp may be a symlink, so canonicalize the path.
+    return Canonicalize(dir, result);
   }
 
   virtual uint64_t gettid() OVERRIDE {
@@ -1178,7 +932,7 @@ class PosixEnv : public Env {
 
   virtual uint64_t NowMicros() OVERRIDE {
     struct timeval tv;
-    gettimeofday(&tv, NULL);
+    gettimeofday(&tv, nullptr);
     return static_cast<uint64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
   }
 
@@ -1188,20 +942,32 @@ class PosixEnv : public Env {
   }
 
   virtual Status GetExecutablePath(string* path) OVERRIDE {
-    int size = 64;
+    uint32_t size = 64;
+    uint32_t len = 0;
     while (true) {
       gscoped_ptr<char[]> buf(new char[size]);
-      ssize_t rc = readlink("/proc/self/exe", buf.get(), size);
+#if defined(__linux__)
+      int rc = readlink("/proc/self/exe", buf.get(), size);
       if (rc == -1) {
-        return Status::IOError("Unable to determine own executable path", "",
-                               errno);
+        return Status::IOError("Unable to determine own executable path", "", errno);
+      } else if (rc >= size) {
+        // The buffer wasn't large enough
+        size *= 2;
+        continue;
       }
-      if (rc < size) {
-        path->assign(&buf[0], rc);
-        break;
+      len = rc;
+#elif defined(__APPLE__)
+      if (_NSGetExecutablePath(buf.get(), &size) != 0) {
+        // The buffer wasn't large enough; 'size' has been updated.
+        continue;
       }
-      // Buffer wasn't large enough
-      size *= 2;
+      len = strlen(buf.get());
+#else
+#error Unsupported platform
+#endif
+
+      path->assign(buf.get(), len);
+      break;
     }
     return Status::OK();
   }
@@ -1231,18 +997,18 @@ class PosixEnv : public Env {
     // FTS requires a non-const copy of the name. strdup it and free() when
     // we leave scope.
     gscoped_ptr<char, FreeDeleter> name_dup(strdup(root.c_str()));
-    char *(paths[]) = { name_dup.get(), NULL };
+    char *(paths[]) = { name_dup.get(), nullptr };
 
     // FTS_NOCHDIR is important here to make this thread-safe.
     gscoped_ptr<FTS, FtsCloser> tree(
-        fts_open(paths, FTS_PHYSICAL | FTS_XDEV | FTS_NOCHDIR, NULL));
+        fts_open(paths, FTS_PHYSICAL | FTS_XDEV | FTS_NOCHDIR, nullptr));
     if (!tree.get()) {
       return IOError(root, errno);
     }
 
-    FTSENT *ent = NULL;
+    FTSENT *ent = nullptr;
     bool had_errors = false;
-    while ((ent = fts_read(tree.get())) != NULL) {
+    while ((ent = fts_read(tree.get())) != nullptr) {
       bool doCb = false;
       FileType type = DIRECTORY_TYPE;
       switch (ent->fts_info) {
@@ -1291,7 +1057,7 @@ class PosixEnv : public Env {
   virtual Status Canonicalize(const string& path, string* result) OVERRIDE {
     TRACE_EVENT1("io", "PosixEnv::Canonicalize", "path", path);
     ThreadRestrictions::AssertIOAllowed();
-    gscoped_ptr<char[], FreeDeleter> r(realpath(path.c_str(), NULL));
+    gscoped_ptr<char[], FreeDeleter> r(realpath(path.c_str(), nullptr));
     if (!r) {
       return IOError(path, errno);
     }
@@ -1300,11 +1066,21 @@ class PosixEnv : public Env {
   }
 
   virtual Status GetTotalRAMBytes(int64_t* ram) OVERRIDE {
+#if defined(__APPLE__)
+    int mib[2];
+    size_t length = sizeof(*ram);
+
+    // Get the Physical memory size
+    mib[0] = CTL_HW;
+    mib[1] = HW_MEMSIZE;
+    CHECK_ERR(sysctl(mib, 2, ram, &length, nullptr, 0)) << "sysctl CTL_HW HW_MEMSIZE failed";
+#else
     struct sysinfo info;
     if (sysinfo(&info) < 0) {
       return IOError("sysinfo() failed", errno);
     }
     *ram = info.totalram;
+#endif
     return Status::OK();
   }
 
@@ -1324,11 +1100,7 @@ class PosixEnv : public Env {
     if (opts.mode == OPEN_EXISTING) {
       RETURN_NOT_OK(GetFileSize(fname, &file_size));
     }
-    if (opts.mmap_file) {
-      result->reset(new PosixMmapFile(fname, fd, file_size, page_size_, opts.sync_on_close));
-    } else {
-      result->reset(new PosixWritableFile(fname, fd, file_size, opts.sync_on_close));
-    }
+    result->reset(new PosixWritableFile(fname, fd, file_size, opts.sync_on_close));
     return Status::OK();
   }
 
@@ -1349,12 +1121,9 @@ class PosixEnv : public Env {
         return Status::OK();
     }
   }
-
-  size_t page_size_;
 };
 
-PosixEnv::PosixEnv() : page_size_(getpagesize()) {
-}
+PosixEnv::PosixEnv() {}
 
 }  // namespace
 

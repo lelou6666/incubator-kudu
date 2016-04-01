@@ -1,26 +1,11 @@
-// Copyright 2013 Cloudera, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
 // Some portions copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
-// found in the LICENSE file. See the AUTHORS file for names of contributors.
+// found in the LICENSE file.
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
+#include <memory>
 #include <stdlib.h>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include "kudu/gutil/atomic_refcount.h"
@@ -33,7 +18,10 @@
 #include "kudu/util/locks.h"
 #include "kudu/util/mem_tracker.h"
 #include "kudu/util/metrics.h"
+
+#if !defined(__APPLE__)
 #include "kudu/util/nvm_cache.h"
+#endif
 
 namespace kudu {
 
@@ -44,7 +32,7 @@ Cache::~Cache() {
 
 namespace {
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using std::vector;
 
 typedef simple_spinlock MutexType;
@@ -83,7 +71,7 @@ struct LRUHandle {
 // 4.4.3's builtin hashtable.
 class HandleTable {
  public:
-  HandleTable() : length_(0), elems_(0), list_(NULL) { Resize(); }
+  HandleTable() : length_(0), elems_(0), list_(nullptr) { Resize(); }
   ~HandleTable() { delete[] list_; }
 
   LRUHandle* Lookup(const Slice& key, uint32_t hash) {
@@ -93,9 +81,9 @@ class HandleTable {
   LRUHandle* Insert(LRUHandle* h) {
     LRUHandle** ptr = FindPointer(h->key(), h->hash);
     LRUHandle* old = *ptr;
-    h->next_hash = (old == NULL ? NULL : old->next_hash);
+    h->next_hash = (old == nullptr ? nullptr : old->next_hash);
     *ptr = h;
-    if (old == NULL) {
+    if (old == nullptr) {
       ++elems_;
       if (elems_ > length_) {
         // Since each cache entry is fairly large, we aim for a small
@@ -109,7 +97,7 @@ class HandleTable {
   LRUHandle* Remove(const Slice& key, uint32_t hash) {
     LRUHandle** ptr = FindPointer(key, hash);
     LRUHandle* result = *ptr;
-    if (result != NULL) {
+    if (result != nullptr) {
       *ptr = result->next_hash;
       --elems_;
     }
@@ -128,7 +116,7 @@ class HandleTable {
   // pointer to the trailing slot in the corresponding linked list.
   LRUHandle** FindPointer(const Slice& key, uint32_t hash) {
     LRUHandle** ptr = &list_[hash & (length_ - 1)];
-    while (*ptr != NULL &&
+    while (*ptr != nullptr &&
            ((*ptr)->hash != hash || key != (*ptr)->key())) {
       ptr = &(*ptr)->next_hash;
     }
@@ -140,12 +128,12 @@ class HandleTable {
     while (new_length < elems_ * 1.5) {
       new_length *= 2;
     }
-    LRUHandle** new_list = new LRUHandle*[new_length];
+    auto new_list = new LRUHandle*[new_length];
     memset(new_list, 0, sizeof(new_list[0]) * new_length);
     uint32_t count = 0;
     for (uint32_t i = 0; i < length_; i++) {
       LRUHandle* h = list_[i];
-      while (h != NULL) {
+      while (h != nullptr) {
         LRUHandle* next = h->next_hash;
         uint32_t hash = h->hash;
         LRUHandle** ptr = &new_list[hash & (new_length - 1)];
@@ -211,7 +199,7 @@ class LRUCache {
 LRUCache::LRUCache(MemTracker* tracker)
  : usage_(0),
    mem_tracker_(tracker),
-   metrics_(NULL) {
+   metrics_(nullptr) {
   // Make empty circular linked list
   lru_.next = &lru_;
   lru_.prev = &lru_;
@@ -264,7 +252,7 @@ Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash, bool caching) {
   {
     lock_guard<MutexType> l(&mutex_);
     e = table_.Lookup(key, hash);
-    if (e != NULL) {
+    if (e != nullptr) {
       base::RefCountInc(&e->refs);
       LRU_Remove(e);
       LRU_Append(e);
@@ -274,7 +262,7 @@ Cache::Handle* LRUCache::Lookup(const Slice& key, uint32_t hash, bool caching) {
   // Do the metrics outside of the lock.
   if (metrics_) {
     metrics_->lookups->Increment();
-    bool was_hit = (e != NULL);
+    bool was_hit = (e != nullptr);
     if (was_hit) {
       if (caching) {
         metrics_->cache_hits_caching->Increment();
@@ -307,7 +295,7 @@ Cache::Handle* LRUCache::Insert(
 
   LRUHandle* e = reinterpret_cast<LRUHandle*>(
       malloc(sizeof(LRUHandle)-1 + key.size()));
-  LRUHandle* to_remove_head = NULL;
+  LRUHandle* to_remove_head = nullptr;
 
   e->value = value;
   e->deleter = deleter;
@@ -328,7 +316,7 @@ Cache::Handle* LRUCache::Insert(
     LRU_Append(e);
 
     LRUHandle* old = table_.Insert(e);
-    if (old != NULL) {
+    if (old != nullptr) {
       LRU_Remove(old);
       if (Unref(old)) {
         old->next = to_remove_head;
@@ -349,7 +337,7 @@ Cache::Handle* LRUCache::Insert(
 
   // we free the entries here outside of mutex for
   // performance reasons
-  while (to_remove_head != NULL) {
+  while (to_remove_head != nullptr) {
     LRUHandle* next = to_remove_head->next;
     FreeEntry(to_remove_head);
     to_remove_head = next;
@@ -364,7 +352,7 @@ void LRUCache::Erase(const Slice& key, uint32_t hash) {
   {
     lock_guard<MutexType> l(&mutex_);
     e = table_.Remove(key, hash);
-    if (e != NULL) {
+    if (e != nullptr) {
       LRU_Remove(e);
       last_reference = Unref(e);
     }
@@ -444,7 +432,7 @@ class ShardedLRUCache : public Cache {
 
   virtual void SetMetrics(const scoped_refptr<MetricEntity>& entity) OVERRIDE {
     metrics_.reset(new CacheMetrics(entity));
-    BOOST_FOREACH(LRUCache* cache, shards_) {
+    for (LRUCache* cache : shards_) {
       cache->SetMetrics(metrics_.get());
     }
   }
@@ -471,8 +459,12 @@ Cache* NewLRUCache(CacheType type, size_t capacity, const string& id) {
   switch (type) {
     case DRAM_CACHE:
       return new ShardedLRUCache(capacity, id);
+#if !defined(__APPLE__)
     case NVM_CACHE:
       return NewLRUNvmCache(capacity, id);
+#endif
+    default:
+      LOG(FATAL) << "Unsupported LRU cache type: " << type;
   }
 }
 

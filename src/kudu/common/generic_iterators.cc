@@ -1,38 +1,49 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#include <boost/foreach.hpp>
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <algorithm>
+#include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "kudu/common/generic_iterators.h"
 #include "kudu/common/row.h"
 #include "kudu/common/rowblock.h"
 #include "kudu/gutil/gscoped_ptr.h"
+#include "kudu/gutil/map-util.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/memory/arena.h"
+
+using std::all_of;
+using std::get;
+using std::move;
+using std::remove_if;
+using std::shared_ptr;
+using std::sort;
+using std::string;
+using std::tuple;
 
 DEFINE_bool(materializing_iterator_do_pushdown, true,
             "Should MaterializingIterator do predicate pushdown");
 TAG_FLAG(materializing_iterator_do_pushdown, hidden);
 
 namespace kudu {
-
-using std::string;
-using std::tr1::shared_ptr;
 
 ////////////////////////////////////////////////////////////
 // Merge iterator
@@ -155,20 +166,18 @@ Status MergeIterator::Init(ScanSpec *spec) {
 
   RETURN_NOT_OK(InitSubIterators(spec));
 
-  BOOST_FOREACH(shared_ptr<MergeIterState> &state, iters_) {
+  for (shared_ptr<MergeIterState> &state : iters_) {
     RETURN_NOT_OK(state->PullNextBlock());
   }
 
   // Before we copy any rows, clean up any iterators which were empty
   // to start with. Otherwise, HasNext() won't properly return false
   // if we were passed only empty iterators.
-  for (size_t i = 0; i < iters_.size(); i++) {
-    if (PREDICT_FALSE(iters_[i]->IsFullyExhausted())) {
-      iters_.erase(iters_.begin() + i);
-      i--;
-      continue;
-    }
-  }
+  iters_.erase(
+      remove_if(iters_.begin(), iters_.end(), [] (const shared_ptr<MergeIterState>& iter) {
+        return PREDICT_FALSE(iter->IsFullyExhausted());
+      }),
+      iters_.end());
 
   initted_ = true;
   return Status::OK();
@@ -181,16 +190,16 @@ bool MergeIterator::HasNext() const {
 
 Status MergeIterator::InitSubIterators(ScanSpec *spec) {
   // Initialize all the sub iterators.
-  BOOST_FOREACH(shared_ptr<RowwiseIterator> &iter, orig_iters_) {
-    ScanSpec *spec_copy = spec != NULL ? scan_spec_copies_.Construct(*spec) : NULL;
+  for (shared_ptr<RowwiseIterator> &iter : orig_iters_) {
+    ScanSpec *spec_copy = spec != nullptr ? scan_spec_copies_.Construct(*spec) : nullptr;
     RETURN_NOT_OK(PredicateEvaluatingIterator::InitAndMaybeWrap(&iter, spec_copy));
     iters_.push_back(shared_ptr<MergeIterState>(new MergeIterState(iter)));
   }
 
   // Since we handle predicates in all the wrapped iterators, we can clear
   // them here.
-  if (spec != NULL) {
-    spec->mutable_predicates()->clear();
+  if (spec != nullptr) {
+    spec->RemovePredicates();
   }
   return Status::OK();
 }
@@ -213,7 +222,7 @@ void MergeIterator::PrepareBatch(RowBlock* dst) {
   // We can always provide at least as many rows as are remaining
   // in the currently queued up blocks.
   size_t available = 0;
-  BOOST_FOREACH(shared_ptr<MergeIterState> &iter, iters_) {
+  for (shared_ptr<MergeIterState> &iter : iters_) {
     available += iter->remaining_in_block();
   }
 
@@ -231,7 +240,7 @@ Status MergeIterator::MaterializeBlock(RowBlock *dst) {
     RowBlockRow dst_row = dst->row(dst_row_idx);
 
     // Find the sub-iterator which is currently smallest
-    MergeIterState *smallest = NULL;
+    MergeIterState *smallest = nullptr;
     ssize_t smallest_idx = -1;
 
     // Typically the number of iters_ is not that large, so using a priority
@@ -239,7 +248,7 @@ Status MergeIterator::MaterializeBlock(RowBlock *dst) {
     for (size_t i = 0; i < iters_.size(); i++) {
       shared_ptr<MergeIterState> &state = iters_[i];
 
-      if (smallest == NULL ||
+      if (smallest == nullptr ||
           schema_.Compare(state->next_row(), smallest->next_row()) < 0) {
         smallest = state.get();
         smallest_idx = i;
@@ -247,7 +256,7 @@ Status MergeIterator::MaterializeBlock(RowBlock *dst) {
     }
 
     // If no iterators had any row left, then we're done iterating.
-    if (PREDICT_FALSE(smallest == NULL)) break;
+    if (PREDICT_FALSE(smallest == nullptr)) break;
 
     // Otherwise, copy the row from the smallest one, and advance it
     RETURN_NOT_OK(CopyRow(smallest->next_row(), &dst_row, dst->arena()));
@@ -265,7 +274,7 @@ string MergeIterator::ToString() const {
   string s;
   s.append("Merge(");
   bool first = true;
-  BOOST_FOREACH(const shared_ptr<RowwiseIterator> &iter, orig_iters_) {
+  for (const shared_ptr<RowwiseIterator> &iter : orig_iters_) {
     s.append(iter->ToString());
     if (!first) {
       s.append(", ");
@@ -284,14 +293,14 @@ const Schema& MergeIterator::schema() const {
 void MergeIterator::GetIteratorStats(vector<IteratorStats>* stats) const {
   CHECK(initted_);
   vector<vector<IteratorStats> > stats_by_iter;
-  BOOST_FOREACH(const shared_ptr<RowwiseIterator>& iter, orig_iters_) {
+  for (const shared_ptr<RowwiseIterator>& iter : orig_iters_) {
     vector<IteratorStats> stats_for_iter;
     iter->GetIteratorStats(&stats_for_iter);
     stats_by_iter.push_back(stats_for_iter);
   }
   for (size_t idx = 0; idx < schema_.num_columns(); ++idx) {
     IteratorStats stats_for_col;
-    BOOST_FOREACH(const vector<IteratorStats>& stats_for_iter, stats_by_iter) {
+    for (const vector<IteratorStats>& stats_for_iter : stats_by_iter) {
       stats_for_col.AddStats(stats_for_iter[idx]);
     }
     stats->push_back(stats_for_col);
@@ -322,7 +331,7 @@ Status UnionIterator::Init(ScanSpec *spec) {
   // sub-iterators, since they may not know their own schemas
   // until they've been initialized (in the case of a union of unions)
   schema_.reset(new Schema(iters_.front()->schema()));
-  BOOST_FOREACH(const shared_ptr<RowwiseIterator> &iter, iters_) {
+  for (const shared_ptr<RowwiseIterator> &iter : iters_) {
     if (!iter->schema().Equals(*schema_)) {
       return Status::InvalidArgument(
         string("Schemas do not match: ") + schema_->ToString()
@@ -336,21 +345,21 @@ Status UnionIterator::Init(ScanSpec *spec) {
 
 
 Status UnionIterator::InitSubIterators(ScanSpec *spec) {
-  BOOST_FOREACH(shared_ptr<RowwiseIterator> &iter, iters_) {
-    ScanSpec *spec_copy = spec != NULL ? scan_spec_copies_.Construct(*spec) : NULL;
+  for (shared_ptr<RowwiseIterator> &iter : iters_) {
+    ScanSpec *spec_copy = spec != nullptr ? scan_spec_copies_.Construct(*spec) : nullptr;
     RETURN_NOT_OK(PredicateEvaluatingIterator::InitAndMaybeWrap(&iter, spec_copy));
   }
   // Since we handle predicates in all the wrapped iterators, we can clear
   // them here.
-  if (spec != NULL) {
-    spec->mutable_predicates()->clear();
+  if (spec != nullptr) {
+    spec->RemovePredicates();
   }
   return Status::OK();
 }
 
 bool UnionIterator::HasNext() const {
   CHECK(initted_);
-  BOOST_FOREACH(const shared_ptr<RowwiseIterator> &iter, iters_) {
+  for (const shared_ptr<RowwiseIterator> &iter : iters_) {
     if (iter->HasNext()) return true;
   }
 
@@ -390,7 +399,7 @@ string UnionIterator::ToString() const {
   string s;
   s.append("Union(");
   bool first = true;
-  BOOST_FOREACH(const shared_ptr<RowwiseIterator> &iter, iters_) {
+  for (const shared_ptr<RowwiseIterator> &iter : iters_) {
     if (!first) {
       s.append(", ");
     }
@@ -404,14 +413,14 @@ string UnionIterator::ToString() const {
 void UnionIterator::GetIteratorStats(std::vector<IteratorStats>* stats) const {
   CHECK(initted_);
   vector<vector<IteratorStats> > stats_by_iter;
-  BOOST_FOREACH(const shared_ptr<RowwiseIterator>& iter, all_iters_) {
+  for (const shared_ptr<RowwiseIterator>& iter : all_iters_) {
     vector<IteratorStats> stats_for_iter;
     iter->GetIteratorStats(&stats_for_iter);
     stats_by_iter.push_back(stats_for_iter);
   }
   for (size_t idx = 0; idx < schema_->num_columns(); ++idx) {
     IteratorStats stats_for_col;
-    BOOST_FOREACH(const vector<IteratorStats>& stats_for_iter, stats_by_iter) {
+    for (const vector<IteratorStats>& stats_for_iter : stats_by_iter) {
       stats_for_col.AddStats(stats_for_iter[idx]);
     }
     stats->push_back(stats_for_col);
@@ -422,55 +431,54 @@ void UnionIterator::GetIteratorStats(std::vector<IteratorStats>* stats) const {
 // Materializing iterator
 ////////////////////////////////////////////////////////////
 
-MaterializingIterator::MaterializingIterator(const shared_ptr<ColumnwiseIterator> &iter)
-  : iter_(iter),
-    disallow_pushdown_for_tests_(!FLAGS_materializing_iterator_do_pushdown) {
+MaterializingIterator::MaterializingIterator(shared_ptr<ColumnwiseIterator> iter)
+    : iter_(move(iter)),
+      disallow_pushdown_for_tests_(!FLAGS_materializing_iterator_do_pushdown) {
 }
 
 Status MaterializingIterator::Init(ScanSpec *spec) {
   RETURN_NOT_OK(iter_->Init(spec));
 
-  if (spec != NULL && !disallow_pushdown_for_tests_) {
-    // Gather any single-column predicates.
-    ScanSpec::PredicateList *preds = spec->mutable_predicates();
-    for (ScanSpec::PredicateList::iterator iter = preds->begin();
-         iter != preds->end();) {
-      const ColumnRangePredicate &pred = *iter;
-      const string &col_name = pred.column().name();
-      int idx = schema().find_column(col_name);
-      if (idx == -1) {
-        return Status::InvalidArgument("No such column", col_name);
+  int32_t num_columns = schema().num_columns();
+  col_idx_predicates_.clear();
+  non_predicate_column_indexes_.clear();
+
+  if (spec != nullptr && !disallow_pushdown_for_tests_) {
+    col_idx_predicates_.reserve(spec->predicates().size());
+    non_predicate_column_indexes_.reserve(num_columns - spec->predicates().size());
+
+    for (const auto& col_pred : spec->predicates()) {
+      const ColumnPredicate& pred = col_pred.second;
+      int col_idx = schema().find_column(pred.column().name());
+      if (col_idx == Schema::kColumnNotFound) {
+        return Status::InvalidArgument("No such column", col_pred.first);
       }
-
       VLOG(1) << "Pushing down predicate " << pred.ToString();
-      preds_by_column_.insert(std::make_pair(idx, pred));
+      col_idx_predicates_.emplace_back(col_idx, move(col_pred.second));
+    }
 
-      // Since we'll evaluate this predicate ourselves, remove it from the scan spec
-      // so higher layers don't repeat our work.
-      iter = preds->erase(iter);
+    for (int32_t col_idx = 0; col_idx < schema().num_columns(); col_idx++) {
+      if (!ContainsKey(spec->predicates(), schema().column(col_idx).name())) {
+        non_predicate_column_indexes_.emplace_back(col_idx);
+      }
+    }
+
+    // Since we'll evaluate these predicates ourselves, remove them from the
+    // scan spec so higher layers don't repeat our work.
+    spec->RemovePredicates();
+  } else {
+    non_predicate_column_indexes_.reserve(num_columns);
+    for (int32_t col_idx = 0; col_idx < num_columns; col_idx++) {
+      non_predicate_column_indexes_.emplace_back(col_idx);
     }
   }
 
-  // Determine a materialization order such that columns with predicates
-  // are materialized first.
-  //
-  // TODO: we can be a little smarter about this, by trying to estimate
-  // predicate selectivity, involve the materialization cost of types, etc.
-  vector<size_t> with_preds, without_preds;
-
-  for (size_t i = 0; i < schema().num_columns(); i++) {
-    int num_preds = preds_by_column_.count(i);
-    if (num_preds > 0) {
-      with_preds.push_back(i);
-    } else {
-      without_preds.push_back(i);
-    }
-  }
-
-  materialization_order_.swap(with_preds);
-  materialization_order_.insert(materialization_order_.end(),
-                                without_preds.begin(), without_preds.end());
-  DCHECK_EQ(materialization_order_.size(), schema().num_columns());
+  // Sort the predicates by selectivity so that the most selective are evaluated earlier.
+  sort(col_idx_predicates_.begin(), col_idx_predicates_.end(),
+       [] (const tuple<int32_t, ColumnPredicate>& left,
+           const tuple<int32_t, ColumnPredicate>& right) {
+         return SelectivityComparator(get<1>(left), get<1>(right));
+       });
 
   return Status::OK();
 }
@@ -498,31 +506,28 @@ Status MaterializingIterator::MaterializeBlock(RowBlock *dst) {
   // been deleted.
   RETURN_NOT_OK(iter_->InitializeSelectionVector(dst->selection_vector()));
 
-  bool short_circuit = false;
+  for (const auto& col_pred : col_idx_predicates_) {
+    // Materialize the column itself into the row block.
+    ColumnBlock dst_col(dst->column_block(get<0>(col_pred)));
+    RETURN_NOT_OK(iter_->MaterializeColumn(get<0>(col_pred), &dst_col));
 
-  BOOST_FOREACH(size_t col_idx, materialization_order_) {
+    // Evaluate the column predicate.
+    get<1>(col_pred).Evaluate(dst_col, dst->selection_vector());
+
+    // If after evaluating this predicate the entire row block has been filtered
+    // out, we don't need to materialize other columns at all.
+    if (!dst->selection_vector()->AnySelected()) {
+      DVLOG(1) << "0/" << dst->nrows() << " passed predicate";
+      return Status::OK();
+    }
+  }
+
+  for (size_t col_idx : non_predicate_column_indexes_) {
     // Materialize the column itself into the row block.
     ColumnBlock dst_col(dst->column_block(col_idx));
     RETURN_NOT_OK(iter_->MaterializeColumn(col_idx, &dst_col));
-
-    // Evaluate any predicates that apply to this column.
-    typedef std::pair<size_t, ColumnRangePredicate> MapEntry;
-    BOOST_FOREACH(const MapEntry &entry, preds_by_column_.equal_range(col_idx)) {
-      const ColumnRangePredicate &pred = entry.second;
-
-      pred.Evaluate(dst, dst->selection_vector());
-
-      // If after evaluating this predicate, the entire row block has now been
-      // filtered out, we don't need to materialize other columns at all.
-      if (!dst->selection_vector()->AnySelected()) {
-        short_circuit = true;
-        break;
-      }
-    }
-    if (short_circuit) {
-      break;
-    }
   }
+
   DVLOG(1) << dst->selection_vector()->CountSelected() << "/"
            << dst->nrows() << " passed predicate";
   return Status::OK();
@@ -538,20 +543,16 @@ string MaterializingIterator::ToString() const {
 // PredicateEvaluatingIterator
 ////////////////////////////////////////////////////////////
 
-
-PredicateEvaluatingIterator::PredicateEvaluatingIterator(
-  const shared_ptr<RowwiseIterator> &base_iter) :
-  base_iter_(base_iter) {
+PredicateEvaluatingIterator::PredicateEvaluatingIterator(shared_ptr<RowwiseIterator> base_iter)
+    : base_iter_(move(base_iter)) {
 }
 
 Status PredicateEvaluatingIterator::InitAndMaybeWrap(
   shared_ptr<RowwiseIterator> *base_iter, ScanSpec *spec) {
   RETURN_NOT_OK((*base_iter)->Init(spec));
-  if (spec != NULL &&
-      !spec->predicates().empty()) {
+  if (spec != nullptr && !spec->predicates().empty()) {
     // Underlying iterator did not accept all predicates. Wrap it.
-    shared_ptr<RowwiseIterator> wrapper(
-      new PredicateEvaluatingIterator(*base_iter));
+    shared_ptr<RowwiseIterator> wrapper(new PredicateEvaluatingIterator(*base_iter));
     CHECK_OK(wrapper->Init(spec));
     base_iter->swap(wrapper);
   }
@@ -560,11 +561,20 @@ Status PredicateEvaluatingIterator::InitAndMaybeWrap(
 
 Status PredicateEvaluatingIterator::Init(ScanSpec *spec) {
   // base_iter_ already Init()ed before this is constructed.
-
   CHECK_NOTNULL(spec);
-  // Gather any predicates that the base iterator did not pushdown.
-  // This also clears the predicates from the spec.
-  predicates_.swap(*(spec->mutable_predicates()));
+
+  // Gather any predicates that the base iterator did not pushdown, and remove
+  // the predicates from the spec.
+  col_idx_predicates_.clear();
+  col_idx_predicates_.reserve(spec->predicates().size());
+  for (auto& predicate : spec->predicates()) {
+    col_idx_predicates_.emplace_back(move(predicate.second));
+  }
+  spec->RemovePredicates();
+
+  // Sort the predicates by selectivity so that the most selective are evaluated earlier.
+  sort(col_idx_predicates_.begin(), col_idx_predicates_.end(), SelectivityComparator);
+
   return Status::OK();
 }
 
@@ -575,8 +585,12 @@ bool PredicateEvaluatingIterator::HasNext() const {
 Status PredicateEvaluatingIterator::NextBlock(RowBlock *dst) {
   RETURN_NOT_OK(base_iter_->NextBlock(dst));
 
-  BOOST_FOREACH(ColumnRangePredicate &pred, predicates_) {
-    pred.Evaluate(dst, dst->selection_vector());
+  for (const auto& predicate : col_idx_predicates_) {
+    int32_t col_idx = dst->schema().find_column(predicate.column().name());
+    if (col_idx == Schema::kColumnNotFound) {
+      return Status::InvalidArgument("Unknown column in predicate", predicate.ToString());
+    }
+    predicate.Evaluate(dst->column_block(col_idx), dst->selection_vector());
 
     // If after evaluating this predicate, the entire row block has now been
     // filtered out, we don't need to evaluate any further predicates.
@@ -589,10 +603,7 @@ Status PredicateEvaluatingIterator::NextBlock(RowBlock *dst) {
 }
 
 string PredicateEvaluatingIterator::ToString() const {
-  string s;
-  s.append("PredicateEvaluating(").append(base_iter_->ToString()).append(")");
-  return s;
+  return strings::Substitute("PredicateEvaluating($0)", base_iter_->ToString());
 }
-
 
 } // namespace kudu

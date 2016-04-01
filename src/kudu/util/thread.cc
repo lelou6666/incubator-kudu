@@ -1,31 +1,38 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Copied from Impala and adapted to Kudu.
 
 #include "kudu/util/thread.h"
 
 #include <algorithm>
-#include <boost/foreach.hpp>
 #include <map>
+#include <memory>
 #include <set>
-#include <sys/prctl.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
+#include <sys/time.h>
 #include <sys/types.h>
-#include <tr1/memory>
 #include <unistd.h>
 #include <vector>
+
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif // defined(__linux__)
 
 #include "kudu/gutil/atomicops.h"
 #include "kudu/gutil/dynamic_annotations.h"
@@ -37,15 +44,16 @@
 #include "kudu/util/logging.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/mutex.h"
-#include "kudu/util/url-coding.h"
 #include "kudu/util/os-util.h"
+#include "kudu/util/stopwatch.h"
+#include "kudu/util/url-coding.h"
 #include "kudu/util/web_callback_registry.h"
 
 using boost::bind;
 using boost::mem_fn;
-using std::tr1::shared_ptr;
 using std::endl;
 using std::map;
+using std::shared_ptr;
 using std::stringstream;
 using strings::Substitute;
 
@@ -60,7 +68,55 @@ METRIC_DEFINE_gauge_uint64(server, threads_running,
                            kudu::MetricUnit::kThreads,
                            "Current number of running threads");
 
+METRIC_DEFINE_gauge_uint64(server, cpu_utime,
+                           "User CPU Time",
+                           kudu::MetricUnit::kMilliseconds,
+                           "Total user CPU time of the process",
+                           kudu::EXPOSE_AS_COUNTER);
+
+METRIC_DEFINE_gauge_uint64(server, cpu_stime,
+                           "System CPU Time",
+                           kudu::MetricUnit::kMilliseconds,
+                           "Total system CPU time of the process",
+                           kudu::EXPOSE_AS_COUNTER);
+
+METRIC_DEFINE_gauge_uint64(server, voluntary_context_switches,
+                           "Voluntary Context Switches",
+                           kudu::MetricUnit::kContextSwitches,
+                           "Total voluntary context switches",
+                           kudu::EXPOSE_AS_COUNTER);
+
+METRIC_DEFINE_gauge_uint64(server, involuntary_context_switches,
+                           "Involuntary Context Switches",
+                           kudu::MetricUnit::kContextSwitches,
+                           "Total involuntary context switches",
+                           kudu::EXPOSE_AS_COUNTER);
+
 namespace kudu {
+
+static uint64_t GetCpuUTime() {
+  rusage ru;
+  CHECK_ERR(getrusage(RUSAGE_SELF, &ru));
+  return ru.ru_utime.tv_sec * 1000UL + ru.ru_utime.tv_usec / 1000UL;
+}
+
+static uint64_t GetCpuSTime() {
+  rusage ru;
+  CHECK_ERR(getrusage(RUSAGE_SELF, &ru));
+  return ru.ru_stime.tv_sec * 1000UL + ru.ru_stime.tv_usec / 1000UL;
+}
+
+static uint64_t GetVoluntaryContextSwitches() {
+  rusage ru;
+  CHECK_ERR(getrusage(RUSAGE_SELF, &ru));
+  return ru.ru_nvcsw;;
+}
+
+static uint64_t GetInVoluntaryContextSwitches() {
+  rusage ru;
+  CHECK_ERR(getrusage(RUSAGE_SELF, &ru));
+  return ru.ru_nivcsw;
+}
 
 class ThreadMgr;
 
@@ -111,18 +167,19 @@ class ThreadMgr {
   class ThreadDescriptor {
    public:
     ThreadDescriptor() { }
-    ThreadDescriptor(const string& category, const string& name, int64_t thread_id)
-        : name_(name), category_(category), thread_id_(thread_id) {
-    }
+    ThreadDescriptor(string category, string name, int64_t thread_id)
+        : name_(std::move(name)),
+          category_(std::move(category)),
+          thread_id_(thread_id) {}
 
     const string& name() const { return name_; }
     const string& category() const { return category_; }
-    pthread_t thread_id() const { return thread_id_; }
+    int64_t thread_id() const { return thread_id_; }
 
    private:
     string name_;
     string category_;
-    pthread_t thread_id_;
+    int64_t thread_id_;
   };
 
   // A ThreadCategory is a set of threads that are logically related.
@@ -165,15 +222,19 @@ void ThreadMgr::SetThreadName(const string& name, int64 tid) {
     return;
   }
 
+#if defined(__linux__)
   // http://0pointer.de/blog/projects/name-your-threads.html
   // Set the name for the LWP (which gets truncated to 15 characters).
   // Note that glibc also has a 'pthread_setname_np' api, but it may not be
   // available everywhere and it's only benefit over using prctl directly is
   // that it can set the name of threads other than the current thread.
   int err = prctl(PR_SET_NAME, name.c_str());
+#else
+  int err = pthread_setname_np(name.c_str());
+#endif // defined(__linux__)
   // We expect EPERM failures in sandboxed processes, just ignore those.
   if (err < 0 && errno != EPERM) {
-    PLOG(ERROR) << "prctl(PR_SET_NAME)";
+    PLOG(ERROR) << "SetThreadName";
   }
 }
 
@@ -190,6 +251,18 @@ Status ThreadMgr::StartInstrumentation(const scoped_refptr<MetricEntity>& metric
   metrics->NeverRetire(
       METRIC_threads_running.InstantiateFunctionGauge(metrics,
         Bind(&ThreadMgr::ReadThreadsRunning, Unretained(this))));
+  metrics->NeverRetire(
+      METRIC_cpu_utime.InstantiateFunctionGauge(metrics,
+        Bind(&GetCpuUTime)));
+  metrics->NeverRetire(
+      METRIC_cpu_stime.InstantiateFunctionGauge(metrics,
+        Bind(&GetCpuSTime)));
+  metrics->NeverRetire(
+      METRIC_voluntary_context_switches.InstantiateFunctionGauge(metrics,
+        Bind(&GetVoluntaryContextSwitches)));
+  metrics->NeverRetire(
+      METRIC_involuntary_context_switches.InstantiateFunctionGauge(metrics,
+        Bind(&GetInVoluntaryContextSwitches)));
 
   WebCallbackRegistry::PathHandlerCallback thread_callback =
       bind<void>(mem_fn(&ThreadMgr::ThreadPathHandler), this, _1, _2);
@@ -240,7 +313,7 @@ void ThreadMgr::RemoveThread(const pthread_t& pthread_id, const string& category
   ANNOTATE_IGNORE_READS_AND_WRITES_BEGIN();
   {
     MutexLock l(lock_);
-    ThreadCategoryMap::iterator category_it = thread_categories_.find(category);
+    auto category_it = thread_categories_.find(category);
     DCHECK(category_it != thread_categories_.end());
     category_it->second.erase(pthread_id);
     if (metrics_enabled_) {
@@ -253,7 +326,7 @@ void ThreadMgr::RemoveThread(const pthread_t& pthread_id, const string& category
 
 void ThreadMgr::PrintThreadCategoryRows(const ThreadCategory& category,
     stringstream* output) {
-  BOOST_FOREACH(const ThreadCategory::value_type& thread, category) {
+  for (const ThreadCategory::value_type& thread : category) {
     ThreadStats stats;
     Status status = GetThreadStats(thread.second.thread_id(), &stats);
     if (!status.ok()) {
@@ -271,7 +344,7 @@ void ThreadMgr::ThreadPathHandler(const WebCallbackRegistry::WebRequest& req,
     stringstream* output) {
   MutexLock l(lock_);
   vector<const ThreadCategory*> categories_to_print;
-  WebCallbackRegistry::ArgumentMap::const_iterator category_name = req.parsed_args.find("group");
+  auto category_name = req.parsed_args.find("group");
   if (category_name != req.parsed_args.end()) {
     string group = EscapeForHtmlToString(category_name->second);
     (*output) << "<h2>Thread Group: " << group << "</h2>" << endl;
@@ -285,7 +358,7 @@ void ThreadMgr::ThreadPathHandler(const WebCallbackRegistry::WebRequest& req,
       (*output) << "<h3>" << category->first << " : " << category->second.size()
                 << "</h3>";
     } else {
-      BOOST_FOREACH(const ThreadCategoryMap::value_type& category, thread_categories_) {
+      for (const ThreadCategoryMap::value_type& category : thread_categories_) {
         categories_to_print.push_back(&category.second);
       }
       (*output) << "<h3>All Threads : </h3>";
@@ -296,7 +369,7 @@ void ThreadMgr::ThreadPathHandler(const WebCallbackRegistry::WebRequest& req,
               << "<th>Cumulative Kernel CPU(s)</th>"
               << "<th>Cumulative IO-wait(s)</th></tr>";
 
-    BOOST_FOREACH(const ThreadCategory* category, categories_to_print) {
+    for (const ThreadCategory* category : categories_to_print) {
       PrintThreadCategoryRows(*category, output);
     }
     (*output) << "</table>";
@@ -307,7 +380,7 @@ void ThreadMgr::ThreadPathHandler(const WebCallbackRegistry::WebRequest& req,
     }
     (*output) << "<a href='/threadz?group=all'><h3>All Threads</h3>";
 
-    BOOST_FOREACH(const ThreadCategoryMap::value_type& category, thread_categories_) {
+    for (const ThreadCategoryMap::value_type& category : thread_categories_) {
       string category_arg;
       UrlEncode(category.first, &category_arg);
       (*output) << "<a href='/threadz?group=" << category_arg << "'><h3>"
@@ -419,11 +492,18 @@ std::string Thread::ToString() const {
 
 Status Thread::StartThread(const std::string& category, const std::string& name,
                            const ThreadFunctor& functor, scoped_refptr<Thread> *holder) {
+  const string log_prefix = Substitute("$0 ($1) ", name, category);
+  SCOPED_LOG_SLOW_EXECUTION_PREFIX(WARNING, 500 /* ms */, log_prefix, "starting thread");
+
   // Temporary reference for the duration of this function.
   scoped_refptr<Thread> t(new Thread(category, name, functor));
-  int ret = pthread_create(&t->thread_, NULL, &Thread::SuperviseThread, t.get());
-  if (ret) {
-    return Status::RuntimeError("Could not create thread", strerror(ret), ret);
+
+  {
+    SCOPED_LOG_SLOW_EXECUTION_PREFIX(WARNING, 500 /* ms */, log_prefix, "creating pthread");
+    int ret = pthread_create(&t->thread_, NULL, &Thread::SuperviseThread, t.get());
+    if (ret) {
+      return Status::RuntimeError("Could not create thread", strerror(ret), ret);
+    }
   }
 
   // The thread has been created and is now joinable.
@@ -446,9 +526,13 @@ Status Thread::StartThread(const std::string& category, const std::string& name,
   // 3. <value>: both the parent and the child are free to continue. If the
   //    value is INVALID_TID, the child could not discover its tid.
   Release_Store(&t->tid_, PARENT_WAITING_TID);
-  int loop_count = 0;
-  while (Acquire_Load(&t->tid_) == PARENT_WAITING_TID) {
-    boost::detail::yield(loop_count++);
+  {
+    SCOPED_LOG_SLOW_EXECUTION_PREFIX(WARNING, 500 /* ms */, log_prefix,
+                                     "waiting for new thread to publish its TID");
+    int loop_count = 0;
+    while (Acquire_Load(&t->tid_) == PARENT_WAITING_TID) {
+      boost::detail::yield(loop_count++);
+    }
   }
 
   VLOG(2) << "Started thread " << t->tid()<< " - " << category << ":" << name;
@@ -457,7 +541,7 @@ Status Thread::StartThread(const std::string& category, const std::string& name,
 
 void* Thread::SuperviseThread(void* arg) {
   Thread* t = static_cast<Thread*>(arg);
-  int64_t system_tid = syscall(SYS_gettid);
+  int64_t system_tid = Thread::CurrentThreadId();
   if (system_tid == -1) {
     string error_msg = ErrnoToString(errno);
     KLOG_EVERY_N(INFO, 100) << "Could not determine thread ID: " << error_msg;
@@ -502,7 +586,7 @@ void* Thread::SuperviseThread(void* arg) {
 void Thread::FinishThread(void* arg) {
   Thread* t = static_cast<Thread*>(arg);
 
-  BOOST_FOREACH(Closure& c, t->exit_callbacks_) {
+  for (Closure& c : t->exit_callbacks_) {
     c.Run();
   }
 

@@ -1,32 +1,34 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/client/client.h"
 
 #include <algorithm>
 #include <boost/bind.hpp>
 #include <set>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/client/batcher.h"
 #include "kudu/client/callbacks.h"
 #include "kudu/client/client-internal.h"
 #include "kudu/client/client_builder-internal.h"
-#include "kudu/client/error_collector.h"
 #include "kudu/client/error-internal.h"
+#include "kudu/client/error_collector.h"
 #include "kudu/client/meta_cache.h"
 #include "kudu/client/row_result.h"
 #include "kudu/client/scan_predicate-internal.h"
@@ -48,13 +50,11 @@
 #include "kudu/master/master.pb.h"
 #include "kudu/master/master.proxy.h"
 #include "kudu/rpc/messenger.h"
+#include "kudu/util/init.h"
 #include "kudu/util/logging.h"
 #include "kudu/util/net/dns_resolver.h"
+#include "kudu/util/version_info.h"
 
-using std::set;
-using std::string;
-using std::tr1::shared_ptr;
-using std::vector;
 using kudu::master::AlterTableRequestPB;
 using kudu::master::AlterTableRequestPB_Step;
 using kudu::master::AlterTableResponsePB;
@@ -64,21 +64,28 @@ using kudu::master::DeleteTableRequestPB;
 using kudu::master::DeleteTableResponsePB;
 using kudu::master::GetTableSchemaRequestPB;
 using kudu::master::GetTableSchemaResponsePB;
+using kudu::master::ListTablesRequestPB;
+using kudu::master::ListTablesResponsePB;
 using kudu::master::ListTabletServersRequestPB;
 using kudu::master::ListTabletServersResponsePB;
 using kudu::master::ListTabletServersResponsePB_Entry;
-using kudu::master::ListTablesRequestPB;
-using kudu::master::ListTablesResponsePB;
 using kudu::master::MasterServiceProxy;
 using kudu::master::TabletLocationsPB;
 using kudu::rpc::Messenger;
 using kudu::rpc::MessengerBuilder;
 using kudu::rpc::RpcController;
 using kudu::tserver::ScanResponsePB;
+using std::set;
+using std::string;
+using std::vector;
 
 MAKE_ENUM_LIMITS(kudu::client::KuduSession::FlushMode,
                  kudu::client::KuduSession::AUTO_FLUSH_SYNC,
                  kudu::client::KuduSession::MANUAL_FLUSH);
+
+MAKE_ENUM_LIMITS(kudu::client::KuduSession::ExternalConsistencyMode,
+                 kudu::client::KuduSession::CLIENT_PROPAGATED,
+                 kudu::client::KuduSession::COMMIT_WAIT);
 
 MAKE_ENUM_LIMITS(kudu::client::KuduScanner::ReadMode,
                  kudu::client::KuduScanner::READ_LATEST,
@@ -94,6 +101,7 @@ namespace client {
 using internal::Batcher;
 using internal::ErrorCollector;
 using internal::MetaCache;
+using sp::shared_ptr;
 
 static const int kHtTimestampBitsToShift = 12;
 static const char* kProgName = "kudu_client";
@@ -156,6 +164,14 @@ Status SetInternalSignalNumber(int signum) {
   return SetStackTraceSignal(signum);
 }
 
+std::string GetShortVersionString() {
+  return VersionInfo::GetShortVersionString();
+}
+
+std::string GetAllVersionInfo() {
+  return VersionInfo::GetAllVersionInfo();
+}
+
 KuduClientBuilder::KuduClientBuilder()
   : data_(new KuduClientBuilder::Data()) {
 }
@@ -170,7 +186,7 @@ KuduClientBuilder& KuduClientBuilder::clear_master_server_addrs() {
 }
 
 KuduClientBuilder& KuduClientBuilder::master_server_addrs(const vector<string>& addrs) {
-  BOOST_FOREACH(const string& addr, addrs) {
+  for (const string& addr : addrs) {
     data_->master_server_addrs_.push_back(addr);
   }
   return *this;
@@ -192,6 +208,8 @@ KuduClientBuilder& KuduClientBuilder::default_rpc_timeout(const MonoDelta& timeo
 }
 
 Status KuduClientBuilder::Build(shared_ptr<KuduClient>* client) {
+  RETURN_NOT_OK(CheckCPUFlags());
+
   shared_ptr<KuduClient> c(new KuduClient());
 
   // Init messenger.
@@ -282,7 +300,8 @@ Status KuduClient::ListTabletServers(vector<KuduTabletServer*>* tablet_servers) 
           this,
           req,
           &resp,
-          NULL,
+          nullptr,
+          "ListTabletServers",
           &MasterServiceProxy::ListTabletServers);
   RETURN_NOT_OK(s);
   if (resp.has_error()) {
@@ -290,7 +309,7 @@ Status KuduClient::ListTabletServers(vector<KuduTabletServer*>* tablet_servers) 
   }
   for (int i = 0; i < resp.servers_size(); i++) {
     const ListTabletServersResponsePB_Entry& e = resp.servers(i);
-    KuduTabletServer* ts = new KuduTabletServer();
+    auto ts = new KuduTabletServer();
     ts->data_ = new KuduTabletServer::Data(e.instance_id().permanent_uuid(),
                                            e.registration().rpc_addresses(0).host());
     tablet_servers->push_back(ts);
@@ -314,7 +333,8 @@ Status KuduClient::ListTables(vector<string>* tables,
           this,
           req,
           &resp,
-          NULL,
+          nullptr,
+          "ListTables",
           &MasterServiceProxy::ListTables);
   RETURN_NOT_OK(s);
   if (resp.has_error()) {
@@ -329,7 +349,7 @@ Status KuduClient::ListTables(vector<string>* tables,
 Status KuduClient::TableExists(const string& table_name, bool* exists) {
   std::vector<std::string> tables;
   RETURN_NOT_OK(ListTables(&tables, table_name));
-  BOOST_FOREACH(const string& table, tables) {
+  for (const string& table : tables) {
     if (table == table_name) {
       *exists = true;
       return Status::OK();
@@ -387,6 +407,10 @@ uint64_t KuduClient::GetLatestObservedTimestamp() const {
   return data_->GetLatestObservedTimestamp();
 }
 
+void KuduClient::SetLatestObservedTimestamp(uint64_t ht_timestamp) {
+  data_->UpdateLatestObservedTimestamp(ht_timestamp);
+}
+
 ////////////////////////////////////////////////////////////
 // KuduTableCreator
 ////////////////////////////////////////////////////////////
@@ -418,7 +442,7 @@ KuduTableCreator& KuduTableCreator::add_hash_partitions(const std::vector<std::s
                                                         int32_t num_buckets, int32_t seed) {
   PartitionSchemaPB::HashBucketSchemaPB* bucket_schema =
     data_->partition_schema_.add_hash_bucket_schemas();
-  BOOST_FOREACH(const string& col_name, columns) {
+  for (const string& col_name : columns) {
     bucket_schema->add_columns()->set_name(col_name);
   }
   bucket_schema->set_num_buckets(num_buckets);
@@ -431,7 +455,7 @@ KuduTableCreator& KuduTableCreator::set_range_partition_columns(
   PartitionSchemaPB::RangeSchemaPB* range_schema =
     data_->partition_schema_.mutable_range_schema();
   range_schema->Clear();
-  BOOST_FOREACH(const string& col_name, columns) {
+  for (const string& col_name : columns) {
     range_schema->add_columns()->set_name(col_name);
   }
 
@@ -477,7 +501,7 @@ Status KuduTableCreator::Create() {
 
   RowOperationsPBEncoder encoder(req.mutable_split_rows());
 
-  BOOST_FOREACH(const KuduPartialRow* row, data_->split_rows_) {
+  for (const KuduPartialRow* row : data_->split_rows_) {
     encoder.Add(RowOperationsPB::SPLIT_ROW, *row);
   }
   req.mutable_partition_schema()->CopyFrom(data_->partition_schema_);
@@ -623,6 +647,10 @@ Status KuduSession::Close() {
 }
 
 Status KuduSession::SetFlushMode(FlushMode m) {
+  if (m == AUTO_FLUSH_BACKGROUND) {
+    return Status::NotSupported("AUTO_FLUSH_BACKGROUND has not been implemented in the"
+        " c++ client (see KUDU-456).");
+  }
   if (data_->batcher_->HasPendingOperations()) {
     // TODO: there may be a more reasonable behavior here.
     return Status::IllegalState("Cannot change flush mode when writes are buffered");
@@ -633,6 +661,21 @@ Status KuduSession::SetFlushMode(FlushMode m) {
   }
 
   data_->flush_mode_ = m;
+  return Status::OK();
+}
+
+Status KuduSession::SetExternalConsistencyMode(ExternalConsistencyMode m) {
+  if (data_->batcher_->HasPendingOperations()) {
+    // TODO: there may be a more reasonable behavior here.
+    return Status::IllegalState("Cannot change external consistency mode when writes are "
+        "buffered");
+  }
+  if (!tight_enum_test<ExternalConsistencyMode>(m)) {
+    // Be paranoid in client code.
+    return Status::InvalidArgument("Bad external consistency mode");
+  }
+
+  data_->external_consistency_mode_ = m;
   return Status::OK();
 }
 
@@ -650,7 +693,8 @@ Status KuduSession::Flush() {
 }
 
 void KuduSession::FlushAsync(KuduStatusCallback* user_callback) {
-  CHECK_EQ(data_->flush_mode_, MANUAL_FLUSH) << "TODO: handle other flush modes";
+  CHECK_NE(data_->flush_mode_, AUTO_FLUSH_BACKGROUND) <<
+      "AUTO_FLUSH_BACKGROUND has not been implemented";
 
   // Swap in a new batcher to start building the next batch.
   // Save off the old batcher.
@@ -672,7 +716,7 @@ bool KuduSession::HasPendingOperations() const {
   if (data_->batcher_->HasPendingOperations()) {
     return true;
   }
-  BOOST_FOREACH(Batcher* b, data_->flushed_batchers_) {
+  for (Batcher* b : data_->flushed_batchers_) {
     if (b->HasPendingOperations()) {
       return true;
     }
@@ -801,25 +845,48 @@ KuduScanner::~KuduScanner() {
 }
 
 Status KuduScanner::SetProjectedColumns(const vector<string>& col_names) {
+  return SetProjectedColumnNames(col_names);
+}
+
+Status KuduScanner::SetProjectedColumnNames(const vector<string>& col_names) {
+  if (data_->open_) {
+    return Status::IllegalState("Projection must be set before Open()");
+  }
+
+  const Schema* table_schema = data_->table_->schema().schema_;
+  vector<int> col_indexes;
+  col_indexes.reserve(col_names.size());
+  for (const string& col_name : col_names) {
+    int idx = table_schema->find_column(col_name);
+    if (idx == Schema::kColumnNotFound) {
+      return Status::NotFound(strings::Substitute("Column: \"$0\" was not found in the "
+          "table schema.", col_name));
+    }
+    col_indexes.push_back(idx);
+  }
+
+  return SetProjectedColumnIndexes(col_indexes);
+}
+
+Status KuduScanner::SetProjectedColumnIndexes(const vector<int>& col_indexes) {
   if (data_->open_) {
     return Status::IllegalState("Projection must be set before Open()");
   }
 
   const Schema* table_schema = data_->table_->schema().schema_;
   vector<ColumnSchema> cols;
-  cols.reserve(col_names.size());
-  BOOST_FOREACH(const string& col_name, col_names) {
-    int idx = table_schema->find_column(col_name);
-    if (idx == Schema::kColumnNotFound) {
+  cols.reserve(col_indexes.size());
+  for (const int col_index : col_indexes) {
+    if (col_index >= table_schema->columns().size()) {
       return Status::NotFound(strings::Substitute("Column: \"$0\" was not found in the "
-          "table schema.", col_name));
+          "table schema.", col_index));
     }
-    cols.push_back(table_schema->column(idx));
+    cols.push_back(table_schema->column(col_index));
   }
 
   gscoped_ptr<Schema> s(new Schema());
   RETURN_NOT_OK(s->Reset(cols, 0));
-  data_->projection_ = data_->pool_.Add(s.release());
+  data_->SetProjectionSchema(data_->pool_.Add(s.release()));
   return Status::OK();
 }
 
@@ -855,6 +922,7 @@ Status KuduScanner::SetFaultTolerant() {
   if (data_->open_) {
     return Status::IllegalState("Fault-tolerance must be set before Open()");
   }
+  RETURN_NOT_OK(SetReadMode(READ_AT_SNAPSHOT));
   data_->is_fault_tolerant_ = true;
   return Status::OK();
 }
@@ -899,7 +967,7 @@ Status KuduScanner::AddConjunctPredicate(KuduPredicate* pred) {
   if (data_->open_) {
     return Status::IllegalState("Predicate must be set before Open()");
   }
-  return pred->data_->AddToScanSpec(&data_->spec_);
+  return pred->data_->AddToScanSpec(&data_->spec_, &data_->arena_);
 }
 
 Status KuduScanner::AddLowerBound(const KuduPartialRow& key) {
@@ -956,6 +1024,10 @@ Status KuduScanner::SetCacheBlocks(bool cache_blocks) {
   return Status::OK();
 }
 
+KuduSchema KuduScanner::GetProjectionSchema() const {
+  return data_->client_projection_;
+}
+
 namespace {
 // Callback for the RPC sent by Close().
 // We can't use the KuduScanner response and RPC controller members for this
@@ -976,20 +1048,26 @@ struct CloseCallback {
 } // anonymous namespace
 
 string KuduScanner::ToString() const {
-  Slice start_key = data_->spec_.lower_bound_key() ?
-    data_->spec_.lower_bound_key()->encoded_key() : Slice("INF");
-  Slice end_key = data_->spec_.exclusive_upper_bound_key() ?
-    data_->spec_.exclusive_upper_bound_key()->encoded_key() : Slice("INF");
-  return strings::Substitute("$0: [$1,$2)", data_->table_->name(),
-                             start_key.ToDebugString(), end_key.ToDebugString());
+  return strings::Substitute("$0: $1",
+                             data_->table_->name(),
+                             data_->spec_.ToString(*data_->table_->schema().schema_));
 }
 
 Status KuduScanner::Open() {
   CHECK(!data_->open_) << "Scanner already open";
-  CHECK(data_->projection_ != NULL) << "No projection provided";
+  CHECK(data_->projection_ != nullptr) << "No projection provided";
 
-  // Find the first tablet.
-  data_->spec_encoder_.EncodeRangePredicates(&data_->spec_, false);
+  data_->spec_.OptimizeScan(*data_->table_->schema().schema_, &data_->arena_, &data_->pool_, false);
+  data_->partition_pruner_.Init(*data_->table_->schema().schema_,
+                                data_->table_->partition_schema(),
+                                data_->spec_);
+
+  if (data_->spec_.CanShortCircuit() || !data_->partition_pruner_.HasMorePartitionKeyRanges()) {
+    VLOG(1) << "Short circuiting scan " << ToString();
+    data_->open_ = true;
+    data_->short_circuit_ = true;
+    return Status::OK();
+  }
 
   VLOG(1) << "Beginning scan " << ToString();
 
@@ -997,43 +1075,7 @@ Status KuduScanner::Open() {
   deadline.AddDelta(data_->timeout_);
   set<string> blacklist;
 
-  bool is_simple_range_partitioned =
-    data_->table_->partition_schema().IsSimplePKRangePartitioning(*data_->table_->schema().schema_);
-
-  if (!is_simple_range_partitioned &&
-      (data_->spec_.lower_bound_key() != NULL ||
-       data_->spec_.exclusive_upper_bound_key() != NULL ||
-       !data_->spec_.predicates().empty())) {
-    KLOG_FIRST_N(WARNING, 1) << "Starting full table scan. In the future this scan may be "
-                                "automatically optimized with partition pruning.";
-  }
-
-  if (is_simple_range_partitioned) {
-    // If the table is simple range partitioned, then the partition key space is
-    // isomorphic to the primary key space. We can potentially reduce the scan
-    // length by only scanning the intersection of the primary key range and the
-    // partition key range. This is a stop-gap until real partition pruning is
-    // in place that will work across any partition type.
-    Slice start_primary_key = data_->spec_.lower_bound_key() == NULL ? Slice()
-                            : data_->spec_.lower_bound_key()->encoded_key();
-    Slice end_primary_key = data_->spec_.exclusive_upper_bound_key() == NULL ? Slice()
-                          : data_->spec_.exclusive_upper_bound_key()->encoded_key();
-    Slice start_partition_key = data_->spec_.lower_bound_partition_key();
-    Slice end_partition_key = data_->spec_.exclusive_upper_bound_partition_key();
-
-    if ((!end_partition_key.empty() && start_primary_key.compare(end_partition_key) >= 0) ||
-        (!end_primary_key.empty() && start_partition_key.compare(end_primary_key) >= 0)) {
-      // The primary key range and the partition key range do not intersect;
-      // the scan will be empty. Keep the existing partition key range.
-    } else {
-      // Assign the scan's partition key range to the intersection of the
-      // primary key and partition key ranges.
-      data_->spec_.SetLowerBoundPartitionKey(start_primary_key);
-      data_->spec_.SetExclusiveUpperBoundPartitionKey(end_primary_key);
-    }
-  }
-
-  RETURN_NOT_OK(data_->OpenTablet(data_->spec_.lower_bound_partition_key(), deadline, &blacklist));
+  RETURN_NOT_OK(data_->OpenNextTablet(deadline, &blacklist));
 
   data_->open_ = true;
   return Status::OK();
@@ -1045,7 +1087,6 @@ Status KuduScanner::KeepAlive() {
 
 void KuduScanner::Close() {
   if (!data_->open_) return;
-  CHECK(data_->proxy_);
 
   VLOG(1) << "Ending scan " << ToString();
 
@@ -1055,6 +1096,7 @@ void KuduScanner::Close() {
   // This is reflected in the Open() response. In this case, there is no server-side state
   // to clean up.
   if (!data_->next_req_.scanner_id().empty()) {
+    CHECK(data_->proxy_);
     gscoped_ptr<CloseCallback> closer(new CloseCallback);
     closer->scanner_id = data_->next_req_.scanner_id();
     data_->PrepareRequest(KuduScanner::Data::CLOSE);
@@ -1071,12 +1113,19 @@ void KuduScanner::Close() {
 
 bool KuduScanner::HasMoreRows() const {
   CHECK(data_->open_);
-  return data_->data_in_open_ || // more data in hand
-      data_->last_response_.has_more_results() || // more data in this tablet
-      data_->MoreTablets(); // more tablets to scan, possibly with more data
+  return !data_->short_circuit_ &&                 // The scan is not short circuited
+      (data_->data_in_open_ ||                     // more data in hand
+       data_->last_response_.has_more_results() || // more data in this tablet
+       data_->MoreTablets());                      // more tablets to scan, possibly with more data
 }
 
 Status KuduScanner::NextBatch(vector<KuduRowResult>* rows) {
+  RETURN_NOT_OK(NextBatch(&data_->batch_for_old_api_));
+  data_->batch_for_old_api_.data_->ExtractRows(rows);
+  return Status::OK();
+}
+
+Status KuduScanner::NextBatch(KuduScanBatch* result) {
   // TODO: do some double-buffering here -- when we return this batch
   // we should already have fired off the RPC for the next batch, but
   // need to do some swapping of the response objects around to avoid
@@ -1084,13 +1133,20 @@ Status KuduScanner::NextBatch(vector<KuduRowResult>* rows) {
   CHECK(data_->open_);
   CHECK(data_->proxy_);
 
-  rows->clear();
+  result->data_->Clear();
+
+  if (data_->short_circuit_) {
+    return Status::OK();
+  }
 
   if (data_->data_in_open_) {
     // We have data from a previous scan.
     VLOG(1) << "Extracting data from scan " << ToString();
     data_->data_in_open_ = false;
-    return data_->ExtractRows(rows);
+    return result->data_->Reset(&data_->controller_,
+                                data_->projection_,
+                                &data_->client_projection_,
+                                make_gscoped_ptr(data_->last_response_.release_data()));
   } else if (data_->last_response_.has_more_results()) {
     // More data is available in this tablet.
     VLOG(1) << "Continuing scan " << ToString();
@@ -1129,7 +1185,10 @@ Status KuduScanner::NextBatch(vector<KuduRowResult>* rows) {
         data_->last_primary_key_ = data_->last_response_.last_primary_key();
       }
       data_->scan_attempts_ = 0;
-      return data_->ExtractRows(rows);
+      return result->data_->Reset(&data_->controller_,
+                                  data_->projection_,
+                                  &data_->client_projection_,
+                                  make_gscoped_ptr(data_->last_response_.release_data()));
     }
 
     data_->scan_attempts_++;
@@ -1144,9 +1203,7 @@ Status KuduScanner::NextBatch(vector<KuduRowResult>* rows) {
                                       batch_deadline, candidates, &blacklist));
 
     LOG(WARNING) << "Attempting to retry scan of tablet " << ToString() << " elsewhere.";
-    // Use the start partition key of the current tablet as the start partition key.
-    const string& partition_key_start = data_->remote_->partition().partition_key_start();
-    return data_->OpenTablet(partition_key_start, batch_deadline, &blacklist);
+    return data_->ReopenCurrentTablet(batch_deadline, &blacklist);
   } else if (data_->MoreTablets()) {
     // More data may be available in other tablets.
     // No need to close the current tablet; we scanned all the data so the
@@ -1156,9 +1213,8 @@ Status KuduScanner::NextBatch(vector<KuduRowResult>* rows) {
     MonoTime deadline = MonoTime::Now(MonoTime::FINE);
     deadline.AddDelta(data_->timeout_);
     set<string> blacklist;
-    RETURN_NOT_OK(data_->OpenTablet(data_->remote_->partition().partition_key_end(),
-                                    deadline, &blacklist));
 
+    RETURN_NOT_OK(data_->OpenNextTablet(deadline, &blacklist));
     // No rows written, the next invocation will pick them up.
     return Status::OK();
   } else {
@@ -1183,8 +1239,12 @@ Status KuduScanner::GetCurrentServer(KuduTabletServer** server) {
   return Status::OK();
 }
 
+////////////////////////////////////////////////////////////
+// KuduTabletServer
+////////////////////////////////////////////////////////////
+
 KuduTabletServer::KuduTabletServer()
-  : data_(NULL) {
+  : data_(nullptr) {
 }
 
 KuduTabletServer::~KuduTabletServer() {

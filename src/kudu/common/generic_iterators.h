@@ -1,24 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_COMMON_MERGE_ITERATOR_H
 #define KUDU_COMMON_MERGE_ITERATOR_H
 
-#include <gtest/gtest_prod.h>
-#include <tr1/memory>
-#include <tr1/unordered_map>
 #include <deque>
+#include <gtest/gtest_prod.h>
+#include <memory>
 #include <string>
+#include <tuple>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/common/iterator.h"
@@ -30,11 +34,6 @@ namespace kudu {
 class Arena;
 class MergeIterState;
 
-using std::deque;
-using std::tr1::shared_ptr;
-using std::vector;
-using std::tr1::unordered_multimap;
-
 // An iterator which merges the results of other iterators, comparing
 // based on keys.
 class MergeIterator : public RowwiseIterator {
@@ -43,7 +42,7 @@ class MergeIterator : public RowwiseIterator {
   // key columns. It should probably just be the required projection, which must be
   // a subset of the columns in 'iters'.
   MergeIterator(const Schema &schema,
-                const vector<shared_ptr<RowwiseIterator> > &iters);
+                const std::vector<std::shared_ptr<RowwiseIterator> > &iters);
 
   // The passed-in iterators should be already initialized.
   Status Init(ScanSpec *spec) OVERRIDE;
@@ -69,8 +68,8 @@ class MergeIterator : public RowwiseIterator {
 
   // Holds the subiterators until Init is called.
   // This is required because we can't create a MergeIterState of an uninitialized iterator.
-  deque<shared_ptr<RowwiseIterator> > orig_iters_;
-  vector<shared_ptr<MergeIterState> > iters_;
+  std::deque<std::shared_ptr<RowwiseIterator> > orig_iters_;
+  std::vector<std::shared_ptr<MergeIterState> > iters_;
 
   // When the underlying iterators are initialized, each needs its own
   // copy of the scan spec in order to do its own pushdown calculations, etc.
@@ -78,7 +77,6 @@ class MergeIterator : public RowwiseIterator {
   // when the UnionIterator goes out of scope.
   ObjectPool<ScanSpec> scan_spec_copies_;
 };
-
 
 // An iterator which unions the results of other iterators.
 // This is different from MergeIterator in that it lays the results out end-to-end
@@ -93,7 +91,7 @@ class UnionIterator : public RowwiseIterator {
   //
   // All passed-in iterators must be fully able to evaluate all predicates - i.e.
   // calling iter->Init(spec) should remove all predicates from the spec.
-  explicit UnionIterator(const vector<shared_ptr<RowwiseIterator> > &iters);
+  explicit UnionIterator(const std::vector<std::shared_ptr<RowwiseIterator> > &iters);
 
   Status Init(ScanSpec *spec) OVERRIDE;
 
@@ -120,11 +118,11 @@ class UnionIterator : public RowwiseIterator {
   // Schema: initialized during Init()
   gscoped_ptr<Schema> schema_;
   bool initted_;
-  deque<shared_ptr<RowwiseIterator> > iters_;
+  std::deque<std::shared_ptr<RowwiseIterator> > iters_;
 
   // Since we pop from 'iters_' this field is needed in order to keep
   // the underlying iterators available for GetIteratorStats.
-  std::vector<shared_ptr<RowwiseIterator> > all_iters_;
+  std::vector<std::shared_ptr<RowwiseIterator> > all_iters_;
 
   // When the underlying iterators are initialized, each needs its own
   // copy of the scan spec in order to do its own pushdown calculations, etc.
@@ -135,13 +133,13 @@ class UnionIterator : public RowwiseIterator {
 
 // An iterator which wraps a ColumnwiseIterator, materializing it into full rows.
 //
-// Predicates which only apply to a single column are pushed down into this iterator.
-// While materializing a block, columns with associated predicates are materialized
-// first, and the predicates evaluated. If the predicates succeed in filtering out
-// an entire batch, then other columns may avoid doing any IO.
+// Column predicates are pushed down into this iterator. While materializing a
+// block, columns with associated predicates are materialized first, and the
+// predicates evaluated. If the predicates succeed in filtering out an entire
+// batch, then other columns may avoid doing any IO.
 class MaterializingIterator : public RowwiseIterator {
  public:
-  explicit MaterializingIterator(const shared_ptr<ColumnwiseIterator> &iter);
+  explicit MaterializingIterator(std::shared_ptr<ColumnwiseIterator> iter);
 
   // Initialize the iterator, performing predicate pushdown as described above.
   Status Init(ScanSpec *spec) OVERRIDE;
@@ -166,17 +164,17 @@ class MaterializingIterator : public RowwiseIterator {
 
   Status MaterializeBlock(RowBlock *dst);
 
-  shared_ptr<ColumnwiseIterator> iter_;
+  std::shared_ptr<ColumnwiseIterator> iter_;
 
-  unordered_multimap<size_t, ColumnRangePredicate> preds_by_column_;
+  // List of (column index, predicate) in order of most to least selective.
+  std::vector<std::tuple<int32_t, ColumnPredicate>> col_idx_predicates_;
 
-  // The order in which the columns will be materialized.
-  vector<size_t> materialization_order_;
+  // List of column indexes without predicates to materialize.
+  std::vector<int32_t> non_predicate_column_indexes_;
 
   // Set only by test code to disallow pushdown.
   bool disallow_pushdown_for_tests_;
 };
-
 
 // An iterator which wraps another iterator and evaluates any predicates that the
 // wrapped iterator did not itself handle during push down.
@@ -190,7 +188,7 @@ class PredicateEvaluatingIterator : public RowwiseIterator {
   //
   // POSTCONDITION: spec->predicates().empty()
   // POSTCONDITION: base_iter and its wrapper are initialized
-  static Status InitAndMaybeWrap(shared_ptr<RowwiseIterator> *base_iter,
+  static Status InitAndMaybeWrap(std::shared_ptr<RowwiseIterator> *base_iter,
                                  ScanSpec *spec);
 
   // Initialize the iterator.
@@ -215,13 +213,14 @@ class PredicateEvaluatingIterator : public RowwiseIterator {
   // Construct the evaluating iterator.
   // This is only called from ::InitAndMaybeWrap()
   // REQUIRES: base_iter is already Init()ed.
-  explicit PredicateEvaluatingIterator(const shared_ptr<RowwiseIterator> &base_iter);
-
+  explicit PredicateEvaluatingIterator(std::shared_ptr<RowwiseIterator> base_iter);
 
   FRIEND_TEST(TestPredicateEvaluatingIterator, TestPredicateEvaluation);
 
-  shared_ptr<RowwiseIterator> base_iter_;
-  vector<ColumnRangePredicate> predicates_;
+  std::shared_ptr<RowwiseIterator> base_iter_;
+
+  // List of (column index, predicate) in order of most to least selective.
+  std::vector<ColumnPredicate> col_idx_predicates_;
 };
 
 } // namespace kudu

@@ -1,23 +1,24 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/fs/block_manager_util.h"
 
 #include <string>
 #include <vector>
 
-#include <boost/foreach.hpp>
-#include <boost/assign/list_of.hpp>
 #include <google/protobuf/repeated_field.h>
 #include <gtest/gtest.h>
 
@@ -30,7 +31,6 @@
 namespace kudu {
 namespace fs {
 
-using boost::assign::list_of;
 using google::protobuf::RepeatedPtrField;
 using std::string;
 using std::vector;
@@ -44,7 +44,7 @@ TEST_F(KuduTest, Lifecycle) {
   // Test that the metadata file was created.
   {
     PathInstanceMetadataFile file(env_.get(), kType, kFileName);
-    ASSERT_OK(file.Create(kUuid, list_of(kUuid)));
+    ASSERT_OK(file.Create(kUuid, { kUuid }));
   }
   ASSERT_TRUE(env_->FileExists(kFileName));
 
@@ -74,7 +74,7 @@ TEST_F(KuduTest, Locking) {
   string kUuid = "a_uuid";
 
   PathInstanceMetadataFile file(env_.get(), kType, kFileName);
-  ASSERT_OK(file.Create(kUuid, list_of(kUuid)));
+  ASSERT_OK(file.Create(kUuid, { kUuid }));
 
   PathInstanceMetadataFile first(env_.get(), kType, kFileName);
   ASSERT_OK(first.LoadFromDisk());
@@ -106,14 +106,14 @@ static void RunCheckIntegrityTest(Env* env,
   ElementDeleter deleter(&instances);
 
   int i = 0;
-  BOOST_FOREACH(const PathSetPB& ps, path_sets) {
+  for (const PathSetPB& ps : path_sets) {
     gscoped_ptr<PathInstanceMetadataFile> instance(
         new PathInstanceMetadataFile(env, "asdf", Substitute("$0", i)));
     gscoped_ptr<PathInstanceMetadataPB> metadata(new PathInstanceMetadataPB());
     metadata->set_block_manager_type("asdf");
     metadata->set_filesystem_block_size_bytes(1);
     metadata->mutable_path_set()->CopyFrom(ps);
-    instance->SetMetadataForTests(metadata.Pass());
+    instance->SetMetadataForTests(std::move(metadata));
     instances.push_back(instance.release());
     i++;
   }
@@ -123,7 +123,8 @@ static void RunCheckIntegrityTest(Env* env,
 }
 
 TEST_F(KuduTest, CheckIntegrity) {
-  RepeatedPtrField<string> kAllUuids = list_of("fee")("fi")("fo")("fum");
+  vector<string> uuids = { "fee", "fi", "fo", "fum" };
+  RepeatedPtrField<string> kAllUuids(uuids.begin(), uuids.end());
 
   // Initialize path_sets to be fully consistent.
   vector<PathSetPB> path_sets(kAllUuids.size());
@@ -148,7 +149,7 @@ TEST_F(KuduTest, CheckIntegrity) {
   {
     // Test where the path sets have duplicate UUIDs.
     vector<PathSetPB> path_sets_copy(path_sets);
-    BOOST_FOREACH(PathSetPB& ps, path_sets_copy) {
+    for (PathSetPB& ps : path_sets_copy) {
       ps.add_all_uuids("fee");
     }
     EXPECT_NO_FATAL_FAILURE(RunCheckIntegrityTest(

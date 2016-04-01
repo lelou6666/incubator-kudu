@@ -1,23 +1,26 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_TABLET_METADATA_H
 #define KUDU_TABLET_TABLET_METADATA_H
 
 #include <boost/optional/optional_fwd.hpp>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_set>
+#include <unordered_set>
 #include <vector>
 
 #include "kudu/common/partition.h"
@@ -40,8 +43,8 @@ namespace tablet {
 class RowSetMetadata;
 class RowSetMetadataUpdate;
 
-typedef std::vector<std::tr1::shared_ptr<RowSetMetadata> > RowSetMetadataVector;
-typedef std::tr1::unordered_set<int64_t> RowSetMetadataIds;
+typedef std::vector<std::shared_ptr<RowSetMetadata> > RowSetMetadataVector;
+typedef std::unordered_set<int64_t> RowSetMetadataIds;
 
 extern const int64 kNoDurableMemStore;
 
@@ -100,7 +103,7 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
     return partition_;
   }
 
-  const std::string& table_id() const {
+  std::string table_id() const {
     DCHECK_NE(state_, kNotLoadedYet);
     return table_id_;
   }
@@ -188,7 +191,7 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   // Create a new RowSetMetadata for this tablet.
   // Does not add the new rowset to the list of rowsets. Use one of the Update()
   // calls to do so.
-  Status CreateRowSet(std::tr1::shared_ptr<RowSetMetadata> *rowset, const Schema& schema);
+  Status CreateRowSet(std::shared_ptr<RowSetMetadata> *rowset, const Schema& schema);
 
   const RowSetMetadataVector& rowsets() const { return rowsets_; }
 
@@ -229,16 +232,13 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   //
   // TODO: get rid of this many-arg constructor in favor of just passing in a
   // SuperBlock, which already contains all of these fields.
-  TabletMetadata(FsManager *fs_manager,
-                 const std::string& tablet_id,
-                 const std::string& table_name,
-                 const Schema& schema,
-                 const PartitionSchema& partition_schema,
-                 const Partition& partition,
+  TabletMetadata(FsManager* fs_manager, std::string tablet_id,
+                 std::string table_name, const Schema& schema,
+                 PartitionSchema partition_schema, Partition partition,
                  const TabletDataState& tablet_data_state);
 
   // Constructor for loading an existing tablet.
-  TabletMetadata(FsManager *fs_manager, const std::string& tablet_id);
+  TabletMetadata(FsManager* fs_manager, std::string tablet_id);
 
   void SetSchemaUnlocked(gscoped_ptr<Schema> schema, uint32_t version);
 
@@ -273,6 +273,9 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   // Failures are logged, but are not fatal.
   void DeleteOrphanedBlocks(const std::vector<BlockId>& blocks);
 
+  // Return standard "T xxx P yyy" log prefix.
+  std::string LogPrefix() const;
+
   enum State {
     kNotLoadedYet,
     kNotWrittenYet,
@@ -293,7 +296,7 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
 
   Partition partition_;
 
-  FsManager *fs_manager_;
+  FsManager* const fs_manager_;
   RowSetMetadataVector rowsets_;
 
   base::subtle::Atomic64 next_rowset_idx_;
@@ -315,7 +318,7 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   std::vector<Schema*> old_schemas_;
 
   // Protected by 'data_lock_'.
-  std::tr1::unordered_set<BlockId, BlockIdHash, BlockIdEqual> orphaned_blocks_;
+  std::unordered_set<BlockId, BlockIdHash, BlockIdEqual> orphaned_blocks_;
 
   // The current state of remote bootstrap for the tablet.
   TabletDataState tablet_data_state_;
@@ -340,7 +343,7 @@ class TabletMetadata : public RefCountedThreadSafe<TabletMetadata> {
   DISALLOW_COPY_AND_ASSIGN(TabletMetadata);
 };
 
-
 } // namespace tablet
 } // namespace kudu
+
 #endif /* KUDU_TABLET_TABLET_METADATA_H */

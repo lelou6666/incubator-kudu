@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/net/socket.h"
 
@@ -30,17 +33,27 @@
 #include "kudu/gutil/basictypes.h"
 #include "kudu/gutil/stringprintf.h"
 #include "kudu/gutil/strings/substitute.h"
+#include "kudu/util/debug/trace_event.h"
 #include "kudu/util/errno.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/net/net_util.h"
 #include "kudu/util/net/sockaddr.h"
+#include "kudu/util/random.h"
+#include "kudu/util/random_util.h"
+#include "kudu/util/subprocess.h"
 
 DEFINE_string(local_ip_for_outbound_sockets, "",
               "IP to bind to when making outgoing socket connections. "
               "This must be an IP address of the form A.B.C.D, not a hostname. "
               "Advanced parameter, subject to change.");
 TAG_FLAG(local_ip_for_outbound_sockets, experimental);
+
+DEFINE_bool(socket_inject_short_recvs, false,
+            "Inject short recv() responses which return less data than "
+            "requested");
+TAG_FLAG(socket_inject_short_recvs, hidden);
+TAG_FLAG(socket_inject_short_recvs, unsafe);
 
 namespace kudu {
 
@@ -107,7 +120,7 @@ bool Socket::IsTemporarySocketError(int err) {
   return ((err == EAGAIN) || (err == EWOULDBLOCK) || (err == EINTR));
 }
 
-#ifdef __linux
+#if defined(__linux__)
 
 Status Socket::Init(int flags) {
   int nonblocking_flag = (flags & FLAG_NONBLOCKING) ? SOCK_NONBLOCK : 0;
@@ -123,8 +136,6 @@ Status Socket::Init(int flags) {
 
 #else
 
-#error This code has never been tested. Best of luck!
-
 Status Socket::Init(int flags) {
   Reset(::socket(AF_INET, SOCK_STREAM, 0));
   if (fd_ < 0) {
@@ -132,32 +143,25 @@ Status Socket::Init(int flags) {
     return Status::NetworkError(std::string("error opening socket: ") +
                                 ErrnoToString(err), Slice(), err);
   }
-  int curflags = fcntl(fd_, F_GETFL, 0);
-  if (curflags == -1) {
-    int err = errno;
-    Reset(-1);
-    return Status::NetworkError(std::string("fcntl(F_GETFL) error: ") +
-                                ErrnoToString(err), Slice(), err);
-  }
-  int nonblocking_flag = (flags & FLAG_NONBLOCKING) ? O_NONBLOCK : 0;
-  if (fcntl(fd_, F_SETFL, curflags | nonblocking_flag | FD_CLOEXEC) == -1) {
-    int err = errno;
-    Reset(-1);
-    return Status::NetworkError(std::string("fcntl(F_SETFL) error: ") +
-                                ErrnoToString(err), Slice(), err);
-  }
+  RETURN_NOT_OK(SetNonBlocking(flags & FLAG_NONBLOCKING));
+  RETURN_NOT_OK(SetCloseOnExec());
 
   // Disable SIGPIPE.
-  RETURN_NOT_OK(DisableSigPipe());
+  int set = 1;
+  if (setsockopt(fd_, SOL_SOCKET, SO_NOSIGPIPE, &set, sizeof(set)) == -1) {
+    int err = errno;
+    return Status::NetworkError(std::string("failed to set SO_NOSIGPIPE: ") +
+                                ErrnoToString(err), Slice(), err);
+  }
 
   return Status::OK();
 }
 
-#endif
+#endif // defined(__linux__)
 
 Status Socket::SetNoDelay(bool enabled) {
   int flag = enabled ? 1 : 0;
-  if (setsockopt(fd_, SOL_TCP, TCP_NODELAY, &flag, sizeof(flag)) == -1) {
+  if (setsockopt(fd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) == -1) {
     int err = errno;
     return Status::NetworkError(std::string("failed to set TCP_NODELAY: ") +
                                 ErrnoToString(err), Slice(), err);
@@ -198,6 +202,23 @@ Status Socket::IsNonBlocking(bool* is_nonblock) const {
         ErrnoToString(err), err);
   }
   *is_nonblock = ((curflags & O_NONBLOCK) != 0);
+  return Status::OK();
+}
+
+Status Socket::SetCloseOnExec() {
+  int curflags = fcntl(fd_, F_GETFD, 0);
+  if (curflags == -1) {
+    int err = errno;
+    Reset(-1);
+    return Status::NetworkError(std::string("fcntl(F_GETFD) error: ") +
+                                ErrnoToString(err), Slice(), err);
+  }
+  if (fcntl(fd_, F_SETFD, curflags | FD_CLOEXEC) == -1) {
+    int err = errno;
+    Reset(-1);
+    return Status::NetworkError(std::string("fcntl(F_SETFD) error: ") +
+                                ErrnoToString(err), Slice(), err);
+  }
   return Status::OK();
 }
 
@@ -266,7 +287,7 @@ Status Socket::Bind(const Sockaddr& bind_addr) {
   struct sockaddr_in addr = bind_addr.addr();
 
   DCHECK_GE(fd_, 0);
-  if (PREDICT_FALSE(bind(fd_, (struct sockaddr*) &addr, sizeof(addr)))) {
+  if (PREDICT_FALSE(::bind(fd_, (struct sockaddr*) &addr, sizeof(addr)))) {
     int err = errno;
     Status s = Status::NetworkError(
         strings::Substitute("error binding socket to $0: $1",
@@ -283,23 +304,36 @@ Status Socket::Bind(const Sockaddr& bind_addr) {
 }
 
 Status Socket::Accept(Socket *new_conn, Sockaddr *remote, int flags) {
+  TRACE_EVENT0("net", "Socket::Accept");
   struct sockaddr_in addr;
   socklen_t olen = sizeof(addr);
+  DCHECK_GE(fd_, 0);
+#if defined(__linux__)
   int accept_flags = SOCK_CLOEXEC;
   if (flags & FLAG_NONBLOCKING) {
     accept_flags |= SOCK_NONBLOCK;
   }
-  DCHECK_GE(fd_, 0);
-  // TODO: add #ifdef accept4, etc.
   new_conn->Reset(::accept4(fd_, (struct sockaddr*)&addr,
-                &olen, accept_flags));
+                  &olen, accept_flags));
   if (new_conn->GetFd() < 0) {
     int err = errno;
     return Status::NetworkError(std::string("accept4(2) error: ") +
                                 ErrnoToString(err), Slice(), err);
   }
+#else
+  new_conn->Reset(::accept(fd_, (struct sockaddr*)&addr, &olen));
+  if (new_conn->GetFd() < 0) {
+    int err = errno;
+    return Status::NetworkError(std::string("accept(2) error: ") +
+                                ErrnoToString(err), Slice(), err);
+  }
+  RETURN_NOT_OK(new_conn->SetNonBlocking(flags & FLAG_NONBLOCKING));
+  RETURN_NOT_OK(new_conn->SetCloseOnExec());
+#endif // defined(__linux__)
 
   *remote = addr;
+  TRACE_EVENT_INSTANT1("net", "Accepted", TRACE_EVENT_SCOPE_THREAD,
+                       "remote", remote->ToString());
   return Status::OK();
 }
 
@@ -315,6 +349,8 @@ Status Socket::BindForOutgoingConnection() {
 }
 
 Status Socket::Connect(const Sockaddr &remote) {
+  TRACE_EVENT1("net", "Socket::Connect",
+               "remote", remote.ToString());
   if (PREDICT_FALSE(!FLAGS_local_ip_for_outbound_sockets.empty())) {
     RETURN_NOT_OK(BindForOutgoingConnection());
   }
@@ -349,7 +385,7 @@ Status Socket::GetSockError() const {
 Status Socket::Write(const uint8_t *buf, int32_t amt, int32_t *nwritten) {
   if (amt <= 0) {
     return Status::NetworkError(
-              StringPrintf("invalid send of %"PRId32" bytes",
+              StringPrintf("invalid send of %" PRId32 " bytes",
                            amt), Slice(), EINVAL);
   }
   DCHECK_GE(fd_, 0);
@@ -436,6 +472,16 @@ Status Socket::Recv(uint8_t *buf, int32_t amt, int32_t *nread) {
     return Status::NetworkError(
           StringPrintf("invalid recv of %d bytes", amt), Slice(), EINVAL);
   }
+
+  // The recv() call can return fewer than the requested number of bytes.
+  // Especially when 'amt' is small, this is very unlikely to happen in
+  // the context of unit tests. So, we provide an injection hook which
+  // simulates the same behavior.
+  if (PREDICT_FALSE(FLAGS_socket_inject_short_recvs && amt > 1)) {
+    Random r(GetRandomSeed32());
+    amt = 1 + r.Uniform(amt - 1);
+  }
+
   DCHECK_GE(fd_, 0);
   int res = ::recv(fd_, buf, amt, 0);
   if (res <= 0) {

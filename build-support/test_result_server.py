@@ -1,17 +1,21 @@
 #!/usr/bin/env python
-# Copyright 2014 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 #
 # Simple HTTP server which receives test results from the build slaves and
 # stores them in a MySQL database. The test logs are also stored in an S3 bucket.
@@ -29,7 +33,8 @@
 #   AWS_SECRET_KEY     - AWS secret key
 #   TEST_RESULT_BUCKET - bucket to store results in (eg 'kudu-test-results')
 #
-# If these are not configured, the server is likely to crash.
+# If the AWS credentials are not configured, falls back to using Boto's
+# default configuration (http://boto.cloudhackers.com/en/latest/boto_config_tut.html)
 #
 # Installation instructions:
 #   You probably want to run this inside a virtualenv to avoid having
@@ -62,8 +67,8 @@ class TRServer(object):
     self.s3_bucket = self.s3.get_bucket(os.environ["TEST_RESULT_BUCKET"])
 
   def connect_s3(self):
-    access_key = os.environ["AWS_ACCESS_KEY"]
-    secret_key = os.environ["AWS_SECRET_KEY"]
+    access_key = os.environ.get("AWS_ACCESS_KEY")
+    secret_key = os.environ.get("AWS_SECRET_KEY")
     s3 = boto.connect_s3(access_key, secret_key)
     logging.info("Connected to S3 with access key %s" % access_key)
     return s3
@@ -90,6 +95,7 @@ class TRServer(object):
     pwd = os.environ["MYSQLPWD"]
     db = os.environ["MYSQLDB"]
     self.thread_local.db = MySQLdb.connect(host, user, pwd, db)
+    self.thread_local.db.autocommit(True)
     logging.info("Connected to MySQL at %s" % host)
     return self.thread_local.db
 
@@ -173,7 +179,11 @@ class TRServer(object):
     k = boto.s3.key.Key(self.s3_bucket)
     k.key = key
     log_text_gz = k.get_contents_as_string()
-    log_text = gzip.GzipFile(fileobj=StringIO(log_text_gz)).read().decode('utf-8')
+    encoded_text = gzip.GzipFile(fileobj=StringIO(log_text_gz)).read()
+
+    # Ignore errors in decoding, as logs may contain binary data.
+    log_text = encoded_text.decode('utf-8', 'ignore')
+
     summary = parse_test_failure.extract_failure_summary(log_text)
     if not summary:
       summary = "Unable to diagnose"

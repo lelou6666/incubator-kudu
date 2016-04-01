@@ -1,25 +1,30 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.kududb.client.RowResult.timestampToString;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -90,6 +95,8 @@ public class TestKuduClient extends BaseKuduTest {
     assertEquals(4096, newSchema.getColumn("column3_s").getDesiredBlockSize());
     assertEquals(ColumnSchema.Encoding.DICT_ENCODING,
                  newSchema.getColumn("column3_s").getEncoding());
+    assertEquals(ColumnSchema.CompressionAlgorithm.LZ4,
+                 newSchema.getColumn("column3_s").getCompressionAlgorithm());
   }
 
   /**
@@ -271,4 +278,42 @@ public class TestKuduClient extends BaseKuduTest {
     assertEquals(1, countRowsInScan(scanner));
   }
 
+  @Test(timeout = 100000)
+  public void testCustomNioExecutor() throws Exception {
+    long startTime = System.nanoTime();
+    final KuduClient localClient = new KuduClient.KuduClientBuilder(masterAddresses)
+        .nioExecutors(Executors.newFixedThreadPool(1), Executors.newFixedThreadPool(2))
+        .bossCount(1)
+        .workerCount(2)
+        .build();
+    long buildTime = (System.nanoTime() - startTime) / 1000000000L;
+    assertTrue("Building KuduClient is slow, maybe netty get stuck", buildTime < 3);
+    localClient.createTable(tableName, basicSchema);
+    Thread[] threads = new Thread[4];
+    for (int t = 0; t < 4; t++) {
+      final int id = t;
+      threads[t] = new Thread(new Runnable() {
+        @Override
+        public void run() {
+          try {
+            KuduTable table = localClient.openTable(tableName);
+            KuduSession session = localClient.newSession();
+            session.setFlushMode(SessionConfiguration.FlushMode.AUTO_FLUSH_SYNC);
+            for (int i = 0; i < 100; i++) {
+              Insert insert = createBasicSchemaInsert(table, id * 100 + i);
+              session.apply(insert);
+            }
+            session.close();
+          } catch (Exception e) {
+            fail("insert thread should not throw exception: " + e);
+          }
+        }
+      });
+      threads[t].start();
+    }
+    for (int t = 0; t< 4;t++) {
+      threads[t].join();
+    }
+    localClient.shutdown();
+  }
 }

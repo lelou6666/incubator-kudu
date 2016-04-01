@@ -1,20 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <gtest/gtest.h>
 
-#include <boost/foreach.hpp>
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -37,7 +39,7 @@ class NetUtilTest : public KuduTest {
     std::sort(addrs.begin(), addrs.end());
 
     vector<string> addr_strs;
-    BOOST_FOREACH(const Sockaddr& addr, addrs) {
+    for (const Sockaddr& addr : addrs) {
       addr_strs.push_back(addr.ToString());
     }
     *result = JoinStrings(addr_strs, ",");
@@ -80,14 +82,14 @@ TEST_F(NetUtilTest, TestResolveAddresses) {
   vector<Sockaddr> addrs;
   ASSERT_OK(hp.ResolveAddresses(&addrs));
   ASSERT_TRUE(!addrs.empty());
-  BOOST_FOREACH(const Sockaddr& addr, addrs) {
+  for (const Sockaddr& addr : addrs) {
     LOG(INFO) << "Address: " << addr.ToString();
     EXPECT_TRUE(HasPrefixString(addr.ToString(), "127."));
     EXPECT_TRUE(HasSuffixString(addr.ToString(), ":12345"));
     EXPECT_TRUE(addr.IsAnyLocalAddress());
   }
 
-  ASSERT_OK(hp.ResolveAddresses(NULL));
+  ASSERT_OK(hp.ResolveAddresses(nullptr));
 }
 
 // Ensure that we are able to do a reverse DNS lookup on various IP addresses.

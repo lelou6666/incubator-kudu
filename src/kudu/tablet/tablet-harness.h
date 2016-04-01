@@ -1,19 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_TABLET_PEER_HARNESS_H
 #define KUDU_TABLET_TABLET_PEER_HARNESS_H
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,12 +60,11 @@ static std::pair<PartitionSchema, Partition> CreateDefaultPartition(const Schema
 class TabletHarness {
  public:
   struct Options {
-    explicit Options(const string& root_dir)
-      : env(Env::Default()),
-        tablet_id("test_tablet_id"),
-        root_dir(root_dir),
-        enable_metrics(true) {
-    }
+    explicit Options(string root_dir)
+        : env(Env::Default()),
+          tablet_id("test_tablet_id"),
+          root_dir(std::move(root_dir)),
+          enable_metrics(true) {}
 
     Env* env;
     string tablet_id;
@@ -69,11 +72,8 @@ class TabletHarness {
     bool enable_metrics;
   };
 
-  TabletHarness(const Schema& schema,
-                const Options& options)
-    : options_(options),
-      schema_(schema) {
-  }
+  TabletHarness(const Schema& schema, Options options)
+      : options_(std::move(options)), schema_(schema) {}
 
   Status Create(bool first_time) {
     std::pair<PartitionSchema, Partition> partition(CreateDefaultPartition(schema_));
@@ -101,7 +101,7 @@ class TabletHarness {
     clock_ = server::LogicalClock::CreateStartingAt(Timestamp::kInitialTimestamp);
     tablet_.reset(new Tablet(metadata,
                              clock_,
-                             shared_ptr<MemTracker>(),
+                             std::shared_ptr<MemTracker>(),
                              metrics_registry_.get(),
                              new log::LogAnchorRegistry()));
     return Status::OK();
@@ -117,7 +117,7 @@ class TabletHarness {
     return clock_.get();
   }
 
-  const std::tr1::shared_ptr<Tablet>& tablet() {
+  const std::shared_ptr<Tablet>& tablet() {
     return tablet_;
   }
 
@@ -137,7 +137,7 @@ class TabletHarness {
   scoped_refptr<server::Clock> clock_;
   Schema schema_;
   gscoped_ptr<FsManager> fs_manager_;
-  std::tr1::shared_ptr<Tablet> tablet_;
+  std::shared_ptr<Tablet> tablet_;
 };
 
 } // namespace tablet

@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // All rights reserved.
 
@@ -77,7 +80,7 @@ static bool CompareIntervals(const IntInterval &a, const IntInterval &b) {
 static string Stringify(const vector<IntInterval> &intervals) {
   string ret;
   bool first = true;
-  BOOST_FOREACH(const IntInterval &interval, intervals) {
+  for (const IntInterval &interval : intervals) {
     if (!first) {
       ret.append(",");
     }
@@ -90,7 +93,7 @@ static string Stringify(const vector<IntInterval> &intervals) {
 static void FindContainingBruteForce(const vector<IntInterval> &intervals,
                                      int query_point,
                                      vector<IntInterval> *results) {
-  BOOST_FOREACH(const IntInterval &i, intervals) {
+  for (const IntInterval &i : intervals) {
     if (query_point >= i.left && query_point <= i.right) {
       results->push_back(i);
     }
@@ -102,7 +105,7 @@ static void FindContainingBruteForce(const vector<IntInterval> &intervals,
 static void FindIntersectingBruteForce(const vector<IntInterval> &intervals,
                                        IntInterval query_interval,
                                        vector<IntInterval> *results) {
-  BOOST_FOREACH(const IntInterval &i, intervals) {
+  for (const IntInterval &i : intervals) {
     if (query_interval.Intersects(i)) {
       results->push_back(i);
     }

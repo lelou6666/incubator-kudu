@@ -1,25 +1,27 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tool to administer a cluster from the CLI.
 
-#include <boost/foreach.hpp>
 #include <boost/optional.hpp>
-#include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <tr1/memory>
+#include <glog/logging.h>
 #include <iostream>
+#include <memory>
 #include <strstream>
 
 #include "kudu/client/client.h"
@@ -60,7 +62,6 @@ namespace tools {
 
 using std::ostringstream;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
 
 using google::protobuf::RepeatedPtrField;
@@ -70,7 +71,7 @@ using client::KuduClientBuilder;
 using client::KuduTabletServer;
 using consensus::ConsensusServiceProxy;
 using consensus::RaftPeerPB;
-using master::ListTabletServersRequestPB;;
+using master::ListTabletServersRequestPB;
 using master::ListTabletServersResponsePB;
 using master::MasterServiceProxy;
 using master::TabletLocationsPB;
@@ -82,13 +83,15 @@ using strings::Split;
 using strings::Substitute;
 
 const char* const kChangeConfigOp = "change_config";
-static const char* g_progname = NULL;
+const char* const kListTablesOp = "list_tables";
+const char* const kDeleteTableOp = "delete_table";
+static const char* g_progname = nullptr;
 
 class ClusterAdminClient {
  public:
   // Creates an admin client for host/port combination e.g.,
   // "localhost" or "127.0.0.1:7050".
-  ClusterAdminClient(const std::string& addrs, int64_t timeout_millis);
+  ClusterAdminClient(std::string addrs, int64_t timeout_millis);
 
   // Initialized the client and connects to the specified tablet
   // server.
@@ -99,6 +102,12 @@ class ClusterAdminClient {
                       const string& change_type,
                       const string& peer_uuid,
                       const boost::optional<string>& member_type);
+
+  // List all the tables.
+  Status ListTables();
+
+  // Delete a single table by name.
+  Status DeleteTable(const string& table_name);
 
  private:
   // Fetch the locations of the replicas for a given tablet from the Master.
@@ -118,17 +127,17 @@ class ClusterAdminClient {
   const MonoDelta timeout_;
 
   bool initted_;
-  shared_ptr<rpc::Messenger> messenger_;
+  std::shared_ptr<rpc::Messenger> messenger_;
   gscoped_ptr<MasterServiceProxy> master_proxy_;
+  client::sp::shared_ptr<KuduClient> kudu_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ClusterAdminClient);
 };
 
-ClusterAdminClient::ClusterAdminClient(const string& addrs, int64_t timeout_millis)
-    : master_addr_list_(addrs),
+ClusterAdminClient::ClusterAdminClient(string addrs, int64_t timeout_millis)
+    : master_addr_list_(std::move(addrs)),
       timeout_(MonoDelta::FromMilliseconds(timeout_millis)),
-      initted_(false) {
-}
+      initted_(false) {}
 
 Status ClusterAdminClient::Init() {
   CHECK(!initted_);
@@ -152,6 +161,11 @@ Status ClusterAdminClient::Init() {
   CHECK(!master_addrs.empty()) << "Unable to resolve IP address for master host: "
                                << master_hostport.ToString();
   master_proxy_.reset(new MasterServiceProxy(messenger_, master_addrs[0]));
+
+  CHECK_OK(KuduClientBuilder()
+      .add_master_server_addr(master_addr_list_)
+      .default_admin_operation_timeout(timeout_)
+      .Build(&kudu_client_));
 
   initted_ = true;
   return Status::OK();
@@ -262,7 +276,7 @@ Status ClusterAdminClient::GetTabletLeader(const string& tablet_id,
   RETURN_NOT_OK(GetTabletLocations(tablet_id, &locations));
   CHECK_EQ(tablet_id, locations.tablet_id()) << locations.ShortDebugString();
   bool found = false;
-  BOOST_FOREACH(const TabletLocationsPB::ReplicaPB& replica, locations.replicas()) {
+  for (const TabletLocationsPB::ReplicaPB& replica : locations.replicas()) {
     if (replica.role() == RaftPeerPB::LEADER) {
       *ts_info = replica.ts_info();
       found = true;
@@ -295,7 +309,7 @@ Status ClusterAdminClient::ListTabletServers(
 Status ClusterAdminClient::GetFirstRpcAddressForTS(const std::string& uuid, HostPort* hp) {
   RepeatedPtrField<ListTabletServersResponsePB::Entry> servers;
   RETURN_NOT_OK(ListTabletServers(&servers));
-  BOOST_FOREACH(const ListTabletServersResponsePB::Entry& server, servers) {
+  for (const ListTabletServersResponsePB::Entry& server : servers) {
     if (server.instance_id().permanent_uuid() == uuid) {
       if (!server.has_registration() || server.registration().rpc_addresses_size() == 0) {
         break;
@@ -309,6 +323,22 @@ Status ClusterAdminClient::GetFirstRpcAddressForTS(const std::string& uuid, Host
                                      "registered with the Master", uuid));
 }
 
+Status ClusterAdminClient::ListTables() {
+  vector<string> tables;
+  RETURN_NOT_OK(kudu_client_->ListTables(&tables));
+  for (const string& table : tables) {
+    std::cout << table << std::endl;
+  }
+  return Status::OK();
+}
+
+Status ClusterAdminClient::DeleteTable(const string& table_name) {
+  vector<Sockaddr> tables;
+  RETURN_NOT_OK(kudu_client_->DeleteTable(table_name));
+  std::cout << "Deleted table " << table_name << std::endl;
+  return Status::OK();
+}
+
 static void SetUsage(const char* argv0) {
   ostringstream str;
 
@@ -316,7 +346,9 @@ static void SetUsage(const char* argv0) {
       << "<operation> must be one of:\n"
       << "  " << kChangeConfigOp << " <tablet_id> "
               << "<ADD_SERVER|REMOVE_SERVER|CHANGE_ROLE> <peer_uuid> "
-              << "[VOTER|NON_VOTER]";
+              << "[VOTER|NON_VOTER]" << std::endl
+      << "  " << kListTablesOp << std::endl
+      << "  " << kDeleteTableOp << " <table_name>";
   google::SetUsageMessage(str.str());
 }
 
@@ -358,6 +390,23 @@ static int ClusterAdminCliMain(int argc, char** argv) {
     Status s = client.ChangeConfig(tablet_id, change_type, peer_uuid, member_type);
     if (!s.ok()) {
       std::cerr << "Unable to change config: " << s.ToString() << std::endl;
+      return 1;
+    }
+  } else if (op == kListTablesOp) {
+    Status s = client.ListTables();
+    if (!s.ok()) {
+      std::cerr << "Unable to list tables: " << s.ToString() << std::endl;
+      return 1;
+    }
+  } else if (op == kDeleteTableOp) {
+    if (argc < 3) {
+      google::ShowUsageWithFlagsRestrict(argv[0], __FILE__);
+      exit(1);
+    }
+    string table_name = argv[2];
+    Status s = client.DeleteTable(table_name);
+    if (!s.ok()) {
+      std::cerr << "Unable to delete table " << table_name << ": " << s.ToString() << std::endl;
       return 1;
     }
   } else {

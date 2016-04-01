@@ -1,20 +1,22 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/cfile/cfile_reader.h"
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 
 #include <algorithm>
@@ -35,6 +37,7 @@
 #include "kudu/util/debug/trace_event.h"
 #include "kudu/util/flag_tags.h"
 #include "kudu/util/malloc.h"
+#include "kudu/util/memory/overwrite.h"
 #include "kudu/util/object_pool.h"
 #include "kudu/util/rle-encoding.h"
 #include "kudu/util/slice.h"
@@ -77,7 +80,7 @@ static Status ParseMagicAndLength(const Slice &data,
 CFileReader::CFileReader(const ReaderOptions &options,
                          const uint64_t file_size,
                          gscoped_ptr<ReadableBlock> block) :
-  block_(block.Pass()),
+  block_(std::move(block)),
   file_size_(file_size),
   mem_consumption_(options.parent_mem_tracker, memory_footprint()) {
 }
@@ -86,7 +89,7 @@ Status CFileReader::Open(gscoped_ptr<ReadableBlock> block,
                          const ReaderOptions& options,
                          gscoped_ptr<CFileReader> *reader) {
   gscoped_ptr<CFileReader> reader_local;
-  RETURN_NOT_OK(OpenNoInit(block.Pass(), options, &reader_local));
+  RETURN_NOT_OK(OpenNoInit(std::move(block), options, &reader_local));
   RETURN_NOT_OK(reader_local->Init());
 
   reader->reset(reader_local.release());
@@ -99,7 +102,7 @@ Status CFileReader::OpenNoInit(gscoped_ptr<ReadableBlock> block,
   uint64_t block_size;
   RETURN_NOT_OK(block->Size(&block_size));
   gscoped_ptr<CFileReader> reader_local(
-      new CFileReader(options, block_size, block.Pass()));
+      new CFileReader(options, block_size, std::move(block)));
   if (!FLAGS_cfile_lazy_open) {
     RETURN_NOT_OK(reader_local->Init());
   }
@@ -225,7 +228,7 @@ namespace {
 // the memory can be released using 'release()'.
 class ScratchMemory {
  public:
-  ScratchMemory() : cache_(NULL), ptr_(NULL), size_(-1) {}
+  ScratchMemory() : cache_(nullptr), ptr_(nullptr), size_(-1) {}
   ~ScratchMemory() {
     if (!ptr_) return;
     if (cache_) {
@@ -252,7 +255,7 @@ class ScratchMemory {
 
   void AllocateFromHeap(int size) {
     DCHECK(!ptr_);
-    cache_ = NULL;
+    cache_ = nullptr;
     ptr_ = new uint8_t[size];
     size_ = size;
   }
@@ -266,12 +269,12 @@ class ScratchMemory {
     if (cache_) {
       ptr_ = cache_->MoveToHeap(ptr_, size_);
     }
-    cache_ = NULL;
+    cache_ = nullptr;
   }
 
   // Return true if the current scratch memory was allocated from the cache.
   bool IsFromCache() const {
-    return cache_ != NULL;
+    return cache_ != nullptr;
   }
 
   uint8_t* get() {
@@ -280,7 +283,7 @@ class ScratchMemory {
 
   uint8_t* release() {
     uint8_t* ret = ptr_;
-    ptr_ = NULL;
+    ptr_ = nullptr;
     size_ = -1;
     return ret;
   }
@@ -329,7 +332,7 @@ Status CFileReader::ReadBlock(const BlockPointer &ptr, CacheControl cache_contro
   // then we should allocate our scratch memory directly from the cache.
   // This avoids an extra memory copy in the case of an NVM cache.
   ScratchMemory scratch;
-  if (block_uncompressor_ == NULL && cache_control == CACHE_BLOCK) {
+  if (block_uncompressor_ == nullptr && cache_control == CACHE_BLOCK) {
     scratch.TryAllocateFromCache(cache, ptr.size());
   } else {
     scratch.AllocateFromHeap(ptr.size());
@@ -342,7 +345,7 @@ Status CFileReader::ReadBlock(const BlockPointer &ptr, CacheControl cache_contro
   }
 
   // Decompress the block
-  if (block_uncompressor_ != NULL) {
+  if (block_uncompressor_ != nullptr) {
     // Get the size required for the uncompressed buffer
     uint32_t uncompressed_size;
     Status s = block_uncompressor_->ValidateHeader(block, &uncompressed_size);
@@ -420,13 +423,13 @@ Status CFileReader::CountRows(rowid_t *count) const {
 }
 
 bool CFileReader::GetMetadataEntry(const string &key, string *val) {
-  BOOST_FOREACH(const FileMetadataPairPB &pair, header().metadata()) {
+  for (const FileMetadataPairPB &pair : header().metadata()) {
     if (pair.key() == key) {
       *val = pair.value();
       return true;
     }
   }
-  BOOST_FOREACH(const FileMetadataPairPB &pair, footer().metadata()) {
+  for (const FileMetadataPairPB &pair : footer().metadata()) {
     if (pair.key() == key) {
       *val = pair.value();
       return true;
@@ -476,9 +479,9 @@ Status DefaultColumnValueIterator::PrepareBatch(size_t *n) {
 Status DefaultColumnValueIterator::Scan(ColumnBlock *dst)  {
   if (dst->is_nullable()) {
     ColumnDataView dst_view(dst);
-    dst_view.SetNullBits(dst->nrows(), value_ != NULL);
+    dst_view.SetNullBits(dst->nrows(), value_ != nullptr);
   }
-  if (value_ != NULL) {
+  if (value_ != nullptr) {
     if (typeinfo_->physical_type() == BINARY) {
       const Slice *src_slice = reinterpret_cast<const Slice *>(value_);
       Slice dst_slice;
@@ -508,7 +511,7 @@ Status DefaultColumnValueIterator::FinishBatch() {
 CFileIterator::CFileIterator(CFileReader* reader,
                              CFileReader::CacheControl cache_control)
   : reader_(reader),
-    seeked_(NULL),
+    seeked_(nullptr),
     prepared_(false),
     cache_control_(cache_control),
     last_prepare_idx_(-1),
@@ -520,7 +523,7 @@ CFileIterator::~CFileIterator() {
 
 Status CFileIterator::SeekToOrdinal(rowid_t ord_idx) {
   RETURN_NOT_OK(PrepareForNewSeek());
-  if (PREDICT_FALSE(posidx_iter_ == NULL)) {
+  if (PREDICT_FALSE(posidx_iter_ == nullptr)) {
     return Status::NotSupported("no positional index in file");
   }
 
@@ -587,10 +590,10 @@ void CFileIterator::SeekToPositionInBlock(PreparedBlock *pb, uint32_t idx_in_blo
 Status CFileIterator::SeekToFirst() {
   RETURN_NOT_OK(PrepareForNewSeek());
   IndexTreeIterator *idx_iter;
-  if (PREDICT_TRUE(posidx_iter_ != NULL)) {
+  if (PREDICT_TRUE(posidx_iter_ != nullptr)) {
     RETURN_NOT_OK(posidx_iter_->SeekToFirst());
     idx_iter = posidx_iter_.get();
-  } else if (PREDICT_TRUE(validx_iter_ != NULL)) {
+  } else if (PREDICT_TRUE(validx_iter_ != nullptr)) {
     RETURN_NOT_OK(validx_iter_->SeekToFirst());
     idx_iter = validx_iter_.get();
   } else {
@@ -617,7 +620,7 @@ Status CFileIterator::SeekAtOrAfter(const EncodedKey &key,
   RETURN_NOT_OK(PrepareForNewSeek());
   DCHECK_EQ(reader_->is_nullable(), false);
 
-  if (PREDICT_FALSE(validx_iter_ == NULL)) {
+  if (PREDICT_FALSE(validx_iter_ == nullptr)) {
     return Status::NotSupported("no value index present");
   }
 
@@ -704,8 +707,8 @@ Status CFileIterator::PrepareForNewSeek() {
     RETURN_NOT_OK_PREPEND(dict_decoder_->ParseHeader(), "Couldn't parse dictionary block header");
   }
 
-  seeked_ = NULL;
-  BOOST_FOREACH(PreparedBlock *pb, prepared_blocks_) {
+  seeked_ = nullptr;
+  for (PreparedBlock *pb : prepared_blocks_) {
     prepared_block_pool_.Destroy(pb);
   }
   prepared_blocks_.clear();
@@ -796,7 +799,7 @@ bool CFileIterator::HasNext() const {
 
 Status CFileIterator::PrepareBatch(size_t *n) {
   CHECK(!prepared_) << "Should call FinishBatch() first";
-  CHECK(seeked_ != NULL) << "must be seeked";
+  CHECK(seeked_ != nullptr) << "must be seeked";
 
   CHECK(!prepared_blocks_.empty());
 
@@ -836,7 +839,7 @@ Status CFileIterator::PrepareBatch(size_t *n) {
   if (PREDICT_FALSE(VLOG_IS_ON(1))) {
     VLOG(1) << "Prepared for " << (*n) << " rows"
             << " (" << start_idx << "-" << (start_idx + *n - 1) << ")";
-    BOOST_FOREACH(PreparedBlock *b, prepared_blocks_) {
+    for (PreparedBlock *b : prepared_blocks_) {
       VLOG(1) << "  " << b->ToString();
     }
     VLOG(1) << "-------------";
@@ -875,7 +878,7 @@ Status CFileIterator::FinishBatch() {
   #ifndef NDEBUG
   if (VLOG_IS_ON(1)) {
     VLOG(1) << "Left around following blocks:";
-    BOOST_FOREACH(PreparedBlock *b, prepared_blocks_) {
+    for (PreparedBlock *b : prepared_blocks_) {
       VLOG(1) << "  " << b->ToString();
     }
     VLOG(1) << "-------------";
@@ -897,7 +900,7 @@ Status CFileIterator::Scan(ColumnBlock *dst) {
   uint32_t rem = last_prepare_count_;
   DCHECK_LE(rem, dst->nrows());
 
-  BOOST_FOREACH(PreparedBlock *pb, prepared_blocks_) {
+  for (PreparedBlock *pb : prepared_blocks_) {
     if (pb->needs_rewind_) {
       // Seek back to the saved position.
       SeekToPositionInBlock(pb, pb->rewind_idx_);

@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tablet/tablet_peer.h"
 
@@ -46,6 +49,8 @@
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/threadpool.h"
 #include "kudu/util/trace.h"
+
+using std::shared_ptr;
 
 namespace kudu {
 namespace tablet {
@@ -96,16 +101,15 @@ using tserver::TabletServerErrorPB;
 TabletPeer::TabletPeer(const scoped_refptr<TabletMetadata>& meta,
                        const consensus::RaftPeerPB& local_peer_pb,
                        ThreadPool* apply_pool,
-                       const Callback<void(const std::string& reason)>& mark_dirty_clbk)
-  : meta_(meta),
-    tablet_id_(meta->tablet_id()),
-    local_peer_pb_(local_peer_pb),
-    state_(BOOTSTRAPPING),
-    status_listener_(new TabletStatusListener(meta)),
-    apply_pool_(apply_pool),
-    log_anchor_registry_(new LogAnchorRegistry()),
-    mark_dirty_clbk_(mark_dirty_clbk) {
-}
+                       Callback<void(const std::string& reason)> mark_dirty_clbk)
+    : meta_(meta),
+      tablet_id_(meta->tablet_id()),
+      local_peer_pb_(local_peer_pb),
+      state_(NOT_STARTED),
+      status_listener_(new TabletStatusListener(meta)),
+      apply_pool_(apply_pool),
+      log_anchor_registry_(new LogAnchorRegistry()),
+      mark_dirty_clbk_(std::move(mark_dirty_clbk)) {}
 
 TabletPeer::~TabletPeer() {
   boost::lock_guard<simple_spinlock> lock(lock_);
@@ -152,14 +156,14 @@ Status TabletPeer::Init(const shared_ptr<Tablet>& tablet,
 
     if (cmeta->committed_config().local()) {
       consensus_.reset(new LocalConsensus(options,
-                                          cmeta.Pass(),
+                                          std::move(cmeta),
                                           meta_->fs_manager()->uuid(),
                                           clock_,
                                           this,
                                           log_.get()));
     } else {
       consensus_ = RaftConsensus::Create(options,
-                                         cmeta.Pass(),
+                                         std::move(cmeta),
                                          local_peer_pb_,
                                          metric_entity,
                                          clock_,
@@ -171,7 +175,7 @@ Status TabletPeer::Init(const shared_ptr<Tablet>& tablet,
     }
   }
 
-  if (tablet_->metrics() != NULL) {
+  if (tablet_->metrics() != nullptr) {
     TRACE("Starting instrumentation");
     txn_tracker_.StartInstrumentation(tablet_->GetMetricEntity());
   }
@@ -343,8 +347,8 @@ Status TabletPeer::SubmitAlterSchema(gscoped_ptr<AlterSchemaTransactionState> st
 
 void TabletPeer::GetTabletStatusPB(TabletStatusPB* status_pb_out) const {
   boost::lock_guard<simple_spinlock> lock(lock_);
-  DCHECK(status_pb_out != NULL);
-  DCHECK(status_listener_.get() != NULL);
+  DCHECK(status_pb_out != nullptr);
+  DCHECK(status_listener_.get() != nullptr);
   status_pb_out->set_tablet_id(status_listener_->tablet_id());
   status_pb_out->set_table_name(status_listener_->table_name());
   status_pb_out->set_last_status(status_listener_->last_status());
@@ -371,12 +375,30 @@ Status TabletPeer::RunLogGC() {
   return Status::OK();
 }
 
+string TabletPeer::HumanReadableState() const {
+  boost::lock_guard<simple_spinlock> lock(lock_);
+  TabletDataState data_state = meta_->tablet_data_state();
+  // If failed, any number of things could have gone wrong.
+  if (state_ == FAILED) {
+    return Substitute("$0 ($1): $2", TabletStatePB_Name(state_),
+                      TabletDataState_Name(data_state),
+                      error_.ToString());
+  // If it's remotely bootstrapping, or tombstoned, that is the important thing
+  // to show.
+  } else if (data_state != TABLET_DATA_READY) {
+    return TabletDataState_Name(data_state);
+  }
+  // Otherwise, the tablet's data is in a "normal" state, so we just display
+  // the runtime state (BOOTSTRAPPING, RUNNING, etc).
+  return TabletStatePB_Name(state_);
+}
+
 void TabletPeer::GetInFlightTransactions(Transaction::TraceType trace_type,
                                          vector<consensus::TransactionStatusPB>* out) const {
   vector<scoped_refptr<TransactionDriver> > pending_transactions;
   txn_tracker_.GetPendingTransactions(&pending_transactions);
-  BOOST_FOREACH(const scoped_refptr<TransactionDriver>& driver, pending_transactions) {
-    if (driver->state() != NULL) {
+  for (const scoped_refptr<TransactionDriver>& driver : pending_transactions) {
+    if (driver->state() != nullptr) {
       consensus::TransactionStatusPB status_pb;
       status_pb.mutable_op_id()->CopyFrom(driver->GetOpId());
       switch (driver->tx_type()) {
@@ -427,7 +449,7 @@ void TabletPeer::GetEarliestNeededLogIndex(int64_t* min_index) const {
   // Next, interrogate the TransactionTracker.
   vector<scoped_refptr<TransactionDriver> > pending_transactions;
   txn_tracker_.GetPendingTransactions(&pending_transactions);
-  BOOST_FOREACH(const scoped_refptr<TransactionDriver>& driver, pending_transactions) {
+  for (const scoped_refptr<TransactionDriver>& driver : pending_transactions) {
     OpId tx_op_id = driver->GetOpId();
     // A transaction which doesn't have an opid hasn't been submitted for replication yet and
     // thus has no need to anchor the log.
@@ -480,7 +502,8 @@ Status TabletPeer::StartReplicaTransaction(const scoped_refptr<ConsensusRound>& 
           " transaction must receive an AlterSchemaRequestPB";
       transaction.reset(
           new AlterSchemaTransaction(
-              new AlterSchemaTransactionState(this, &replicate_msg->alter_schema_request(), NULL),
+              new AlterSchemaTransactionState(this, &replicate_msg->alter_schema_request(),
+                                              nullptr),
               consensus::REPLICA));
       break;
     }
@@ -496,7 +519,7 @@ Status TabletPeer::StartReplicaTransaction(const scoped_refptr<ConsensusRound>& 
   clock_->Update(ts);
 
   scoped_refptr<TransactionDriver> driver;
-  RETURN_NOT_OK(NewReplicaTransactionDriver(transaction.Pass(), &driver));
+  RETURN_NOT_OK(NewReplicaTransactionDriver(std::move(transaction), &driver));
 
   // Unretained is required to avoid a refcount cycle.
   state->consensus_round()->SetConsensusReplicatedCallback(
@@ -515,7 +538,7 @@ Status TabletPeer::NewLeaderTransactionDriver(gscoped_ptr<Transaction> transacti
     prepare_pool_.get(),
     apply_pool_,
     &txn_order_verifier_);
-  RETURN_NOT_OK(tx_driver->Init(transaction.Pass(), consensus::LEADER));
+  RETURN_NOT_OK(tx_driver->Init(std::move(transaction), consensus::LEADER));
   driver->swap(tx_driver);
 
   return Status::OK();
@@ -530,7 +553,7 @@ Status TabletPeer::NewReplicaTransactionDriver(gscoped_ptr<Transaction> transact
     prepare_pool_.get(),
     apply_pool_,
     &txn_order_verifier_);
-  RETURN_NOT_OK(tx_driver->Init(transaction.Pass(), consensus::REPLICA));
+  RETURN_NOT_OK(tx_driver->Init(std::move(transaction), consensus::REPLICA));
   driver->swap(tx_driver);
 
   return Status::OK();
@@ -566,7 +589,7 @@ void TabletPeer::RegisterMaintenanceOps(MaintenanceManager* maint_mgr) {
 
 void TabletPeer::UnregisterMaintenanceOps() {
   DCHECK(state_change_lock_.is_locked());
-  BOOST_FOREACH(MaintenanceOp* op, maintenance_ops_) {
+  for (MaintenanceOp* op : maintenance_ops_) {
     op->Unregister();
   }
   STLDeleteElements(&maintenance_ops_);

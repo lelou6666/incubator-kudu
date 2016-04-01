@@ -1,38 +1,44 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/rpc-test-base.h"
 
+#include <memory>
 #include <string>
-#include <tr1/unordered_map>
+#include <unordered_map>
 
-#include <boost/foreach.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
 #include <gtest/gtest.h>
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/strings/join.h"
+#include "kudu/rpc/constants.h"
 #include "kudu/rpc/serialization.h"
 #include "kudu/util/countdown_latch.h"
 #include "kudu/util/env.h"
+#include "kudu/util/scoped_cleanup.h"
 #include "kudu/util/test_util.h"
-
-using std::string;
-using std::tr1::unordered_map;
 
 METRIC_DECLARE_histogram(handler_latency_kudu_rpc_test_CalculatorService_Sleep);
 METRIC_DECLARE_histogram(rpc_incoming_queue_time);
+
+using std::string;
+using std::shared_ptr;
+using std::unordered_map;
 
 namespace kudu {
 namespace rpc {
@@ -59,7 +65,6 @@ TEST_F(TestRpc, TestMessengerCreateDestroy) {
   shared_ptr<Messenger> messenger(CreateMessenger("TestCreateDestroy"));
   LOG(INFO) << "started messenger " << messenger->name();
   messenger->Shutdown();
-  alarm(0);
 }
 
 // Test starting and stopping a messenger. This is a regression
@@ -358,7 +363,7 @@ TEST_F(TestRpc, TestServerShutsDown) {
 
   CountDownLatch latch(n_calls);
   for (int i = 0; i < n_calls; i++) {
-    RpcController *controller = new RpcController();
+    auto controller = new RpcController();
     controllers.push_back(controller);
     p.AsyncRequest(GenericCalculatorService::kAddMethodName, req, &resp, controller,
                    boost::bind(&CountDownLatch::CountDown, boost::ref(latch)));
@@ -370,7 +375,7 @@ TEST_F(TestRpc, TestServerShutsDown) {
   ASSERT_OK(listen_sock.Accept(&server_sock, &remote, 0));
 
   // The call is still in progress at this point.
-  BOOST_FOREACH(const RpcController &controller, controllers) {
+  for (const RpcController &controller : controllers) {
     ASSERT_FALSE(controller.finished());
   }
 
@@ -382,7 +387,7 @@ TEST_F(TestRpc, TestServerShutsDown) {
   latch.Wait();
 
   // Should get the appropriate error on the client for all calls;
-  BOOST_FOREACH(const RpcController &controller, controllers) {
+  for (const RpcController &controller : controllers) {
     ASSERT_TRUE(controller.finished());
     Status s = controller.status();
     ASSERT_TRUE(s.IsNetworkError()) <<
@@ -402,10 +407,16 @@ TEST_F(TestRpc, TestServerShutsDown) {
     // - Reactor shuts down connection
     // - Reactor sees the 2 remaining calls, makes a new connection
     // - Because the socket is shut down, gets ECONNREFUSED.
+    //
+    // EINVAL is possible if the controller socket had already disconnected by
+    // the time it trys to set the SO_SNDTIMEO socket option as part of the
+    // normal blocking SASL handshake.
     ASSERT_TRUE(s.posix_code() == EPIPE ||
                 s.posix_code() == ECONNRESET ||
                 s.posix_code() == ESHUTDOWN ||
-                s.posix_code() == ECONNREFUSED);
+                s.posix_code() == ECONNREFUSED ||
+                s.posix_code() == EINVAL)
+      << "Unexpected status: " << s.ToString();
   }
 }
 
@@ -500,6 +511,81 @@ TEST_F(TestRpc, TestRpcContextClientDeadline) {
   controller.Reset();
   controller.set_timeout(MonoDelta::FromMilliseconds(1000));
   ASSERT_OK(p.SyncRequest("Sleep", req, &resp, &controller));
+}
+
+// Test that setting an call-level application feature flag to an unknown value
+// will make the server reject the call.
+TEST_F(TestRpc, TestApplicationFeatureFlag) {
+  // Set up server.
+  Sockaddr server_addr;
+  StartTestServerWithGeneratedCode(&server_addr);
+
+  // Set up client.
+  shared_ptr<Messenger> client_messenger(CreateMessenger("Client"));
+  Proxy p(client_messenger, server_addr, CalculatorService::static_service_name());
+
+  { // Supported flag
+    AddRequestPB req;
+    req.set_x(1);
+    req.set_y(2);
+    AddResponsePB resp;
+    RpcController controller;
+    controller.RequireServerFeature(FeatureFlags::FOO);
+    Status s = p.SyncRequest("Add", req, &resp, &controller);
+    SCOPED_TRACE(strings::Substitute("supported response: $0", s.ToString()));
+    ASSERT_TRUE(s.ok());
+    ASSERT_EQ(resp.result(), 3);
+  }
+
+  { // Unsupported flag
+    AddRequestPB req;
+    req.set_x(1);
+    req.set_y(2);
+    AddResponsePB resp;
+    RpcController controller;
+    controller.RequireServerFeature(FeatureFlags::FOO);
+    controller.RequireServerFeature(99);
+    Status s = p.SyncRequest("Add", req, &resp, &controller);
+    SCOPED_TRACE(strings::Substitute("unsupported response: $0", s.ToString()));
+    ASSERT_TRUE(s.IsRemoteError());
+  }
+}
+
+TEST_F(TestRpc, TestApplicationFeatureFlagUnsupportedServer) {
+  auto savedFlags = kSupportedServerRpcFeatureFlags;
+  auto cleanup = MakeScopedCleanup([&] () { kSupportedServerRpcFeatureFlags = savedFlags; });
+  kSupportedServerRpcFeatureFlags = {};
+
+  // Set up server.
+  Sockaddr server_addr;
+  StartTestServerWithGeneratedCode(&server_addr);
+
+  // Set up client.
+  shared_ptr<Messenger> client_messenger(CreateMessenger("Client"));
+  Proxy p(client_messenger, server_addr, CalculatorService::static_service_name());
+
+  { // Required flag
+    AddRequestPB req;
+    req.set_x(1);
+    req.set_y(2);
+    AddResponsePB resp;
+    RpcController controller;
+    controller.RequireServerFeature(FeatureFlags::FOO);
+    Status s = p.SyncRequest("Add", req, &resp, &controller);
+    SCOPED_TRACE(strings::Substitute("supported response: $0", s.ToString()));
+    ASSERT_TRUE(s.IsNotSupported());
+  }
+
+  { // No required flag
+    AddRequestPB req;
+    req.set_x(1);
+    req.set_y(2);
+    AddResponsePB resp;
+    RpcController controller;
+    Status s = p.SyncRequest("Add", req, &resp, &controller);
+    SCOPED_TRACE(strings::Substitute("supported response: $0", s.ToString()));
+    ASSERT_TRUE(s.ok());
+  }
 }
 
 } // namespace rpc

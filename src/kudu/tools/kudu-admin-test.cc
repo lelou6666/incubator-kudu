@@ -1,25 +1,26 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Tests for the kudu-admin command-line tool.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 
+#include "kudu/client/client.h"
 #include "kudu/gutil/map-util.h"
-#include "kudu/gutil/strings/split.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/integration-tests/test_workload.h"
 #include "kudu/integration-tests/ts_itest-base.h"
@@ -29,9 +30,11 @@
 namespace kudu {
 namespace tools {
 
+using client::KuduClient;
+using client::KuduClientBuilder;
+using client::sp::shared_ptr;
 using itest::TabletServerMap;
 using itest::TServerDetails;
-using strings::Split;
 using strings::Substitute;
 
 static const char* const kAdminToolName = "kudu-admin";
@@ -77,14 +80,14 @@ TEST_F(AdminCliTest, TestChangeConfig) {
   InsertOrDie(&active_tablet_servers, leader->uuid(), leader);
   InsertOrDie(&active_tablet_servers, follower->uuid(), follower);
 
-  TServerDetails* new_node = NULL;
-  BOOST_FOREACH(TServerDetails* ts, tservers) {
+  TServerDetails* new_node = nullptr;
+  for (TServerDetails* ts : tservers) {
     if (!ContainsKey(active_tablet_servers, ts->uuid())) {
       new_node = ts;
       break;
     }
   }
-  ASSERT_TRUE(new_node != NULL);
+  ASSERT_TRUE(new_node != nullptr);
 
   // Elect the leader (still only a consensus config size of 2).
   ASSERT_OK(StartElection(leader, tablet_id_, MonoDelta::FromSeconds(10)));
@@ -112,15 +115,7 @@ TEST_F(AdminCliTest, TestChangeConfig) {
                               exe_path,
                               cluster_->master()->bound_rpc_addr().ToString(),
                               tablet_id_, new_node->uuid());
-  vector<string> args = Split(arg_str, " ");
-  LOG(INFO) << "Invoking command: " << arg_str;
-  {
-    Subprocess proc(args[0], args);
-    ASSERT_OK(proc.Start());
-    int retcode;
-    ASSERT_OK(proc.Wait(&retcode));
-    ASSERT_EQ(0, retcode);
-  }
+  ASSERT_OK(Subprocess::Call(arg_str));
 
   InsertOrDie(&active_tablet_servers, new_node->uuid(), new_node);
   ASSERT_OK(WaitUntilCommittedConfigNumVotersIs(active_tablet_servers.size(),
@@ -153,20 +148,42 @@ TEST_F(AdminCliTest, TestChangeConfig) {
                        exe_path,
                        cluster_->master()->bound_rpc_addr().ToString(),
                        tablet_id_, new_node->uuid());
-  args = Split(arg_str, " ");
-  LOG(INFO) << "Invoking command: " << arg_str;
-  {
-    Subprocess proc(args[0], args);
-    ASSERT_OK(proc.Start());
-    int retcode;
-    ASSERT_OK(proc.Wait(&retcode));
-    ASSERT_EQ(0, retcode);
-  }
+
+  ASSERT_OK(Subprocess::Call(arg_str));
 
   ASSERT_EQ(1, active_tablet_servers.erase(new_node->uuid()));
   ASSERT_OK(WaitUntilCommittedConfigNumVotersIs(active_tablet_servers.size(),
                                                 leader, tablet_id_,
                                                 MonoDelta::FromSeconds(10)));
+}
+
+TEST_F(AdminCliTest, TestDeleteTable) {
+  FLAGS_num_tablet_servers = 1;
+  FLAGS_num_replicas = 1;
+
+  vector<string> ts_flags, master_flags;
+  BuildAndStart(ts_flags, master_flags);
+  string master_address = cluster_->master()->bound_rpc_addr().ToString();
+
+  shared_ptr<KuduClient> client;
+  CHECK_OK(KuduClientBuilder()
+        .add_master_server_addr(master_address)
+        .Build(&client));
+
+  // Default table that gets created;
+  string table_name = "TestTable";
+
+  string exe_path = GetAdminToolPath();
+  string arg_str = Substitute("$0 -master_addresses $1 delete_table $2",
+                              exe_path,
+                              master_address,
+                              table_name);
+
+  ASSERT_OK(Subprocess::Call(arg_str));
+
+  vector<string> tables;
+  ASSERT_OK(client->ListTables(&tables));
+  ASSERT_TRUE(tables.empty());
 }
 
 } // namespace tools

@@ -1,21 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <boost/bind.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
-#include <tr1/memory>
+#include <memory>
 
 #include "kudu/gutil/atomicops.h"
 #include "kudu/gutil/bind.h"
@@ -26,7 +29,7 @@
 #include "kudu/util/test_macros.h"
 #include "kudu/util/trace.h"
 
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 
@@ -71,7 +74,7 @@ TEST(TestThreadPool, TestSimpleTasks) {
   ASSERT_OK(BuildMinMaxTestPool(4, 4, &thread_pool));
 
   Atomic32 counter(0);
-  std::tr1::shared_ptr<Runnable> task(new SimpleTask(15, &counter));
+  std::shared_ptr<Runnable> task(new SimpleTask(15, &counter));
 
   ASSERT_OK(thread_pool->SubmitFunc(boost::bind(&SimpleTaskMethod, 10, &counter)));
   ASSERT_OK(thread_pool->Submit(task));
@@ -173,6 +176,7 @@ TEST(TestThreadPool, TestRace) {
     // the bug.
     SleepFor(MonoDelta::FromMicroseconds(i));
   }
+  alarm(0);
 }
 
 TEST(TestThreadPool, TestVariableSizeThreadPool) {
@@ -286,5 +290,42 @@ TEST(TestThreadPool, TestMetrics) {
   ASSERT_EQ(kNumItems, queue_time->TotalCount());
   ASSERT_EQ(kNumItems, run_time->TotalCount());
 }
+
+// Test that a thread pool will crash if asked to run its own blocking
+// functions in a pool thread.
+//
+// In a multi-threaded application, TSAN is unsafe to use following a fork().
+// After a fork(), TSAN will:
+// 1. Disable verification, expecting an exec() soon anyway, and
+// 2. Die on future thread creation.
+// For some reason, this test triggers behavior #2. We could disable it with
+// the TSAN option die_after_fork=0, but this can (supposedly) lead to
+// deadlocks, so we'll disable the entire test instead.
+#ifndef THREAD_SANITIZER
+TEST(TestThreadPool, TestDeadlocks) {
+  const char* death_msg = "called pool function that would result in deadlock";
+  ASSERT_DEATH({
+    gscoped_ptr<ThreadPool> thread_pool;
+    ASSERT_OK(ThreadPoolBuilder("test")
+              .set_min_threads(1)
+              .set_max_threads(1)
+              .Build(&thread_pool));
+    ASSERT_OK(thread_pool->SubmitClosure(
+        Bind(&ThreadPool::Shutdown, Unretained(thread_pool.get()))));
+    thread_pool->Wait();
+  }, death_msg);
+
+  ASSERT_DEATH({
+    gscoped_ptr<ThreadPool> thread_pool;
+    ASSERT_OK(ThreadPoolBuilder("test")
+              .set_min_threads(1)
+              .set_max_threads(1)
+              .Build(&thread_pool));
+    ASSERT_OK(thread_pool->SubmitClosure(
+        Bind(&ThreadPool::Wait, Unretained(thread_pool.get()))));
+    thread_pool->Wait();
+  }, death_msg);
+}
+#endif
 
 } // namespace kudu

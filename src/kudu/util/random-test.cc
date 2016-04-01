@@ -1,18 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <limits>
+#include <unordered_set>
+
+#include <glog/stl_logging.h>
 
 #include "kudu/util/random.h"
 #include "kudu/util/test_util.h"
@@ -81,6 +87,77 @@ TEST_F(RandomTest, TestUseOfBits) {
   ASSERT_EQ(expected_bits_31, zeroes32);
   ASSERT_EQ(0, ones64);
   ASSERT_EQ(expected_bits_62, zeroes64);
+}
+
+TEST_F(RandomTest, TestResetSeed) {
+  rng_.Reset(1);
+  uint64_t first = rng_.Next64();
+  rng_.Reset(1);
+  uint64_t second = rng_.Next64();
+  ASSERT_EQ(first, second);
+}
+
+TEST_F(RandomTest, TestReservoirSample) {
+  // Use a constant seed to avoid flakiness.
+  rng_.Reset(12345);
+
+  vector<int> population;
+  for (int i = 0; i < 100; i++) {
+    population.push_back(i);
+  }
+
+  // Run 1000 trials selecting 5 elements.
+  vector<int> results;
+  vector<int> counts(population.size());
+  std::unordered_set<int> avoid;
+  for (int trial = 0; trial < 1000; trial++) {
+    rng_.ReservoirSample(population, 5, avoid, &results);
+    for (int result : results) {
+      counts[result]++;
+    }
+  }
+
+  // We expect each element to be selected
+  // 50 times on average, but since it's random, it won't be exact.
+  // However, since we use a constant seed, this test won't be flaky.
+  for (int count : counts) {
+    ASSERT_GE(count, 25);
+    ASSERT_LE(count, 75);
+  }
+
+  // Run again, but avoid some particular entries.
+  avoid.insert(3);
+  avoid.insert(10);
+  avoid.insert(20);
+  counts.assign(100, 0);
+  for (int trial = 0; trial < 1000; trial++) {
+    rng_.ReservoirSample(population, 5, avoid, &results);
+    for (int result : results) {
+      counts[result]++;
+    }
+  }
+
+  // Ensure that we didn't ever pick the avoided elements.
+  ASSERT_EQ(0, counts[3]);
+  ASSERT_EQ(0, counts[10]);
+  ASSERT_EQ(0, counts[20]);
+}
+
+TEST_F(RandomTest, TestReservoirSamplePopulationTooSmall) {
+  vector<int> population;
+  for (int i = 0; i < 10; i++) {
+    population.push_back(i);
+  }
+
+  vector<int> results;
+  std::unordered_set<int> avoid;
+  rng_.ReservoirSample(population, 20, avoid, &results);
+  ASSERT_EQ(population.size(), results.size());
+  ASSERT_EQ(population, results);
+
+  rng_.ReservoirSample(population, 10, avoid, &results);
+  ASSERT_EQ(population.size(), results.size());
+  ASSERT_EQ(population, results);
 }
 
 } // namespace kudu

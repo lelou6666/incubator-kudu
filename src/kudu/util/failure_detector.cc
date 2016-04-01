@@ -1,22 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/failure_detector.h"
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
-#include <tr1/unordered_map>
+#include <unordered_map>
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/stl_util.h"
@@ -28,14 +30,13 @@
 
 namespace kudu {
 
-using std::tr1::unordered_map;
+using std::unordered_map;
 using strings::Substitute;
 
 const int64_t RandomizedFailureMonitor::kMinWakeUpTimeMillis = 10;
 
 TimedFailureDetector::TimedFailureDetector(MonoDelta failure_period)
-    : failure_period_(failure_period) {
-}
+    : failure_period_(std::move(failure_period)) {}
 
 TimedFailureDetector::~TimedFailureDetector() {
   STLDeleteValues(&nodes_);
@@ -100,14 +101,14 @@ void TimedFailureDetector::CheckForFailures(const MonoTime& now) {
   CallbackMap callbacks;
   {
     lock_guard<simple_spinlock> lock(&lock_);
-    BOOST_FOREACH(const NodeMap::value_type& entry, nodes_) {
+    for (const NodeMap::value_type& entry : nodes_) {
       if (GetNodeStatusUnlocked(entry.first, now) == DEAD) {
         InsertOrDie(&callbacks, entry.first, entry.second->callback);
       }
     }
   }
   // Invoke failure callbacks outside of lock.
-  BOOST_FOREACH(const CallbackMap::value_type& entry, callbacks) {
+  for (const CallbackMap::value_type& entry : callbacks) {
     const string& node_name = entry.first;
     const FailureDetectedCallback& callback = entry.second;
     callback.Run(node_name, Status::RemoteError(Substitute("Node '$0' failed", node_name)));
@@ -203,7 +204,7 @@ void RandomizedFailureMonitor::RunThread() {
     }
 
     MonoTime now = MonoTime::Now(MonoTime::FINE);
-    BOOST_FOREACH(const FDMap::value_type& entry, fds_copy) {
+    for (const FDMap::value_type& entry : fds_copy) {
       entry.second->CheckForFailures(now);
     }
   }

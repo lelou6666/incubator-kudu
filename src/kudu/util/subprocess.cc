@@ -1,51 +1,71 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/subprocess.h"
 
-#include <boost/foreach.hpp>
 #include <dirent.h>
-#include <glog/logging.h>
 #include <fcntl.h>
-#include <tr1/memory>
-#include <string>
-#include <vector>
+#include <glog/logging.h>
+#include <memory>
 #include <signal.h>
-#include <unistd.h>
-#include <sys/prctl.h>
+#include <string>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
+#include <vector>
+
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
 
 #include "kudu/gutil/once.h"
 #include "kudu/gutil/port.h"
 #include "kudu/gutil/strings/join.h"
 #include "kudu/gutil/strings/numbers.h"
+#include "kudu/gutil/strings/split.h"
 #include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/debug-util.h"
 #include "kudu/util/errno.h"
 #include "kudu/util/status.h"
 
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using std::vector;
+using strings::Split;
 using strings::Substitute;
 
 namespace kudu {
 
 namespace {
 
-static const char* kProcSelfFd = "/proc/self/fd";
+static const char* kProcSelfFd =
+#if defined(__APPLE__)
+  "/dev/fd";
+#else
+  "/proc/self/fd";
+#endif // defined(__APPLE__)
+
+#if defined(__linux__)
+#define READDIR readdir64
+#define DIRENT dirent64
+#else
+#define READDIR readdir
+#define DIRENT dirent
+#endif
 
 void DisableSigPipe() {
   struct sigaction act;
@@ -53,7 +73,7 @@ void DisableSigPipe() {
   act.sa_handler = SIG_IGN;
   sigemptyset(&act.sa_mask);
   act.sa_flags = 0;
-  PCHECK(sigaction(SIGPIPE, &act, NULL) == 0);
+  PCHECK(sigaction(SIGPIPE, &act, nullptr) == 0);
 }
 
 void EnsureSigPipeDisabled() {
@@ -65,7 +85,7 @@ void EnsureSigPipeDisabled() {
 // This function is not async-signal-safe.
 Status OpenProcFdDir(DIR** dir) {
   *dir = opendir(kProcSelfFd);
-  if (PREDICT_FALSE(dir == NULL)) {
+  if (PREDICT_FALSE(dir == nullptr)) {
     return Status::IOError(Substitute("opendir(\"$0\") failed", kProcSelfFd),
                            ErrnoToString(errno), errno);
   }
@@ -88,9 +108,6 @@ void CloseProcFdDir(DIR* dir) {
 // The rule of thumb is to only call async-signal-safe functions in such cases
 // if at all possible.
 void CloseNonStandardFDs(DIR* fd_dir) {
-#ifndef __linux__
-#error This function is Linux-specific.
-#endif
   // This is implemented by iterating over the open file descriptors
   // rather than using sysconf(SC_OPEN_MAX) -- the latter is error prone
   // since it may not represent the highest open fd if the fd soft limit
@@ -102,10 +119,10 @@ void CloseNonStandardFDs(DIR* fd_dir) {
   // make it as lean and mean as possible -- this runs in the subprocess
   // after a fork, so there's some possibility that various global locks
   // inside malloc() might be held, so allocating memory is a no-no.
-  PCHECK(fd_dir != NULL);
+  PCHECK(fd_dir != nullptr);
   int dir_fd = dirfd(fd_dir);
 
-  struct dirent64 *ent;
+  struct DIRENT* ent;
   // readdir64() is not reentrant (it uses a static buffer) and it also
   // locks fd_dir->lock, so it must not be called in a multi-threaded
   // environment and is certainly not async-signal-safe.
@@ -114,7 +131,7 @@ void CloseNonStandardFDs(DIR* fd_dir) {
   // malloc() or free(). We could use readdir64_r() instead, but all that
   // buys us is reentrancy, and not async-signal-safety, due to the use of
   // dir->lock, so seems not worth the added complexity in lifecycle & plumbing.
-  while ((ent = readdir64(fd_dir)) != NULL) {
+  while ((ent = READDIR(fd_dir)) != nullptr) {
     uint32_t fd;
     if (!safe_strtou32(ent->d_name, &fd)) continue;
     if (!(fd == STDIN_FILENO  ||
@@ -128,14 +145,13 @@ void CloseNonStandardFDs(DIR* fd_dir) {
 
 } // anonymous namespace
 
-Subprocess::Subprocess(const string& program,
-                       const vector<string>& argv)
-  : program_(program),
-    argv_(argv),
-    state_(kNotStarted),
-    child_pid_(-1),
-    fd_state_(),
-    child_fds_() {
+Subprocess::Subprocess(string program, vector<string> argv)
+    : program_(std::move(program)),
+      argv_(std::move(argv)),
+      state_(kNotStarted),
+      child_pid_(-1),
+      fd_state_(),
+      child_fds_() {
   fd_state_[STDIN_FILENO]   = PIPED;
   fd_state_[STDOUT_FILENO]  = SHARED;
   fd_state_[STDERR_FILENO]  = SHARED;
@@ -190,6 +206,30 @@ static void RedirectToDevNull(int fd) {
   }
 }
 
+#if defined(__APPLE__)
+static int pipe2(int pipefd[2], int flags) {
+  DCHECK_EQ(O_CLOEXEC, flags);
+
+  int new_fds[2];
+  if (pipe(new_fds) == -1) {
+    return -1;
+  }
+  if (fcntl(new_fds[0], F_SETFD, O_CLOEXEC) == -1) {
+    close(new_fds[0]);
+    close(new_fds[1]);
+    return -1;
+  }
+  if (fcntl(new_fds[1], F_SETFD, O_CLOEXEC) == -1) {
+    close(new_fds[0]);
+    close(new_fds[1]);
+    return -1;
+  }
+  pipefd[0] = new_fds[0];
+  pipefd[1] = new_fds[1];
+  return 0;
+}
+#endif
+
 Status Subprocess::Start() {
   CHECK_EQ(state_, kNotStarted);
   EnsureSigPipeDisabled();
@@ -199,10 +239,10 @@ Status Subprocess::Start() {
   }
 
   vector<char*> argv_ptrs;
-  BOOST_FOREACH(const string& arg, argv_) {
+  for (const string& arg : argv_) {
     argv_ptrs.push_back(const_cast<char*>(arg.c_str()));
   }
-  argv_ptrs.push_back(NULL);
+  argv_ptrs.push_back(nullptr);
 
   // Pipe from caller process to child's stdin
   // [0] = stdin for child, [1] = how parent writes to it
@@ -223,7 +263,7 @@ Status Subprocess::Start() {
     PCHECK(pipe2(child_stderr, O_CLOEXEC) == 0);
   }
 
-  DIR* fd_dir = NULL;
+  DIR* fd_dir = nullptr;
   RETURN_NOT_OK_PREPEND(OpenProcFdDir(&fd_dir), "Unable to open fd dir");
   shared_ptr<DIR> fd_dir_closer(fd_dir, CloseProcFdDir);
 
@@ -235,10 +275,11 @@ Status Subprocess::Start() {
     // Send the child a SIGTERM when the parent dies. This is done as early
     // as possible in the child's life to prevent any orphaning whatsoever
     // (e.g. from KUDU-402).
-    //
+#if defined(__linux__)
     // TODO: prctl(PR_SET_PDEATHSIG) is Linux-specific, look into portable ways
     // to prevent orphans when parent is killed.
     prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
 
     // stdin
     if (fd_state_[STDIN_FILENO] == PIPED) {
@@ -272,7 +313,7 @@ Status Subprocess::Start() {
     CloseNonStandardFDs(fd_dir);
 
     execvp(program_.c_str(), &argv_ptrs[0]);
-    PLOG(WARNING) << "Couldn't exec";
+    PLOG(WARNING) << "Couldn't exec " << program_;
     _exit(errno);
   } else {
     // We are the parent
@@ -321,6 +362,65 @@ Status Subprocess::Kill(int signal) {
     return Status::RuntimeError("Unable to kill",
                                 ErrnoToString(errno),
                                 errno);
+  }
+  return Status::OK();
+}
+
+Status Subprocess::Call(const string& arg_str) {
+  VLOG(2) << "Invoking command: " << arg_str;
+  vector<string> argv = Split(arg_str, " ");
+  return Call(argv);
+}
+
+Status Subprocess::Call(const vector<string>& argv) {
+  Subprocess proc(argv[0], argv);
+  RETURN_NOT_OK(proc.Start());
+  int retcode;
+  RETURN_NOT_OK(proc.Wait(&retcode));
+
+  if (retcode == 0) {
+    return Status::OK();
+  } else {
+    return Status::RuntimeError(Substitute(
+        "Subprocess '$0' terminated with non-zero exit status $1",
+        argv[0],
+        retcode));
+  }
+}
+
+Status Subprocess::Call(const vector<string>& argv, string* stdout_out) {
+  Subprocess p(argv[0], argv);
+  p.ShareParentStdout(false);
+  RETURN_NOT_OK_PREPEND(p.Start(), "Unable to fork " + argv[0]);
+  int err = close(p.ReleaseChildStdinFd());
+  if (PREDICT_FALSE(err != 0)) {
+    return Status::IOError("Unable to close child process stdin", ErrnoToString(errno), errno);
+  }
+
+  stdout_out->clear();
+  char buf[1024];
+  while (true) {
+    ssize_t n = read(p.from_child_stdout_fd(), buf, arraysize(buf));
+    if (n == 0) {
+      // EOF
+      break;
+    }
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return Status::IOError("IO error reading from " + argv[0], ErrnoToString(errno), errno);
+    }
+
+    stdout_out->append(buf, n);
+  }
+
+  int retcode;
+  RETURN_NOT_OK_PREPEND(p.Wait(&retcode), "Unable to wait() for " + argv[0]);
+
+  if (PREDICT_FALSE(retcode != 0)) {
+    return Status::RuntimeError(Substitute(
+        "Subprocess '$0' terminated with non-zero exit status $1",
+        argv[0],
+        retcode));
   }
   return Status::OK();
 }

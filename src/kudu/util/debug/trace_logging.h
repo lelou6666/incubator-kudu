@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // This header defines the following macro:
 //
@@ -80,10 +83,10 @@ class TraceVLog {
   class TraceLogSink : public google::LogSink {
    public:
     explicit TraceLogSink(const char* category) : category_(category) {}
-    virtual void send(google::LogSeverity severity, const char* full_filename,
-                      const char* base_filename, int line,
-                      const struct ::tm* tm_time,
-                      const char* message, size_t message_len) {
+    void send(google::LogSeverity severity, const char* full_filename,
+              const char* base_filename, int line,
+              const struct ::tm* tm_time, const char* message,
+              size_t message_len) override {
       // Rather than calling TRACE_EVENT_INSTANT here, we have to do it from
       // the destructor. This is because glog holds its internal mutex while
       // calling send(). So, if we try to use TRACE_EVENT here, and --trace_to_console

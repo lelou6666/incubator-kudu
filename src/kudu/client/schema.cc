@@ -1,22 +1,24 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/client/schema.h"
 
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
-#include <tr1/unordered_map>
+#include <unordered_map>
 
 #include "kudu/client/schema-internal.h"
 #include "kudu/client/value-internal.h"
@@ -37,7 +39,7 @@ MAKE_ENUM_LIMITS(kudu::client::KuduColumnSchema::DataType,
                  kudu::client::KuduColumnSchema::INT8,
                  kudu::client::KuduColumnSchema::BOOL);
 
-using std::tr1::unordered_map;
+using std::unordered_map;
 using std::vector;
 using strings::Substitute;
 
@@ -219,7 +221,7 @@ Status KuduColumnSpec::ToColumnSchema(KuduColumnSchema* col) const {
 
   bool nullable = data_->has_nullable ? data_->nullable : true;
 
-  void* default_val = NULL;
+  void* default_val = nullptr;
   // TODO: distinguish between DEFAULT NULL and no default?
   if (data_->has_default) {
     RETURN_NOT_OK(data_->default_val->data_->CheckTypeAndGetPointer(
@@ -279,7 +281,7 @@ KuduSchemaBuilder::KuduSchemaBuilder()
 }
 
 KuduSchemaBuilder::~KuduSchemaBuilder() {
-  BOOST_FOREACH(KuduColumnSpec* spec, data_->specs) {
+  for (KuduColumnSpec* spec : data_->specs) {
     // Can't use STLDeleteElements because KuduSchemaBuilder
     // is a friend of KuduColumnSpec in order to access its destructor.
     // STLDeleteElements is a free function and therefore can't access it.
@@ -289,7 +291,7 @@ KuduSchemaBuilder::~KuduSchemaBuilder() {
 }
 
 KuduColumnSpec* KuduSchemaBuilder::AddColumn(const std::string& name) {
-  KuduColumnSpec* c = new KuduColumnSpec(name);
+  auto c = new KuduColumnSpec(name);
   data_->specs.push_back(c);
   return c;
 }
@@ -303,7 +305,7 @@ KuduSchemaBuilder* KuduSchemaBuilder::SetPrimaryKey(
 
 Status KuduSchemaBuilder::Build(KuduSchema* schema) {
   vector<KuduColumnSchema> cols;
-  cols.resize(data_->specs.size());
+  cols.resize(data_->specs.size(), KuduColumnSchema());
   for (int i = 0; i < cols.size(); i++) {
     RETURN_NOT_OK(data_->specs[i]->ToColumnSchema(&cols[i]));
   }
@@ -340,7 +342,7 @@ Status KuduSchemaBuilder::Build(KuduSchema* schema) {
     // Build a map from name to index of all of the columns.
     unordered_map<string, int> name_to_idx_map;
     int i = 0;
-    BOOST_FOREACH(KuduColumnSpec* spec, data_->specs) {
+    for (KuduColumnSpec* spec : data_->specs) {
       // If they did pass the key column names, then we should not have explicitly
       // set it on any columns.
       if (spec->data_->primary_key) {
@@ -354,7 +356,7 @@ Status KuduSchemaBuilder::Build(KuduSchema* schema) {
 
     // Convert the key column names to a set of indexes.
     vector<int> key_col_indexes;
-    BOOST_FOREACH(const string& key_col_name, data_->key_col_names) {
+    for (const string& key_col_name : data_->key_col_names) {
       int idx;
       if (!FindCopy(name_to_idx_map, key_col_name, &idx)) {
         return Status::InvalidArgument("primary key column not defined", key_col_name);
@@ -402,11 +404,11 @@ KuduColumnSchema::KuduColumnSchema(const std::string &name,
 }
 
 KuduColumnSchema::KuduColumnSchema(const KuduColumnSchema& other)
-  : col_(NULL) {
+  : col_(nullptr) {
   CopyFrom(other);
 }
 
-KuduColumnSchema::KuduColumnSchema() : col_(NULL) {
+KuduColumnSchema::KuduColumnSchema() : col_(nullptr) {
 }
 
 KuduColumnSchema::~KuduColumnSchema() {
@@ -425,14 +427,14 @@ void KuduColumnSchema::CopyFrom(const KuduColumnSchema& other) {
   if (other.col_) {
     col_ = new ColumnSchema(*other.col_);
   } else {
-    col_ = NULL;
+    col_ = nullptr;
   }
 }
 
 bool KuduColumnSchema::Equals(const KuduColumnSchema& other) const {
   return this == &other ||
     col_ == other.col_ ||
-    (col_ != NULL && col_->Equals(*other.col_, true));
+    (col_ != nullptr && col_->Equals(*other.col_, true));
 }
 
 const std::string& KuduColumnSchema::name() const {
@@ -453,11 +455,11 @@ KuduColumnSchema::DataType KuduColumnSchema::type() const {
 ////////////////////////////////////////////////////////////
 
 KuduSchema::KuduSchema()
-  : schema_(NULL) {
+  : schema_(nullptr) {
 }
 
 KuduSchema::KuduSchema(const KuduSchema& other)
-  : schema_(NULL) {
+  : schema_(nullptr) {
   CopyFrom(other);
 }
 
@@ -483,7 +485,7 @@ void KuduSchema::CopyFrom(const KuduSchema& other) {
 
 Status KuduSchema::Reset(const vector<KuduColumnSchema>& columns, int key_columns) {
   vector<ColumnSchema> cols_private;
-  BOOST_FOREACH(const KuduColumnSchema& col, columns) {
+  for (const KuduColumnSchema& col : columns) {
     cols_private.push_back(*col.col_);
   }
   gscoped_ptr<Schema> new_schema(new Schema());

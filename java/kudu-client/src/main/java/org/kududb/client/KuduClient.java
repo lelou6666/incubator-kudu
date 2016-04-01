@@ -1,16 +1,19 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 package org.kududb.client;
 
 import com.stumbleupon.async.Deferred;
@@ -22,6 +25,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * A synchronous and thread-safe client for Kudu.
@@ -50,7 +54,7 @@ public class KuduClient implements AutoCloseable {
    * @return an object to communicate with the created table
    */
   public KuduTable createTable(String name, Schema schema) throws Exception {
-    return createTable(name, schema, new CreateTableBuilder());
+    return createTable(name, schema, new CreateTableOptions());
   }
 
   /**
@@ -60,7 +64,7 @@ public class KuduClient implements AutoCloseable {
    * @param builder a builder containing the table's configurations
    * @return an object to communicate with the created table
    */
-  public KuduTable createTable(String name, Schema schema, CreateTableBuilder builder)
+  public KuduTable createTable(String name, Schema schema, CreateTableOptions builder)
       throws Exception {
     Deferred<KuduTable> d = asyncClient.createTable(name, schema, builder);
     return d.join(getDefaultAdminOperationTimeoutMs());
@@ -82,11 +86,11 @@ public class KuduClient implements AutoCloseable {
    * When the method returns it only indicates that the master accepted the alter
    * command, use {@link KuduClient#isAlterTableDone(String)} to know when the alter finishes.
    * @param name the table's name, if this is a table rename then the old table name must be passed
-   * @param atb the alter table builder
+   * @param ato the alter table builder
    * @return an rpc response object
    */
-  public AlterTableResponse alterTable(String name, AlterTableBuilder atb) throws Exception {
-    Deferred<AlterTableResponse> d = asyncClient.alterTable(name, atb);
+  public AlterTableResponse alterTable(String name, AlterTableOptions ato) throws Exception {
+    Deferred<AlterTableResponse> d = asyncClient.alterTable(name, ato);
     return d.join(getDefaultAdminOperationTimeoutMs());
   }
 
@@ -308,6 +312,40 @@ public class KuduClient implements AutoCloseable {
      */
     public KuduClientBuilder defaultSocketReadTimeoutMs(long timeoutMs) {
       clientBuilder.defaultSocketReadTimeoutMs(timeoutMs);
+      return this;
+    }
+
+    /**
+     * Set the executors which will be used for the embedded Netty boss and workers.
+     * Optional.
+     * If not provided, uses a simple cached threadpool. If either argument is null,
+     * then such a thread pool will be used in place of that argument.
+     * Note: executor's max thread number must be greater or equal to corresponding
+     * worker count, or netty cannot start enough threads, and client will get stuck.
+     * If not sure, please just use CachedThreadPool.
+     */
+    public KuduClientBuilder nioExecutors(Executor bossExecutor, Executor workerExecutor) {
+      clientBuilder.nioExecutors(bossExecutor, workerExecutor);
+      return this;
+    }
+
+    /**
+     * Set the maximum number of boss threads.
+     * Optional.
+     * If not provided, 1 is used.
+     */
+    public KuduClientBuilder bossCount(int bossCount) {
+      clientBuilder.bossCount(bossCount);
+      return this;
+    }
+
+    /**
+     * Set the maximum number of worker threads.
+     * Optional.
+     * If not provided, (2 * the number of available processors) is used.
+     */
+    public KuduClientBuilder workerCount(int workerCount) {
+      clientBuilder.workerCount(workerCount);
       return this;
     }
 

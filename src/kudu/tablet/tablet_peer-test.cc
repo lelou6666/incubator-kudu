@@ -1,18 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#include <boost/assign/list_of.hpp>
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <glog/logging.h>
 #include <gtest/gtest.h>
@@ -51,9 +52,9 @@ DECLARE_int32(log_min_seconds_to_retain);
 namespace kudu {
 namespace tablet {
 
-using consensus::ConsensusBootstrapInfo;
 using consensus::CommitMsg;
 using consensus::Consensus;
+using consensus::ConsensusBootstrapInfo;
 using consensus::ConsensusMetadata;
 using consensus::MakeOpId;
 using consensus::MinimumOpId;
@@ -62,19 +63,19 @@ using consensus::OpIdEquals;
 using consensus::RaftPeerPB;
 using consensus::WRITE_OP;
 using log::Log;
-using log::LogOptions;
 using log::LogAnchorRegistry;
+using log::LogOptions;
 using rpc::Messenger;
 using server::Clock;
 using server::LogicalClock;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
 using strings::Substitute;
 using tserver::WriteRequestPB;
 using tserver::WriteResponsePB;
 
 static Schema GetTestSchema() {
-  return Schema(boost::assign::list_of(ColumnSchema("key", INT32)), 1);
+  return Schema({ ColumnSchema("key", INT32) }, 1);
 }
 
 class TabletPeerTest : public KuduTabletTest {
@@ -130,6 +131,7 @@ class TabletPeerTest : public KuduTabletTest {
                                *tablet()->schema(), tablet()->metadata()->schema_version(),
                                metric_entity_.get(), &log));
 
+    tablet_peer_->SetBootstrapping();
     ASSERT_OK(tablet_peer_->Init(tablet(),
                                  clock(),
                                  messenger_,
@@ -186,12 +188,11 @@ class TabletPeerTest : public KuduTabletTest {
 
   Status ExecuteWriteAndRollLog(TabletPeer* tablet_peer, const WriteRequestPB& req) {
     gscoped_ptr<WriteResponsePB> resp(new WriteResponsePB());
-    WriteTransactionState* tx_state =
-        new WriteTransactionState(tablet_peer, &req, resp.get());
+    auto tx_state = new WriteTransactionState(tablet_peer, &req, resp.get());
 
     CountDownLatch rpc_latch(1);
     tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-        new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, resp.get())).Pass());
+        new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, resp.get())));
 
     CHECK_OK(tablet_peer->SubmitWrite(tx_state));
     rpc_latch.Wait();
@@ -306,11 +307,11 @@ TEST_F(TabletPeerTest, TestMRSAnchorPreventsLogGC) {
   AssertNoLogAnchors();
 
   log::SegmentSequence segments;
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
 
   ASSERT_EQ(1, segments.size());
   ASSERT_OK(ExecuteInsertsAndRollLogs(3));
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(4, segments.size());
 
   AssertLogAnchorEarlierThanLogLatest();
@@ -332,7 +333,7 @@ TEST_F(TabletPeerTest, TestMRSAnchorPreventsLogGC) {
   tablet_peer_->GetEarliestNeededLogIndex(&min_log_index);
   ASSERT_OK(log->GC(min_log_index, &num_gced));
   ASSERT_EQ(2, num_gced) << "earliest needed: " << min_log_index;
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(2, segments.size());
 }
 
@@ -348,11 +349,11 @@ TEST_F(TabletPeerTest, TestDMSAnchorPreventsLogGC) {
   AssertNoLogAnchors();
 
   log::SegmentSequence segments;
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
 
   ASSERT_EQ(1, segments.size());
   ASSERT_OK(ExecuteInsertsAndRollLogs(2));
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(3, segments.size());
 
   // Flush MRS & GC log so the next mutation goes into a DMS.
@@ -363,7 +364,7 @@ TEST_F(TabletPeerTest, TestDMSAnchorPreventsLogGC) {
   // We will only GC 1, and have 1 left because the earliest needed OpId falls
   // back to the latest OpId written to the Log if no anchors are set.
   ASSERT_EQ(1, num_gced);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(2, segments.size());
   AssertNoLogAnchors();
 
@@ -384,13 +385,13 @@ TEST_F(TabletPeerTest, TestDMSAnchorPreventsLogGC) {
   ASSERT_OK(ExecuteDeletesAndRollLogs(2));
   AssertLogAnchorEarlierThanLogLatest();
   ASSERT_GT(tablet_peer_->log_anchor_registry()->GetAnchorCountForTests(), 0);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(4, segments.size());
 
   // Execute another couple inserts, but Flush it so it doesn't anchor.
   ASSERT_OK(ExecuteInsertsAndRollLogs(2));
   ASSERT_OK(tablet_peer_->tablet()->Flush());
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(6, segments.size());
 
   // Ensure the delta and last insert remain in the logs, anchored by the delta.
@@ -398,7 +399,7 @@ TEST_F(TabletPeerTest, TestDMSAnchorPreventsLogGC) {
   tablet_peer_->GetEarliestNeededLogIndex(&min_log_index);
   ASSERT_OK(log->GC(min_log_index, &num_gced));
   ASSERT_EQ(1, num_gced);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(5, segments.size());
 
   // Flush DMS to release the anchor.
@@ -414,7 +415,7 @@ TEST_F(TabletPeerTest, TestDMSAnchorPreventsLogGC) {
   tablet_peer_->GetEarliestNeededLogIndex(&min_log_index);
   ASSERT_OK(log->GC(min_log_index, &num_gced));
   ASSERT_EQ(3, num_gced);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(2, segments.size());
 }
 
@@ -430,11 +431,11 @@ TEST_F(TabletPeerTest, TestActiveTransactionPreventsLogGC) {
   AssertNoLogAnchors();
 
   log::SegmentSequence segments;
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
 
   ASSERT_EQ(1, segments.size());
   ASSERT_OK(ExecuteInsertsAndRollLogs(4));
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(5, segments.size());
 
   // Flush MRS as needed to ensure that we don't have OpId anchors in the MRS.
@@ -456,11 +457,10 @@ TEST_F(TabletPeerTest, TestActiveTransactionPreventsLogGC) {
   {
     // Long-running mutation.
     ASSERT_OK(GenerateSequentialDeleteRequest(req.get()));
-    WriteTransactionState* tx_state =
-      new WriteTransactionState(tablet_peer_.get(), req.get(), resp.get());
+    auto tx_state = new WriteTransactionState(tablet_peer_.get(), req.get(), resp.get());
 
     tx_state->set_completion_callback(gscoped_ptr<TransactionCompletionCallback>(
-          new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, resp.get())).Pass());
+        new LatchTransactionCompletionCallback<WriteResponsePB>(&rpc_latch, resp.get())));
 
     gscoped_ptr<DelayedApplyTransaction> transaction(new DelayedApplyTransaction(&apply_started,
                                                                                  &apply_continue,
@@ -488,13 +488,13 @@ TEST_F(TabletPeerTest, TestActiveTransactionPreventsLogGC) {
   tablet_peer_->GetEarliestNeededLogIndex(&min_log_index);
   ASSERT_OK(log->GC(min_log_index, &num_gced));
   ASSERT_EQ(4, num_gced);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(2, segments.size());
 
   // We use mutations here, since an MRS Flush() quiesces the tablet, and we
   // want to ensure the only thing "anchoring" is the TransactionTracker.
   ASSERT_OK(ExecuteDeletesAndRollLogs(3));
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(5, segments.size());
   ASSERT_EQ(1, tablet_peer_->log_anchor_registry()->GetAnchorCountForTests());
   tablet_peer_->tablet()->FlushBiggestDMS();
@@ -507,7 +507,7 @@ TEST_F(TabletPeerTest, TestActiveTransactionPreventsLogGC) {
   tablet_peer_->GetEarliestNeededLogIndex(&min_log_index);
   ASSERT_OK(log->GC(min_log_index, &num_gced));
   ASSERT_EQ(0, num_gced);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(5, segments.size());
 
   // Now we release the transaction and wait for everything to complete.
@@ -524,7 +524,7 @@ TEST_F(TabletPeerTest, TestActiveTransactionPreventsLogGC) {
   tablet_peer_->GetEarliestNeededLogIndex(&min_log_index);
   ASSERT_OK(log->GC(min_log_index, &num_gced));
   ASSERT_EQ(3, num_gced);
-  ASSERT_OK(log->GetLogReader()->GetSegmentsSnapshot(&segments));
+  ASSERT_OK(log->reader()->GetSegmentsSnapshot(&segments));
   ASSERT_EQ(2, segments.size());
 }
 
@@ -540,33 +540,27 @@ TEST_F(TabletPeerTest, TestFlushOpsPerfImprovements) {
 
   // Just on the threshold and not enough time has passed for a time-based flush.
   stats.set_ram_anchored(64 * 1024 * 1024);
-  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 1, false);
+  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 1);
   ASSERT_EQ(0.0, stats.perf_improvement());
   stats.Clear();
 
   // Just on the threshold and enough time has passed, we'll have a low improvement.
   stats.set_ram_anchored(64 * 1024 * 1024);
-  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 3 * 60 * 1000, false);
+  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 3 * 60 * 1000);
   ASSERT_GT(stats.perf_improvement(), 0.01);
   stats.Clear();
 
   // Way over the threshold, number is much higher than 1.
   stats.set_ram_anchored(128 * 1024 * 1024);
-  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 1, false);
+  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 1);
   ASSERT_LT(1.0, stats.perf_improvement());
   stats.Clear();
 
   // Below the threshold but have been there a long time, closing in to 1.0.
   stats.set_ram_anchored(30 * 1024 * 1024);
-  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 60 * 50 * 1000, false);
+  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 60 * 50 * 1000);
   ASSERT_LT(0.7, stats.perf_improvement());
   ASSERT_GT(1.0, stats.perf_improvement());
-  stats.Clear();
-
-  // Empty, been there a long time, shouldn't have a perf improvement.
-  stats.set_ram_anchored(0);
-  FlushOpPerfImprovementPolicy::SetPerfImprovementForFlush(&stats, 60 * 50 * 1000, true);
-  ASSERT_EQ(0.0, stats.perf_improvement());
   stats.Clear();
 }
 

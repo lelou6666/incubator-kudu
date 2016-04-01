@@ -1,24 +1,27 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CLIENT_BATCHER_H
 #define KUDU_CLIENT_BATCHER_H
 
-#include <tr1/memory>
-#include <tr1/unordered_set>
-#include <tr1/unordered_map>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
+#include "kudu/client/client.h"
 #include "kudu/gutil/gscoped_ptr.h"
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/ref_counted.h"
@@ -61,7 +64,8 @@ class Batcher : public RefCountedThreadSafe<Batcher> {
   // Takes a reference on error_collector. Creates a weak_ptr to 'session'.
   Batcher(KuduClient* client,
           ErrorCollector* error_collector,
-          const std::tr1::shared_ptr<KuduSession>& session);
+          const client::sp::shared_ptr<KuduSession>& session,
+          kudu::client::KuduSession::ExternalConsistencyMode consistency_mode);
 
   // Abort the current batch. Any writes that were buffered and not yet sent are
   // discarded. Those that were sent may still be delivered.  If there is a pending Flush
@@ -97,6 +101,12 @@ class Batcher : public RefCountedThreadSafe<Batcher> {
   // and the caller must inspect the ErrorCollector to retrieve more detailed
   // information on which operations failed.
   void FlushAsync(KuduStatusCallback* cb);
+
+  // Returns the consistency mode set on the batcher by the session when it was initially
+  // created.
+  kudu::client::KuduSession::ExternalConsistencyMode external_consistency_mode() const {
+    return consistency_mode_;
+  }
 
  private:
   friend class RefCountedThreadSafe<Batcher>;
@@ -150,7 +160,10 @@ class Batcher : public RefCountedThreadSafe<Batcher> {
   State state_;
 
   KuduClient* const client_;
-  std::tr1::weak_ptr<KuduSession> weak_session_;
+  client::sp::weak_ptr<KuduSession> weak_session_;
+
+  // The consistency mode set in the session.
+  kudu::client::KuduSession::ExternalConsistencyMode consistency_mode_;
 
   // Errors are reported into this error collector.
   scoped_refptr<ErrorCollector> const error_collector_;
@@ -165,9 +178,9 @@ class Batcher : public RefCountedThreadSafe<Batcher> {
   KuduStatusCallback* flush_callback_;
 
   // All buffered or in-flight ops.
-  std::tr1::unordered_set<InFlightOp*> ops_;
+  std::unordered_set<InFlightOp*> ops_;
   // Each tablet's buffered ops.
-  typedef std::tr1::unordered_map<RemoteTablet*, std::vector<InFlightOp*> > OpsMap;
+  typedef std::unordered_map<RemoteTablet*, std::vector<InFlightOp*> > OpsMap;
   OpsMap per_tablet_ops_;
 
   // When each operation is added to the batcher, it is assigned a sequence number

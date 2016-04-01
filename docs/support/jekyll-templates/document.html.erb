@@ -1,28 +1,29 @@
 <%
-# Copyright 2015 Cloudera, Inc.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#   http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
 %>
 ---
 title: <%= doctitle(:sanitize => true) || (attr 'untitled-label') %>
 layout: default
-<% if attr? :active_nav %>
-active_nav: <%= attr :active_nav %>
-<% end %>
+active_nav: docs
 last_updated: '<%= %(#{attr 'last-update-label'} #{attr :docdatetime}) %>'
 ---
 <!--
-Copyright 2015 Cloudera, Inc.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -82,20 +83,23 @@ end %>
   <div id="toc" data-spy="affix" data-offset-top="70">
   <ul>
 <%
-      toplevels = {
-        :introduction => "Introducing Kudu",
-        :quickstart => "Getting Started with Kudu",
-        :installation => "Installation Guide",
-        :kudu_impala_integration => "Using Impala with Kudu",
-        :administration => "Administering Kudu",
-        :troubleshooting => "Troubleshooting Kudu",
-        :developing => "Developing Applications with Kudu",
-        :contributing => "Contributing to Kudu",
-        :style_guide => "Kudu Style Guide",
-        :configuration_reference => "Kudu Configuration Reference",
-        :resources => "Kudu Resources"
-      }
-      toplevels.each do |page, pagename|
+      toplevels = [
+        :introduction, "Introducing Kudu",
+        :release_notes, "Kudu Release Notes",
+        :quickstart, "Getting Started with Kudu",
+        :installation, "Installation Guide",
+        :configuration, "Configuring Kudu",
+        :kudu_impala_integration, "Using Impala with Kudu",
+        :administration, "Administering Kudu",
+        :troubleshooting, "Troubleshooting Kudu",
+        :developing, "Developing Applications with Kudu",
+        :schema_design, "Kudu Schema Design",
+        :transaction_semantics, "Kudu Transaction Semantics",
+        :contributing, "Contributing to Kudu",
+        :style_guide, "Kudu Documentation Style Guide",
+        :configuration_reference, "Kudu Configuration Reference"
+      ]
+      toplevels.each_slice(2) do |page, pagename|
 %>
       <li>
 <%       if page.to_s == (attr 'docname')

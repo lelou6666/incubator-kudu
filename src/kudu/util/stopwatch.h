@@ -1,16 +1,19 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_UTIL_STOPWATCH_H
 #define KUDU_UTIL_STOPWATCH_H
 
@@ -19,9 +22,14 @@
 #include <sys/time.h>
 #include <time.h>
 #include <string>
+#if defined(__APPLE__)
+#include <mach/clock.h>
+#include <mach/mach.h>
+#endif  // defined(__APPLE__)
 
 #include "kudu/gutil/macros.h"
 #include "kudu/gutil/stringprintf.h"
+#include "kudu/gutil/walltime.h"
 
 namespace kudu {
 
@@ -214,10 +222,31 @@ class Stopwatch {
  private:
   void GetTimes(CpuTimes *times) const {
     struct rusage usage;
-    CHECK_EQ(0, getrusage((mode_ == THIS_THREAD) ? RUSAGE_THREAD : RUSAGE_SELF, &usage));
     struct timespec wall;
 
+#if defined(__APPLE__)
+    if (mode_ == THIS_THREAD) {
+      //Adapted from http://blog.kuriositaet.de/?p=257.
+      struct task_basic_info t_info;
+      mach_msg_type_number_t t_info_count = TASK_BASIC_INFO_COUNT;
+      CHECK_EQ(KERN_SUCCESS, task_info(mach_task_self(), TASK_THREAD_TIMES_INFO,
+                                       (task_info_t)&t_info, &t_info_count));
+      usage.ru_utime.tv_sec = t_info.user_time.seconds;
+      usage.ru_utime.tv_usec = t_info.user_time.microseconds;
+      usage.ru_stime.tv_sec = t_info.system_time.seconds;
+      usage.ru_stime.tv_usec = t_info.system_time.microseconds;
+    } else {
+      CHECK_EQ(0, getrusage(RUSAGE_SELF, &usage));
+    }
+
+    mach_timespec_t ts;
+    walltime_internal::GetCurrentTime(&ts);
+    wall.tv_sec = ts.tv_sec;
+    wall.tv_nsec = ts.tv_nsec;
+#else
+    CHECK_EQ(0, getrusage((mode_ == THIS_THREAD) ? RUSAGE_THREAD : RUSAGE_SELF, &usage));
     CHECK_EQ(0, clock_gettime(CLOCK_MONOTONIC, &wall));
+#endif  // defined(__APPLE__)
     times->wall   = wall.tv_sec * 1000000000L + wall.tv_nsec;
     times->user   = usage.ru_utime.tv_sec * 1000000000L + usage.ru_utime.tv_usec * 1000;
     times->system = usage.ru_stime.tv_sec * 1000000000L + usage.ru_stime.tv_usec * 1000;
@@ -235,17 +264,17 @@ namespace sw_internal {
 // Internal class used by the LOG_TIMING macro.
 class LogTiming {
  public:
-  LogTiming(const char* file, int line, google::LogSeverity severity,
-            const std::string& prefix, const std::string& description,
+  LogTiming(const char *file, int line, google::LogSeverity severity,
+            std::string prefix, std::string description,
             int64_t max_expected_millis, bool should_print)
-    : file_(file),
-      line_(line),
-      severity_(severity),
-      prefix_(prefix),
-      description_(description),
-      max_expected_millis_(max_expected_millis),
-      should_print_(should_print),
-      has_run_(false) {
+      : file_(file),
+        line_(line),
+        severity_(severity),
+        prefix_(std::move(prefix)),
+        description_(std::move(description)),
+        max_expected_millis_(max_expected_millis),
+        should_print_(should_print),
+        has_run_(false) {
     stopwatch_.start();
   }
 

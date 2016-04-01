@@ -1,18 +1,22 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <tr1/memory>
+#include <algorithm>
+#include <memory>
 
 #include <glog/logging.h>
 #include <string>
@@ -23,7 +27,7 @@
 #include "kudu/util/status.h"
 
 using strings::Substitute;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 
 namespace kudu {
 namespace env_util {
@@ -96,17 +100,39 @@ Status ReadFully(RandomAccessFile* file, uint64_t offset, size_t n,
 
 Status CreateDirIfMissing(Env* env, const string& path, bool* created) {
   Status s = env->CreateDir(path);
-  if (created != NULL) {
+  if (created != nullptr) {
     *created = s.ok();
   }
   return s.IsAlreadyPresent() ? Status::OK() : s;
 }
 
-ScopedFileDeleter::ScopedFileDeleter(Env* env, const std::string& path)
-  : env_(DCHECK_NOTNULL(env)),
-    path_(path),
-    should_delete_(true) {
+Status CopyFile(Env* env, const string& source_path, const string& dest_path,
+                WritableFileOptions opts) {
+  gscoped_ptr<SequentialFile> source;
+  RETURN_NOT_OK(env->NewSequentialFile(source_path, &source));
+  uint64_t size;
+  RETURN_NOT_OK(env->GetFileSize(source_path, &size));
+
+  gscoped_ptr<WritableFile> dest;
+  RETURN_NOT_OK(env->NewWritableFile(opts, dest_path, &dest));
+  RETURN_NOT_OK(dest->PreAllocate(size));
+
+  const int32_t kBufferSize = 1024 * 1024;
+  gscoped_ptr<uint8_t[]> scratch(new uint8_t[kBufferSize]);
+
+  uint64_t bytes_read = 0;
+  while (bytes_read < size) {
+    uint64_t max_bytes_to_read = std::min<uint64_t>(size - bytes_read, kBufferSize);
+    Slice data;
+    RETURN_NOT_OK(source->Read(max_bytes_to_read, &data, scratch.get()));
+    RETURN_NOT_OK(dest->Append(data));
+    bytes_read += data.size();
+  }
+  return Status::OK();
 }
+
+ScopedFileDeleter::ScopedFileDeleter(Env* env, std::string path)
+    : env_(DCHECK_NOTNULL(env)), path_(std::move(path)), should_delete_(true) {}
 
 ScopedFileDeleter::~ScopedFileDeleter() {
   if (should_delete_) {

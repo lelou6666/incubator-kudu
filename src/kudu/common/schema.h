@@ -1,33 +1,36 @@
-// Copyright 2012 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_COMMON_SCHEMA_H
 #define KUDU_COMMON_SCHEMA_H
 
-#include <boost/foreach.hpp>
 #include <functional>
+#include <glog/logging.h>
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
-#include <tr1/unordered_set>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
-
-#include <glog/logging.h>
 
 #include "kudu/common/id_mapping.h"
 #include "kudu/common/key_encoder.h"
 #include "kudu/gutil/stl_util.h"
+#include "kudu/gutil/strings/strcat.h"
+#include "kudu/gutil/strings/substitute.h"
 #include "kudu/util/status.h"
 
 // Check that two schemas are equal, yielding a useful error message in the case that
@@ -48,8 +51,27 @@
 namespace kudu {
 
 using std::vector;
-using std::tr1::unordered_map;
-using std::tr1::unordered_set;
+using std::unordered_map;
+using std::unordered_set;
+
+// The ID of a column. Each column in a table has a unique ID.
+struct ColumnId {
+  explicit ColumnId(int32_t t_) : t(t_) {}
+  ColumnId() : t() {}
+  ColumnId(const ColumnId& t_) : t(t_.t) {}
+  ColumnId& operator=(const ColumnId& rhs) { t = rhs.t; return *this; }
+  ColumnId& operator=(const int32_t& rhs) { t = rhs; return *this; }
+  operator const int32_t() const { return t; }
+  operator const strings::internal::SubstituteArg() const { return t; }
+  operator const AlphaNum() const { return t; }
+  bool operator==(const ColumnId & rhs) const { return t == rhs.t; }
+  bool operator<(const ColumnId & rhs) const { return t < rhs.t; }
+  friend std::ostream& operator<<(std::ostream& os, ColumnId column_id) {
+    return os << column_id.t;
+  }
+ private:
+  int32_t t;
+};
 
 // Class for storing column attributes such as compression and
 // encoding.  Column attributes describe the physical storage and
@@ -98,17 +120,15 @@ class ColumnSchema {
   //   ColumnSchema col_c("c", INT32, false, &default_i32);
   //   Slice default_str("Hello");
   //   ColumnSchema col_d("d", STRING, false, &default_str);
-  ColumnSchema(const string &name,
-               DataType type,
-               bool is_nullable = false,
-               const void *read_default = NULL,
-               const void *write_default = NULL,
-               ColumnStorageAttributes attributes = ColumnStorageAttributes()) :
-      name_(name),
-      type_info_(GetTypeInfo(type)),
-      is_nullable_(is_nullable),
-      read_default_(read_default ? new Variant(type, read_default) : NULL),
-      attributes_(attributes) {
+  ColumnSchema(string name, DataType type, bool is_nullable = false,
+               const void* read_default = NULL,
+               const void* write_default = NULL,
+               ColumnStorageAttributes attributes = ColumnStorageAttributes())
+      : name_(std::move(name)),
+        type_info_(GetTypeInfo(type)),
+        is_nullable_(is_nullable),
+        read_default_(read_default ? new Variant(type, read_default) : NULL),
+        attributes_(std::move(attributes)) {
     if (write_default == read_default) {
       write_default_ = read_default_;
     } else if (write_default != NULL) {
@@ -175,6 +195,11 @@ class ColumnSchema {
     return NULL;
   }
 
+  bool EqualsPhysicalType(const ColumnSchema& other) const {
+    return is_nullable_ == other.is_nullable_ &&
+           type_info()->physical_type() == other.type_info()->physical_type();
+  }
+
   bool EqualsType(const ColumnSchema &other) const {
     return is_nullable_ == other.is_nullable_ &&
            type_info()->type() == other.type_info()->type();
@@ -184,7 +209,7 @@ class ColumnSchema {
     if (!EqualsType(other) || this->name_ != other.name_)
       return false;
 
-    // For Key comparison checking the defauls doesn't make sense,
+    // For Key comparison checking the defaults doesn't make sense,
     // since we don't support them, for server vs user schema this comparison
     // will always fail, since the user does not specify the defaults.
     if (check_defaults) {
@@ -257,8 +282,8 @@ class ColumnSchema {
   const TypeInfo *type_info_;
   bool is_nullable_;
   // use shared_ptr since the ColumnSchema is always copied around.
-  std::tr1::shared_ptr<Variant> read_default_;
-  std::tr1::shared_ptr<Variant> write_default_;
+  std::shared_ptr<Variant> read_default_;
+  std::shared_ptr<Variant> write_default_;
   ColumnStorageAttributes attributes_;
 };
 
@@ -276,6 +301,9 @@ class ContiguousRow;
 // Schema::swap() or Schema::Reset() rather than returning by value.
 class Schema {
  public:
+
+  static const int kColumnNotFound = -1;
+
   Schema()
     : num_key_columns_(0),
       name_to_index_bytes_(0),
@@ -318,7 +346,7 @@ class Schema {
   // caught. If an invalid schema is passed to this constructor, an
   // assertion will be fired!
   Schema(const vector<ColumnSchema>& cols,
-         const vector<size_t>& ids,
+         const vector<ColumnId>& ids,
          int key_columns)
     : name_to_index_bytes_(0),
       // TODO: C++11 provides a single-arg constructor
@@ -333,7 +361,7 @@ class Schema {
   // If this fails, the Schema object is left in an inconsistent
   // state and may not be used.
   Status Reset(const vector<ColumnSchema>& cols, int key_columns) {
-    std::vector<size_t> ids;
+    std::vector<ColumnId> ids;
     return Reset(cols, ids, key_columns);
   }
 
@@ -341,7 +369,7 @@ class Schema {
   // If this fails, the Schema object is left in an inconsistent
   // state and may not be used.
   Status Reset(const vector<ColumnSchema>& cols,
-               const vector<size_t>& ids,
+               const vector<ColumnId>& ids,
                int key_columns);
 
   // Return the number of bytes needed to represent a single row of this schema.
@@ -381,14 +409,14 @@ class Schema {
   }
 
   // Return the ColumnSchema corresponding to the given column ID.
-  inline const ColumnSchema& column_by_id(size_t id) const {
+  inline const ColumnSchema& column_by_id(ColumnId id) const {
     int idx = find_column_by_id(id);
     DCHECK_GE(idx, 0);
     return cols_[idx];
   }
 
   // Return the column ID corresponding to the given column index
-  size_t column_id(size_t idx) const {
+  ColumnId column_id(size_t idx) const {
     DCHECK(has_column_ids());
     DCHECK_LT(idx, cols_.size());
     return col_ids_[idx];
@@ -407,7 +435,7 @@ class Schema {
   // Return the column index corresponding to the given column,
   // or kColumnNotFound if the column is not in this schema.
   int find_column(const StringPiece col_name) const {
-    NameToIndexMap::const_iterator iter = name_to_index_.find(col_name);
+    auto iter = name_to_index_.find(col_name);
     if (PREDICT_FALSE(iter == name_to_index_.end())) {
       return kColumnNotFound;
     } else {
@@ -436,7 +464,7 @@ class Schema {
   }
 
   // Returns the highest column id in this Schema.
-  size_t max_col_id() const {
+  ColumnId max_col_id() const {
     return max_col_id_;
   }
 
@@ -528,7 +556,7 @@ class Schema {
   Schema CreateKeyProjection() const {
     vector<ColumnSchema> key_cols(cols_.begin(),
                                   cols_.begin() + num_key_columns_);
-    vector<size_t> col_ids;
+    vector<ColumnId> col_ids;
     if (!col_ids_.empty()) {
       col_ids.assign(col_ids_.begin(), col_ids_.begin() + num_key_columns_);
     }
@@ -558,9 +586,8 @@ class Schema {
   // result will have fewer columns than requested.
   //
   // The resulting schema will have no key columns defined.
-  Status CreateProjectionByIdsIgnoreMissing(
-      const std::vector<int>& col_ids,
-      Schema* out) const;
+  Status CreateProjectionByIdsIgnoreMissing(const std::vector<ColumnId>& col_ids,
+                                            Schema* out) const;
 
   // Encode the key portion of the given row into a buffer
   // such that the buffer's lexicographic comparison represents
@@ -690,7 +717,7 @@ class Schema {
 
   // Returns the column index given the column ID.
   // If no such column exists, returns kColumnNotFound.
-  int find_column_by_id(size_t id) const {
+  int find_column_by_id(ColumnId id) const {
     DCHECK(cols_.empty() || has_column_ids());
     int ret = id_to_index_[id];
     if (ret == -1) {
@@ -698,10 +725,6 @@ class Schema {
     }
     return ret;
   }
-
-  enum {
-    kColumnNotFound = -1
-  };
 
   // Returns the memory usage of this object without the object itself. Should
   // be used when embedded inside another object.
@@ -735,8 +758,8 @@ class Schema {
 
   vector<ColumnSchema> cols_;
   size_t num_key_columns_;
-  size_t max_col_id_;
-  vector<size_t> col_ids_;
+  ColumnId max_col_id_;
+  vector<ColumnId> col_ids_;
   vector<size_t> col_offsets_;
 
   // The keys of this map are StringPiece references to the actual name members of the
@@ -747,12 +770,12 @@ class Schema {
   // The map is instrumented with a counting allocator so that we can accurately
   // measure its memory footprint.
   int64_t name_to_index_bytes_;
-  typedef STLCountingAllocator<std::pair<StringPiece, size_t> > NameToIndexMapAllocator;
+  typedef STLCountingAllocator<std::pair<const StringPiece, size_t> > NameToIndexMapAllocator;
   typedef unordered_map<
       StringPiece,
       size_t,
-      __gnu_cxx::hash<StringPiece>,
-      __gnu_cxx::equal_to<StringPiece>,
+      std::hash<StringPiece>,
+      std::equal_to<StringPiece>,
       NameToIndexMapAllocator> NameToIndexMap;
   NameToIndexMap name_to_index_;
 
@@ -777,7 +800,7 @@ class Schema {
 //   Schema new_schema = builder.Build();
 class SchemaBuilder {
  public:
-  explicit SchemaBuilder() { Reset(); }
+  SchemaBuilder() { Reset(); }
   explicit SchemaBuilder(const Schema& schema) { Reset(schema); }
 
   void Reset();
@@ -787,13 +810,13 @@ class SchemaBuilder {
 
   // Set the next column ID to be assigned to columns added with
   // AddColumn.
-  void set_next_column_id(int32_t next_id) {
-    DCHECK_GE(next_id, 0);
+  void set_next_column_id(ColumnId next_id) {
+    DCHECK_GE(next_id, ColumnId(0));
     next_id_ = next_id;
   }
 
   // Return the next column ID that would be assigned with AddColumn.
-  int32_t next_column_id() const {
+  ColumnId next_column_id() const {
     return next_id_;
   }
 
@@ -824,13 +847,23 @@ class SchemaBuilder {
  private:
   DISALLOW_COPY_AND_ASSIGN(SchemaBuilder);
 
-  int32_t next_id_;
-  vector<size_t> col_ids_;
+  ColumnId next_id_;
+  vector<ColumnId> col_ids_;
   vector<ColumnSchema> cols_;
   unordered_set<string> col_names_;
   size_t num_key_columns_;
 };
 
 } // namespace kudu
+
+// Specialize std::hash for ColumnId
+namespace std {
+template<>
+struct hash<kudu::ColumnId> {
+  int operator()(const kudu::ColumnId& col_id) const {
+    return col_id;
+  }
+};
+} // namespace std
 
 #endif

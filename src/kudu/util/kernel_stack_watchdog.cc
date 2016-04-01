@@ -1,24 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/util/kernel_stack_watchdog.h"
 
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
 #include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <tr1/unordered_set>
 #include <string>
 
 #include "kudu/util/debug-util.h"
@@ -33,7 +34,6 @@ DEFINE_int32(hung_task_check_interval_ms, 200,
              "Number of milliseconds in between checks for hung threads");
 TAG_FLAG(hung_task_check_interval_ms, hidden);
 
-using std::tr1::unordered_set;
 using strings::Substitute;
 
 namespace kudu {
@@ -42,7 +42,7 @@ DEFINE_STATIC_THREAD_LOCAL(KernelStackWatchdog::TLS,
                            KernelStackWatchdog, tls_);
 
 KernelStackWatchdog::KernelStackWatchdog()
-  : log_collector_(NULL),
+  : log_collector_(nullptr),
     finish_(1) {
   CHECK_OK(Thread::Create("kernel-watchdog", "kernel-watcher",
                           boost::bind(&KernelStackWatchdog::RunThread, this),
@@ -70,13 +70,15 @@ vector<string> KernelStackWatchdog::LoggedMessagesForTests() const {
 }
 
 void KernelStackWatchdog::Register(TLS* tls) {
+  int64_t tid = Thread::CurrentThreadId();
   MutexLock l(lock_);
-  InsertOrDie(&tls_by_tid_, syscall(SYS_gettid), tls);
+  InsertOrDie(&tls_by_tid_, tid, tls);
 }
 
 void KernelStackWatchdog::Unregister(TLS* tls) {
+  int64_t tid = Thread::CurrentThreadId();
   MutexLock l(lock_);
-  CHECK(tls_by_tid_.erase(syscall(SYS_gettid)));
+  CHECK(tls_by_tid_.erase(tid));
 }
 
 Status GetKernelStack(pid_t p, string* ret) {
@@ -98,7 +100,7 @@ void KernelStackWatchdog::RunThread() {
       MutexLock l(lock_);
       MicrosecondsInt64 now = GetMonoTimeMicros();
 
-      BOOST_FOREACH(const TLSMap::value_type& map_entry, tls_by_tid_) {
+      for (const TLSMap::value_type& map_entry : tls_by_tid_) {
         pid_t p = map_entry.first;
         const TLS::Data* tls = &map_entry.second->data_;
 

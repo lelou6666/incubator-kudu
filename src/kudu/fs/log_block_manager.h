@@ -1,25 +1,29 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #ifndef KUDU_FS_LOG_BLOCK_MANAGER_H
 #define KUDU_FS_LOG_BLOCK_MANAGER_H
 
 #include <deque>
-#include <tr1/memory>
-#include <tr1/unordered_map>
-#include <tr1/unordered_set>
+#include <gtest/gtest_prod.h>
+#include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -167,8 +171,29 @@ class LogBlockManager : public BlockManager {
 
   virtual Status CloseBlocks(const std::vector<WritableBlock*>& blocks) OVERRIDE;
 
+  // Return the number of blocks stored in the block manager.
+  int64_t CountBlocksForTests() const;
+
  private:
+  FRIEND_TEST(LogBlockManagerTest, TestReuseBlockIds);
   friend class internal::LogBlockContainer;
+
+  // Simpler typedef for a block map which isn't tracked in the memory tracker.
+  // Used during startup.
+  typedef std::unordered_map<
+      const BlockId,
+      scoped_refptr<internal::LogBlock>,
+      BlockIdHash,
+      BlockIdEqual> UntrackedBlockMap;
+
+  typedef MemTrackerAllocator<
+      std::pair<const BlockId, scoped_refptr<internal::LogBlock> > > BlockAllocator;
+  typedef std::unordered_map<
+      const BlockId,
+      scoped_refptr<internal::LogBlock>,
+      BlockIdHash,
+      BlockIdEqual,
+      BlockAllocator> BlockMap;
 
   // Adds an as of yet unseen container to this block manager.
   void AddNewContainerUnlocked(internal::LogBlockContainer* container);
@@ -205,11 +230,9 @@ class LogBlockManager : public BlockManager {
                    int64_t offset,
                    int64_t length);
 
-  // Unlocked variant of AddLogblock(); must hold 'lock_'.
-  bool AddLogBlockUnlocked(internal::LogBlockContainer* container,
-                           const BlockId& block_id,
-                           int64_t offset,
-                           int64_t length);
+  // Unlocked variant of AddLogBlock() for an already-constructed LogBlock object.
+  // Must hold 'lock_'.
+  bool AddLogBlockUnlocked(const scoped_refptr<internal::LogBlock>& lb);
 
   // Removes a LogBlock from in-memory data structures.
   //
@@ -220,11 +243,11 @@ class LogBlockManager : public BlockManager {
   // Unlocked variant of RemoveLogBlock(); must hold 'lock_'.
   scoped_refptr<internal::LogBlock> RemoveLogBlockUnlocked(const BlockId& block_id);
 
-  // Parse a block record and use it to update in-memory maps.
-  //
-  // Must be called with 'lock_' held.
-  void ProcessBlockRecordUnlocked(internal::LogBlockContainer* container,
-                                  const BlockRecordPB& record);
+  // Parse a block record, adding or removing it in 'block_map', and
+  // accounting for it in the metadata for 'container'.
+  void ProcessBlockRecord(const BlockRecordPB& record,
+                          internal::LogBlockContainer* container,
+                          UntrackedBlockMap* block_map);
 
   // Open a particular root path belonging to the block manager.
   //
@@ -248,22 +271,14 @@ class LogBlockManager : public BlockManager {
 
   // Tracks memory consumption of any allocations numerous enough to be
   // interesting (e.g. LogBlocks).
-  std::tr1::shared_ptr<MemTracker> mem_tracker_;
+  std::shared_ptr<MemTracker> mem_tracker_;
 
   // Protects the block map, container structures, and 'dirty_dirs'.
-  simple_spinlock lock_;
+  mutable simple_spinlock lock_;
 
   // Maps block IDs to blocks that are now readable, either because they
   // already existed on disk when the block manager was opened, or because
   // they're WritableBlocks that were closed.
-  typedef MemTrackerAllocator<
-      std::pair<const BlockId, scoped_refptr<internal::LogBlock> > > BlockAllocator;
-  typedef std::tr1::unordered_map<
-      const BlockId,
-      scoped_refptr<internal::LogBlock>,
-      BlockIdHash,
-      BlockIdEqual,
-      BlockAllocator> BlockMap;
   BlockMap blocks_by_block_id_;
 
   // Contains block IDs for WritableBlocks that are still open for writing.
@@ -271,7 +286,7 @@ class LogBlockManager : public BlockManager {
   //
   // Together with blocks_by_block_id's keys, used to prevent collisions
   // when creating new anonymous blocks.
-  std::tr1::unordered_set<BlockId, BlockIdHash> open_block_ids_;
+  std::unordered_set<BlockId, BlockIdHash> open_block_ids_;
 
   // Holds (and owns) all containers loaded from disk.
   std::vector<internal::LogBlockContainer*> all_containers_;
@@ -285,7 +300,7 @@ class LogBlockManager : public BlockManager {
   // Tracks dirty container directories.
   //
   // Synced and cleared by SyncMetadata().
-  std::tr1::unordered_set<std::string> dirty_dirs_;
+  std::unordered_set<std::string> dirty_dirs_;
 
   // For manipulating files.
   Env* env_;
@@ -300,12 +315,12 @@ class LogBlockManager : public BlockManager {
   AtomicInt<int32> root_paths_idx_;
 
   // Maps root paths to instance metadata files found in each root path.
-  typedef std::tr1::unordered_map<std::string, PathInstanceMetadataFile*> InstanceMap;
+  typedef std::unordered_map<std::string, PathInstanceMetadataFile*> InstanceMap;
   InstanceMap instances_by_root_path_;
 
   // Maps root paths to thread pools. Each pool runs at most one thread, and
   // so serves as a "work queue" for that particular disk.
-  typedef std::tr1::unordered_map<std::string, ThreadPool*> ThreadPoolMap;
+  typedef std::unordered_map<std::string, ThreadPool*> ThreadPoolMap;
   ThreadPoolMap thread_pools_by_root_path_;
 
   // For generating container names.

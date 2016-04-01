@@ -1,21 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <ctime>
 #include <iostream>
 #include <sstream>
-#include <tr1/memory>
 
 #include "kudu/client/callbacks.h"
 #include "kudu/client/client.h"
@@ -40,6 +42,7 @@ using kudu::client::KuduTable;
 using kudu::client::KuduTableAlterer;
 using kudu::client::KuduTableCreator;
 using kudu::client::KuduValue;
+using kudu::client::sp::shared_ptr;
 using kudu::KuduPartialRow;
 using kudu::MonoDelta;
 using kudu::Status;
@@ -47,7 +50,6 @@ using kudu::Status;
 using std::string;
 using std::stringstream;
 using std::vector;
-using std::tr1::shared_ptr;
 
 static Status CreateClient(const string& addr,
                            shared_ptr<KuduClient>* client) {
@@ -229,8 +231,18 @@ static void LogCb(void* unused,
 }
 
 int main(int argc, char* argv[]) {
+  KUDU_LOG(INFO) << "Running with Kudu client version: " <<
+      kudu::client::GetShortVersionString();
+  KUDU_LOG(INFO) << "Long version info: " <<
+      kudu::client::GetAllVersionInfo();
+
   kudu::client::KuduLoggingFunctionCallback<void*> log_cb(&LogCb, NULL);
   kudu::client::InstallLoggingCallback(&log_cb);
+
+  if (argc != 2) {
+    KUDU_LOG(FATAL) << "usage: " << argv[0] << " <master host>";
+  }
+  const string master_host = argv[1];
 
   const string kTableName = "test_table";
 
@@ -239,7 +251,7 @@ int main(int argc, char* argv[]) {
 
   // Create and connect a client.
   shared_ptr<KuduClient> client;
-  KUDU_CHECK_OK(CreateClient("127.0.0.1", &client));
+  KUDU_CHECK_OK(CreateClient(master_host, &client));
   KUDU_LOG(INFO) << "Created a client connection";
 
   // Disable the verbose logging.

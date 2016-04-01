@@ -1,22 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
+#include <atomic>
+#include <thread>
 #include <vector>
 
+#include <glog/logging.h>
+#include <glog/stl_logging.h>
 #include <gtest/gtest.h>
 #include <boost/bind.hpp>
-#include <boost/foreach.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
 
 #include "kudu/gutil/stl_util.h"
@@ -31,8 +37,10 @@
 #include "kudu/util/user.h"
 
 DEFINE_bool(is_panic_test_child, false, "Used by TestRpcPanic");
+DECLARE_bool(socket_inject_short_recvs);
 
 using boost::ptr_vector;
+using std::shared_ptr;
 using std::vector;
 
 namespace kudu {
@@ -42,24 +50,43 @@ class RpcStubTest : public RpcTestBase {
  public:
   virtual void SetUp() OVERRIDE {
     RpcTestBase::SetUp();
+    // Use a shorter queue length since some tests below need to start enough
+    // threads to saturate the queue.
+    service_queue_length_ = 10;
     StartTestServerWithGeneratedCode(&server_addr_);
     client_messenger_ = CreateMessenger("Client");
   }
  protected:
+  void SendSimpleCall() {
+    CalculatorServiceProxy p(client_messenger_, server_addr_);
+
+    RpcController controller;
+    AddRequestPB req;
+    req.set_x(10);
+    req.set_y(20);
+    AddResponsePB resp;
+    ASSERT_OK(p.Add(req, &resp, &controller));
+    ASSERT_EQ(30, resp.result());
+  }
+
   Sockaddr server_addr_;
   shared_ptr<Messenger> client_messenger_;
 };
 
 TEST_F(RpcStubTest, TestSimpleCall) {
+  SendSimpleCall();
+}
+
+// Regression test for a bug in which we would not properly parse a call
+// response when recv() returned a 'short read'. This injects such short
+// reads and then makes a number of calls.
+TEST_F(RpcStubTest, TestShortRecvs) {
+  FLAGS_socket_inject_short_recvs = true;
   CalculatorServiceProxy p(client_messenger_, server_addr_);
 
-  RpcController controller;
-  AddRequestPB req;
-  req.set_x(10);
-  req.set_y(20);
-  AddResponsePB resp;
-  ASSERT_OK(p.Add(req, &resp, &controller));
-  ASSERT_EQ(30, resp.result());
+  for (int i = 0; i < 100; i++) {
+    NO_FATALS(SendSimpleCall());
+  }
 }
 
 // Test calls which are rather large.
@@ -83,9 +110,9 @@ TEST_F(RpcStubTest, TestBigCallData) {
 
   CountDownLatch latch(kNumSentAtOnce);
   for (int i = 0; i < kNumSentAtOnce; i++) {
-    EchoResponsePB *resp = new EchoResponsePB;
+    auto resp = new EchoResponsePB;
     resps.push_back(resp);
-    RpcController *controller = new RpcController;
+    auto controller = new RpcController;
     controllers.push_back(controller);
 
     p.EchoAsync(req, resp, controller,
@@ -94,7 +121,7 @@ TEST_F(RpcStubTest, TestBigCallData) {
 
   latch.Wait();
 
-  BOOST_FOREACH(RpcController &c, controllers) {
+  for (RpcController &c : controllers) {
     ASSERT_OK(c.status());
   }
 }
@@ -235,7 +262,9 @@ TEST_F(RpcStubTest, TestRpcPanic) {
     // it aborted. gtest death tests don't work here because
     // there are already threads started up.
     vector<string> argv;
-    argv.push_back(strings::Substitute("/proc/$0/exe", getpid()));
+    string executable_path;
+    CHECK_OK(env_->GetExecutablePath(&executable_path));
+    argv.push_back(executable_path);
     argv.push_back("--is_panic_test_child");
     argv.push_back("--gtest_filter=RpcStubTest.TestRpcPanic");
 
@@ -306,6 +335,16 @@ TEST_F(RpcStubTest, TestDontHandleTimedOutCalls) {
     sleeps.push_back(sleep.release());
   }
 
+  // We asynchronously sent the RPCs above, but the RPCs might still
+  // be in the queue. Because the RPC we send next has a lower timeout,
+  // it would take priority over the long-timeout RPCs. So, we have to
+  // wait until the above RPCs are being processed before we continue
+  // the test.
+  const Histogram* queue_time_metric = service_pool_->IncomingQueueTimeMetricForTests();
+  while (queue_time_metric->TotalCount() < n_worker_threads_) {
+    SleepFor(MonoDelta::FromMilliseconds(1));
+  }
+
   // Send another call with a short timeout. This shouldn't get processed, because
   // it'll get stuck in the queue for longer than its timeout.
   RpcController rpc;
@@ -316,13 +355,92 @@ TEST_F(RpcStubTest, TestDontHandleTimedOutCalls) {
   Status s = p.Sleep(req, &resp, &rpc);
   ASSERT_TRUE(s.IsTimedOut()) << s.ToString();
 
-  BOOST_FOREACH(AsyncSleep* s, sleeps) {
+  for (AsyncSleep* s : sleeps) {
     s->latch.Wait();
   }
 
   // Verify that the timedout call got short circuited before being processed.
   const Counter* timed_out_in_queue = service_pool_->RpcsTimedOutInQueueMetricForTests();
   ASSERT_EQ(1, timed_out_in_queue->value());
+}
+
+// Test which ensures that the RPC queue accepts requests with the earliest
+// deadline first (EDF), and upon overflow rejects requests with the latest deadlines.
+//
+// In particular, this simulates a workload experienced with Impala where the local
+// impalad would spawn more scanner threads than the total number of handlers plus queue
+// slots, guaranteeing that some of those clients would see SERVER_TOO_BUSY rejections on
+// scan requests and be forced to back off and retry.  Without EDF scheduling, we saw that
+// the "unlucky" threads that got rejected would likely continue to get rejected upon
+// retries, and some would be starved continually until they missed their overall deadline
+// and failed the query.
+//
+// With EDF scheduling, the retries take priority over the original requests (because
+// they retain their original deadlines). This prevents starvation of unlucky threads.
+TEST_F(RpcStubTest, TestEarliestDeadlineFirstQueue) {
+  const int num_client_threads = service_queue_length_ + n_worker_threads_ + 5;
+  vector<std::thread> threads;
+  vector<int> successes(num_client_threads);
+  std::atomic<bool> done(false);
+  for (int thread_id = 0; thread_id < num_client_threads; thread_id++) {
+    threads.emplace_back([&, thread_id] {
+        Random rng(thread_id);
+        CalculatorServiceProxy p(client_messenger_, server_addr_);
+        while (!done.load()) {
+          // Set a deadline in the future. We'll keep using this same deadline
+          // on each of our retries.
+          MonoTime deadline = MonoTime::Now(MonoTime::FINE);
+          deadline.AddDelta(MonoDelta::FromSeconds(8));
+
+          for (int attempt = 1; !done.load(); attempt++) {
+            RpcController controller;
+            SleepRequestPB req;
+            SleepResponsePB resp;
+            controller.set_deadline(deadline);
+            req.set_sleep_micros(100000);
+            Status s = p.Sleep(req, &resp, &controller);
+            if (s.ok()) {
+              successes[thread_id]++;
+              break;
+            }
+            // We expect to get SERVER_TOO_BUSY errors because we have more clients than the
+            // server has handlers and queue slots. No other errors are expected.
+            CHECK(s.IsRemoteError() &&
+                  controller.error_response()->code() == rpc::ErrorStatusPB::ERROR_SERVER_TOO_BUSY)
+                << "Unexpected RPC failure: " << s.ToString();
+            // Randomized exponential backoff (similar to that done by the scanners in the Kudu
+            // client.).
+            int backoff = (0.5 + rng.NextDoubleFraction() * 0.5) * (std::min(1 << attempt, 1000));
+            VLOG(1) << "backoff " << backoff << "ms";
+            SleepFor(MonoDelta::FromMilliseconds(backoff));
+          }
+        }
+      });
+  }
+  // Let the threads run for 5 seconds before stopping them.
+  SleepFor(MonoDelta::FromSeconds(5));
+  done.store(true);
+  for (auto& t : threads) {
+    t.join();
+  }
+
+  // Before switching to earliest-deadline-first scheduling, the results
+  // here would typically look something like:
+  //  1 1 0 1 10 17 6 1 12 12 17 10 8 7 12 9 16 15
+  // With the fix, we see something like:
+  //  9 9 9 8 9 9 9 9 9 9 9 9 9 9 9 9 9
+  LOG(INFO) << "thread RPC success counts: " << successes;
+
+  int sum = 0;
+  int min = std::numeric_limits<int>::max();
+  for (int x : successes) {
+    sum += x;
+    min = std::min(min, x);
+  }
+  int avg = sum / successes.size();
+  ASSERT_GT(min, avg / 2)
+      << "expected the least lucky thread to have at least half as many successes "
+      << "as the average thread: min=" << min << " avg=" << avg;
 }
 
 TEST_F(RpcStubTest, TestDumpCallsInFlight) {

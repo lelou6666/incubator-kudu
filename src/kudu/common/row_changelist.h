@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 //
 // Row changelists are simply an encoded form of a list of updates to columns
 // within a row. These are stored within the delta memstore and delta files.
@@ -92,9 +95,7 @@ class RowChangeList {
     : encoded_data_(fs) {
   }
 
-  explicit RowChangeList(const Slice &s)
-    : encoded_data_(s) {
-  }
+  explicit RowChangeList(Slice s) : encoded_data_(std::move(s)) {}
 
   // Create a RowChangeList which represents a delete.
   // This points to static (const) memory and should not be
@@ -265,7 +266,7 @@ class RowChangeListDecoder {
   // Append an entry to *column_ids for each column that is updated
   // in this RCL.
   // This 'consumes' the remainder of the encoded RowChangeList.
-  Status GetIncludedColumnIds(std::vector<int>* column_ids) {
+  Status GetIncludedColumnIds(std::vector<ColumnId>* column_ids) {
     column_ids->clear();
     DCHECK(is_update());
     while (HasNext()) {
@@ -320,12 +321,12 @@ class RowChangeListDecoder {
   // valid for the duration of this method, but not have been
   // previously initialized.
   static Status RemoveColumnIdsFromChangeList(const RowChangeList& src,
-                                              const std::vector<int>& column_ids,
+                                              const std::vector<ColumnId>& column_ids,
                                               RowChangeListEncoder* out);
 
   struct DecodedUpdate {
     // The updated column ID.
-    int col_id;
+    ColumnId col_id;
 
     // If true, this update sets the given column to NULL.
     bool null;

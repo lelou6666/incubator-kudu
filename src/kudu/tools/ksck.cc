@@ -1,23 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#include <boost/foreach.hpp>
-#include <glog/logging.h>
-#include <iostream>
-#include <tr1/unordered_set>
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/tools/ksck.h"
+
+#include <glog/logging.h>
+#include <iostream>
+#include <unordered_set>
 
 #include "kudu/gutil/map-util.h"
 #include "kudu/gutil/ref_counted.h"
@@ -26,7 +28,6 @@
 #include "kudu/util/blocking_queue.h"
 #include "kudu/util/locks.h"
 #include "kudu/util/monotime.h"
-#include "kudu/util/shared_ptr_util.h"
 
 namespace kudu {
 namespace tools {
@@ -35,9 +36,9 @@ using std::cerr;
 using std::cout;
 using std::endl;
 using std::ostream;
+using std::shared_ptr;
 using std::string;
-using std::tr1::shared_ptr;
-using std::tr1::unordered_map;
+using std::unordered_map;
 using strings::Substitute;
 
 DEFINE_int32(checksum_timeout_sec, 120,
@@ -75,15 +76,12 @@ ChecksumOptions::ChecksumOptions()
       snapshot_timestamp(FLAGS_checksum_snapshot_timestamp) {
 }
 
-ChecksumOptions::ChecksumOptions(MonoDelta timeout,
-                                 int scan_concurrency,
-                                 bool use_snapshot,
-                                 uint64_t snapshot_timestamp)
-    : timeout(timeout),
+ChecksumOptions::ChecksumOptions(MonoDelta timeout, int scan_concurrency,
+                                 bool use_snapshot, uint64_t snapshot_timestamp)
+    : timeout(std::move(timeout)),
       scan_concurrency(scan_concurrency),
       use_snapshot(use_snapshot),
-      snapshot_timestamp(snapshot_timestamp) {
-}
+      snapshot_timestamp(snapshot_timestamp) {}
 
 const uint64_t ChecksumOptions::kCurrentTimestamp = 0;
 
@@ -94,7 +92,7 @@ Status KsckCluster::FetchTableAndTabletInfo() {
   RETURN_NOT_OK(master_->Connect());
   RETURN_NOT_OK(RetrieveTablesList());
   RETURN_NOT_OK(RetrieveTabletServers());
-  BOOST_FOREACH(const shared_ptr<KsckTable>& table, tables()) {
+  for (const shared_ptr<KsckTable>& table : tables()) {
     RETURN_NOT_OK(RetrieveTabletsList(table));
   }
   return Status::OK();
@@ -138,7 +136,7 @@ Status Ksck::CheckTabletServersRunning() {
 
   int bad_servers = 0;
   VLOG(1) << "Connecting to all the Tablet Servers";
-  BOOST_FOREACH(const KsckMaster::TSMap::value_type& entry, cluster_->tablet_servers()) {
+  for (const KsckMaster::TSMap::value_type& entry : cluster_->tablet_servers()) {
     Status s = ConnectToTabletServer(entry.second);
     if (!s.ok()) {
       bad_servers++;
@@ -178,7 +176,7 @@ Status Ksck::CheckTablesConsistency() {
 
   VLOG(1) << "Verifying each table";
   int bad_tables_count = 0;
-  BOOST_FOREACH(const shared_ptr<KsckTable> &table, cluster_->tables()) {
+  for (const shared_ptr<KsckTable> &table : cluster_->tables()) {
     if (!VerifyTable(table)) {
       bad_tables_count++;
     }
@@ -198,8 +196,8 @@ Status Ksck::CheckTablesConsistency() {
 class ChecksumResultReporter : public RefCountedThreadSafe<ChecksumResultReporter> {
  public:
   typedef std::pair<Status, uint64_t> ResultPair;
-  typedef std::tr1::unordered_map<std::string, ResultPair> ReplicaResultMap;
-  typedef std::tr1::unordered_map<std::string, ReplicaResultMap> TabletResultMap;
+  typedef std::unordered_map<std::string, ResultPair> ReplicaResultMap;
+  typedef std::unordered_map<std::string, ReplicaResultMap> TabletResultMap;
 
   // Initialize reporter with the number of replicas being queried.
   explicit ChecksumResultReporter(int num_tablet_replicas)
@@ -287,15 +285,14 @@ Status Ksck::ChecksumData(const vector<string>& tables,
   // Copy options so that local modifications can be made and passed on.
   ChecksumOptions options = opts;
 
-  typedef unordered_map<shared_ptr<KsckTablet>, shared_ptr<KsckTable>,
-                        SharedPtrHashFunctor<KsckTablet> > TabletTableMap;
+  typedef unordered_map<shared_ptr<KsckTablet>, shared_ptr<KsckTable>> TabletTableMap;
   TabletTableMap tablet_table_map;
 
   int num_tablet_replicas = 0;
-  BOOST_FOREACH(const shared_ptr<KsckTable>& table, cluster_->tables()) {
+  for (const shared_ptr<KsckTable>& table : cluster_->tables()) {
     VLOG(1) << "Table: " << table->name();
     if (!tables_filter.empty() && !ContainsKey(tables_filter, table->name())) continue;
-    BOOST_FOREACH(const shared_ptr<KsckTablet>& tablet, table->tablets()) {
+    for (const shared_ptr<KsckTablet>& tablet : table->tablets()) {
       VLOG(1) << "Tablet: " << tablet->id();
       if (!tablets_filter.empty() && !ContainsKey(tablets_filter, tablet->id())) continue;
       InsertOrDie(&tablet_table_map, tablet, table);
@@ -317,18 +314,16 @@ Status Ksck::ChecksumData(const vector<string>& tables,
   }
 
   // Map of tablet servers to tablet queue.
-  typedef unordered_map<shared_ptr<KsckTabletServer>,
-                        TabletQueue,
-                        SharedPtrHashFunctor<KsckTabletServer> > TabletServerQueueMap;
+  typedef unordered_map<shared_ptr<KsckTabletServer>, TabletQueue> TabletServerQueueMap;
 
   TabletServerQueueMap tablet_server_queues;
   scoped_refptr<ChecksumResultReporter> reporter(new ChecksumResultReporter(num_tablet_replicas));
 
   // Create a queue of checksum callbacks grouped by the tablet server.
-  BOOST_FOREACH(const TabletTableMap::value_type& entry, tablet_table_map) {
+  for (const TabletTableMap::value_type& entry : tablet_table_map) {
     const shared_ptr<KsckTablet>& tablet = entry.first;
     const shared_ptr<KsckTable>& table = entry.second;
-    BOOST_FOREACH(const shared_ptr<KsckTabletReplica>& replica, tablet->replicas()) {
+    for (const shared_ptr<KsckTabletReplica>& replica : tablet->replicas()) {
       const shared_ptr<KsckTabletServer>& ts =
           FindOrDie(cluster_->tablet_servers(), replica->ts_uuid());
 
@@ -347,7 +342,7 @@ Status Ksck::ChecksumData(const vector<string>& tables,
   // Kick off checksum scans in parallel. For each tablet server, we start
   // scan_concurrency scans. Each callback then initiates one additional
   // scan when it returns if the queue for that TS is not empty.
-  BOOST_FOREACH(const TabletServerQueueMap::value_type& entry, tablet_server_queues) {
+  for (const TabletServerQueueMap::value_type& entry : tablet_server_queues) {
     const shared_ptr<KsckTabletServer>& tablet_server = entry.first;
     const TabletQueue& queue = entry.second;
     queue->Shutdown(); // Ensures that BlockingGet() will not block.
@@ -376,9 +371,9 @@ Status Ksck::ChecksumData(const vector<string>& tables,
   int num_errors = 0;
   int num_mismatches = 0;
   int num_results = 0;
-  BOOST_FOREACH(const shared_ptr<KsckTable>& table, cluster_->tables()) {
+  for (const shared_ptr<KsckTable>& table : cluster_->tables()) {
     bool printed_table_name = false;
-    BOOST_FOREACH(const shared_ptr<KsckTablet>& tablet, table->tablets()) {
+    for (const shared_ptr<KsckTablet>& tablet : table->tablets()) {
       if (ContainsKey(checksums, tablet->id())) {
         if (!printed_table_name) {
           printed_table_name = true;
@@ -389,7 +384,7 @@ Status Ksck::ChecksumData(const vector<string>& tables,
         bool seen_first_replica = false;
         uint64_t first_checksum = 0;
 
-        BOOST_FOREACH(const ChecksumResultReporter::ReplicaResultMap::value_type& r,
+        for (const ChecksumResultReporter::ReplicaResultMap::value_type& r :
                       FindOrDie(checksums, tablet->id())) {
           const string& replica_uuid = r.first;
 
@@ -448,7 +443,7 @@ bool Ksck::VerifyTable(const shared_ptr<KsckTable>& table) {
                         tablets_count, table->name(), table_num_replicas);
   int bad_tablets_count = 0;
   // TODO check if the tablets are contiguous and in order.
-  BOOST_FOREACH(const shared_ptr<KsckTablet> &tablet, tablets) {
+  for (const shared_ptr<KsckTablet> &tablet : tablets) {
     if (!VerifyTablet(tablet, table_num_replicas)) {
       bad_tablets_count++;
     }
@@ -475,7 +470,7 @@ bool Ksck::VerifyTablet(const shared_ptr<KsckTablet>& tablet, int table_num_repl
   }
   int leaders_count = 0;
   int followers_count = 0;
-  BOOST_FOREACH(const shared_ptr<KsckTabletReplica> replica, replicas) {
+  for (const shared_ptr<KsckTabletReplica> replica : replicas) {
     if (replica->is_leader()) {
       VLOG(1) << Substitute("Replica at $0 is a LEADER", replica->ts_uuid());
       leaders_count++;

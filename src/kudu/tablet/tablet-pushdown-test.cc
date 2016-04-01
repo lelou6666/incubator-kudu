@@ -1,18 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <glog/logging.h>
 #include <gtest/gtest.h>
 
@@ -20,8 +22,10 @@
 #include <vector>
 
 #include "kudu/common/schema.h"
-#include "kudu/tablet/tablet.h"
 #include "kudu/tablet/tablet-test-base.h"
+#include "kudu/tablet/tablet.h"
+#include "kudu/util/auto_release_pool.h"
+#include "kudu/util/memory/arena.h"
 #include "kudu/util/test_macros.h"
 #include "kudu/util/test_util.h"
 
@@ -38,11 +42,9 @@ class TabletPushdownTest : public KuduTabletTest,
                            public ::testing::WithParamInterface<Setup> {
  public:
   TabletPushdownTest()
-    : KuduTabletTest(Schema(boost::assign::list_of
-              (ColumnSchema("key", INT32))
-              (ColumnSchema("int_val", INT32))
-              (ColumnSchema("string_val", STRING)),
-              1)) {
+    : KuduTabletTest(Schema({ ColumnSchema("key", INT32),
+                              ColumnSchema("int_val", INT32),
+                              ColumnSchema("string_val", STRING) }, 1)) {
   }
 
   virtual void SetUp() OVERRIDE {
@@ -64,7 +66,7 @@ class TabletPushdownTest : public KuduTabletTest,
     for (int64_t i = 0; i < nrows_; i++) {
       CHECK_OK(row.SetInt32(0, i));
       CHECK_OK(row.SetInt32(1, i * 10));
-      CHECK_OK(row.SetStringCopy(2, StringPrintf("%08ld", i)));
+      CHECK_OK(row.SetStringCopy(2, StringPrintf("%08" PRId64, i)));
       ASSERT_OK_FAST(writer.Insert(row));
 
       if (i == 205 && GetParam() == SPLIT_MEMORY_DISK) {
@@ -81,6 +83,10 @@ class TabletPushdownTest : public KuduTabletTest,
   // the same set of rows. Run the scan and verify that the
   // expected rows are returned.
   void TestScanYieldsExpectedResults(ScanSpec spec) {
+    Arena arena(128, 1028);
+    AutoReleasePool pool;
+    spec.OptimizeScan(schema_, &arena, &pool, true);
+
     gscoped_ptr<RowwiseIterator> iter;
     ASSERT_OK(tablet()->NewRowIterator(client_schema_, &iter));
     ASSERT_OK(iter->Init(&spec));
@@ -91,7 +97,7 @@ class TabletPushdownTest : public KuduTabletTest,
       ASSERT_OK(IterateToStringList(iter.get(), &results));
     }
     std::sort(results.begin(), results.end());
-    BOOST_FOREACH(const string &str, results) {
+    for (const string &str : results) {
       LOG(INFO) << str;
     }
     ASSERT_EQ(11, results.size());
@@ -133,7 +139,7 @@ class TabletPushdownTest : public KuduTabletTest,
     if (check_stats) {
       vector<IteratorStats> stats;
       iter->GetIteratorStats(&stats);
-      BOOST_FOREACH(const IteratorStats& col_stats, stats) {
+      for (const IteratorStats& col_stats : stats) {
         EXPECT_EQ(expected_blocks_from_disk, col_stats.data_blocks_read_from_disk);
         EXPECT_EQ(expected_rows_from_disk, col_stats.cells_read_from_disk);
       }
@@ -144,6 +150,10 @@ class TabletPushdownTest : public KuduTabletTest,
   // returns the expected number of rows. The rows themselves
   // should be empty.
   void TestCountOnlyScanYieldsExpectedResults(ScanSpec spec) {
+    Arena arena(128, 1028);
+    AutoReleasePool pool;
+    spec.OptimizeScan(schema_, &arena, &pool, true);
+
     Schema empty_schema(std::vector<ColumnSchema>(), 0);
     gscoped_ptr<RowwiseIterator> iter;
     ASSERT_OK(tablet()->NewRowIterator(empty_schema, &iter));
@@ -153,7 +163,7 @@ class TabletPushdownTest : public KuduTabletTest,
     vector<string> results;
     ASSERT_OK(IterateToStringList(iter.get(), &results));
     ASSERT_EQ(11, results.size());
-    BOOST_FOREACH(const string& result, results) {
+    for (const string& result : results) {
       ASSERT_EQ("()", result);
     }
   }
@@ -164,8 +174,8 @@ class TabletPushdownTest : public KuduTabletTest,
 TEST_P(TabletPushdownTest, TestPushdownIntKeyRange) {
   ScanSpec spec;
   int32_t lower = 200;
-  int32_t upper = 210;
-  ColumnRangePredicate pred0(schema_.column(0), &lower, &upper);
+  int32_t upper = 211;
+  auto pred0 = ColumnPredicate::Range(schema_.column(0), &lower, &upper);
   spec.AddPredicate(pred0);
 
   TestScanYieldsExpectedResults(spec);
@@ -177,8 +187,8 @@ TEST_P(TabletPushdownTest, TestPushdownIntValueRange) {
 
   ScanSpec spec;
   int32_t lower = 2000;
-  int32_t upper = 2100;
-  ColumnRangePredicate pred1(schema_.column(1), &lower, &upper);
+  int32_t upper = 2101;
+  auto pred1 = ColumnPredicate::Range(schema_.column(1), &lower, &upper);
   spec.AddPredicate(pred1);
 
   TestScanYieldsExpectedResults(spec);

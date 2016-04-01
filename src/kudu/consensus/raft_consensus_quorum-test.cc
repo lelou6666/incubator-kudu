@@ -1,19 +1,20 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
-#include <boost/foreach.hpp>
 #include <gtest/gtest.h>
 
 #include "kudu/common/schema.h"
@@ -50,6 +51,8 @@ METRIC_DECLARE_entity(tablet);
 
 #define REPLICATE_SEQUENCE_OF_MESSAGES(a, b, c, d, e, f, g) \
   ASSERT_NO_FATAL_FAILURE(ReplicateSequenceOfMessages(a, b, c, d, e, f, g))
+
+using std::shared_ptr;
 
 namespace kudu {
 
@@ -115,7 +118,7 @@ class RaftConsensusQuorumTest : public KuduTest {
       FsManagerOpts opts;
       opts.parent_mem_tracker = parent_mem_tracker;
       opts.wal_path = test_path;
-      opts.data_paths = boost::assign::list_of(test_path);
+      opts.data_paths = { test_path };
       gscoped_ptr<FsManager> fs_manager(new FsManager(env_.get(), opts));
       RETURN_NOT_OK(fs_manager->CreateInitialFileSystemLayout());
       RETURN_NOT_OK(fs_manager->Open());
@@ -135,12 +138,10 @@ class RaftConsensusQuorumTest : public KuduTest {
   }
 
   void BuildPeers() {
-    vector<LocalTestPeerProxyFactory*> proxy_factories;
     for (int i = 0; i < config_.peers_size(); i++) {
-      LocalTestPeerProxyFactory* proxy_factory = new LocalTestPeerProxyFactory(peers_.get());
-      proxy_factories.push_back(proxy_factory);
+      auto proxy_factory = new LocalTestPeerProxyFactory(peers_.get());
 
-      TestTransactionFactory* txn_factory = new TestTransactionFactory(logs_[i].get());
+      auto txn_factory = new TestTransactionFactory(logs_[i].get());
 
       string peer_uuid = Substitute("peer-$0", i);
 
@@ -169,11 +170,11 @@ class RaftConsensusQuorumTest : public KuduTest {
 
       scoped_refptr<RaftConsensus> peer(
           new RaftConsensus(options_,
-                            cmeta.Pass(),
-                            gscoped_ptr<PeerProxyFactory>(proxy_factory).Pass(),
-                            queue.Pass(),
-                            peer_manager.Pass(),
-                            thread_pool.Pass(),
+                            std::move(cmeta),
+                            gscoped_ptr<PeerProxyFactory>(proxy_factory),
+                            std::move(queue),
+                            std::move(peer_manager),
+                            std::move(thread_pool),
                             metric_entity_,
                             config_.peers(i).permanent_uuid(),
                             clock_,
@@ -192,7 +193,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     ConsensusBootstrapInfo boot_info;
 
     TestPeerMap all_peers = peers_->GetPeerMapCopy();
-    BOOST_FOREACH(const TestPeerMap::value_type& entry, all_peers) {
+    for (const TestPeerMap::value_type& entry : all_peers) {
       RETURN_NOT_OK(entry.second->Start(boot_info));
     }
     return Status::OK();
@@ -222,14 +223,14 @@ class RaftConsensusQuorumTest : public KuduTest {
     CHECK_OK(peers_->GetPeerByIdx(peer_idx, &follower));
     scoped_refptr<RaftConsensus> leader;
     CHECK_OK(peers_->GetPeerByIdx(leader_idx, &leader));
-    BOOST_FOREACH(LocalTestPeerProxy* proxy, down_cast<LocalTestPeerProxyFactory*>(
+    for (LocalTestPeerProxy* proxy : down_cast<LocalTestPeerProxyFactory*>(
         leader->peer_proxy_factory_.get())->GetProxies()) {
       if (proxy->GetTarget() == follower->peer_uuid()) {
         return proxy;
       }
     }
     CHECK(false) << "Proxy not found";
-    return NULL;
+    return nullptr;
   }
 
   Status AppendDummyMessage(int peer_idx,
@@ -244,7 +245,7 @@ class RaftConsensusQuorumTest : public KuduTest {
 
     // Use a latch in place of a Transaction callback.
     gscoped_ptr<Synchronizer> sync(new Synchronizer());
-    *round = peer->NewRound(msg.Pass(), sync->AsStatusCallback());
+    *round = peer->NewRound(std::move(msg), sync->AsStatusCallback());
     InsertOrDie(&syncs_, round->get(), sync.release());
     RETURN_NOT_OK_PREPEND(peer->Replicate(round->get()),
                           Substitute("Unable to replicate to peer $0", peer_idx));
@@ -257,9 +258,9 @@ class RaftConsensusQuorumTest : public KuduTest {
 
   Status CommitDummyMessage(int peer_idx,
                             ConsensusRound* round,
-                            shared_ptr<Synchronizer>* commit_sync = NULL) {
+                            shared_ptr<Synchronizer>* commit_sync = nullptr) {
     StatusCallback commit_callback;
-    if (commit_sync != NULL) {
+    if (commit_sync != nullptr) {
       commit_sync->reset(new Synchronizer());
       commit_callback = Bind(&FireSharedSynchronizer, *commit_sync);
     } else {
@@ -269,7 +270,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     gscoped_ptr<CommitMsg> msg(new CommitMsg());
     msg->set_op_type(NO_OP);
     msg->mutable_commited_op_id()->CopyFrom(round->id());
-    CHECK_OK(logs_[peer_idx]->AsyncAppendCommit(msg.Pass(), commit_callback));
+    CHECK_OK(logs_[peer_idx]->AsyncAppendCommit(std::move(msg), commit_callback));
     return Status::OK();
   }
 
@@ -335,7 +336,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     vector<string> lines;
     scoped_refptr<RaftConsensus> leader;
     CHECK_OK(peers_->GetPeerByIdx(leader_idx, &leader));
-    BOOST_FOREACH(const string& line, lines) {
+    for (const string& line : lines) {
       LOG(ERROR) << line;
     }
 
@@ -376,7 +377,7 @@ class RaftConsensusQuorumTest : public KuduTest {
                                    CommitMode commit_mode,
                                    OpId* last_op_id,
                                    vector<scoped_refptr<ConsensusRound> >* rounds,
-                                   shared_ptr<Synchronizer>* commit_sync = NULL) {
+                                   shared_ptr<Synchronizer>* commit_sync = nullptr) {
     for (int i = 0; i < seq_size; i++) {
       scoped_refptr<ConsensusRound> round;
       ASSERT_OK(AppendDummyMessage(leader_idx, &round));
@@ -394,7 +395,7 @@ class RaftConsensusQuorumTest : public KuduTest {
 
       TestPeerMap all_peers = peers_->GetPeerMapCopy();
       int i = 0;
-      BOOST_FOREACH(const TestPeerMap::value_type& entry, all_peers) {
+      for (const TestPeerMap::value_type& entry : all_peers) {
         if (entry.second->peer_uuid() != leader->peer_uuid()) {
           WaitForReplicateIfNotAlreadyPresent(*last_op_id, i);
         }
@@ -406,7 +407,7 @@ class RaftConsensusQuorumTest : public KuduTest {
   void GatherLogEntries(int idx, const scoped_refptr<Log>& log, vector<LogEntryPB* >* entries) {
     ASSERT_OK(log->WaitUntilAllFlushed());
     log->Close();
-    gscoped_ptr<LogReader> log_reader;
+    shared_ptr<LogReader> log_reader;
     ASSERT_OK(log::LogReader::Open(fs_managers_[idx],
                                    scoped_refptr<log::LogIndex>(),
                                    kTestTablet,
@@ -417,7 +418,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     log::SegmentSequence segments;
     ASSERT_OK(log_reader->GetSegmentsSnapshot(&segments));
 
-    BOOST_FOREACH(const log::SegmentSequence::value_type& entry, segments) {
+    for (const log::SegmentSequence::value_type& entry : segments) {
       ASSERT_OK(entry->ReadEntries(&ret));
     }
 
@@ -430,13 +431,13 @@ class RaftConsensusQuorumTest : public KuduTest {
   void VerifyLogs(int leader_idx, int first_replica_idx, int last_replica_idx) {
     // Wait for in-flight transactions to be done. We're destroying the
     // peers next and leader transactions won't be able to commit anymore.
-    BOOST_FOREACH(TestTransactionFactory* factory, txn_factories_) {
+    for (TestTransactionFactory* factory : txn_factories_) {
       factory->WaitDone();
     }
 
     // Shut down all the peers.
     TestPeerMap all_peers = peers_->GetPeerMapCopy();
-    BOOST_FOREACH(const TestPeerMap::value_type& entry, all_peers) {
+    for (const TestPeerMap::value_type& entry : all_peers) {
       entry.second->Shutdown();
     }
 
@@ -463,7 +464,7 @@ class RaftConsensusQuorumTest : public KuduTest {
   void ExtractReplicateIds(const vector<LogEntryPB*>& entries,
                            vector<OpId>* ids) {
     ids->reserve(entries.size() / 2);
-    BOOST_FOREACH(const LogEntryPB* entry, entries) {
+    for (const LogEntryPB* entry : entries) {
       if (entry->has_replicate()) {
         ids->push_back(entry->replicate().id());
       }
@@ -487,7 +488,7 @@ class RaftConsensusQuorumTest : public KuduTest {
                   OpIdHashFunctor,
                   OpIdEqualsFunctor> replication_ops;
 
-    BOOST_FOREACH(const LogEntryPB* entry, entries) {
+    for (const LogEntryPB* entry : entries) {
       if (entry->has_replicate()) {
         ASSERT_TRUE(InsertIfNotPresent(&replication_ops, entry->replicate().id()))
           << "REPLICATE op id showed up twice: " << entry->ShortDebugString();
@@ -519,7 +520,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     string ret = "";
     SubstituteAndAppend(&ret, "$1 log entries for replica $0:\n",
                         replica_id, replica_entries.size());
-    BOOST_FOREACH(LogEntryPB* replica_entry, replica_entries) {
+    for (LogEntryPB* replica_entry : replica_entries) {
       StrAppend(&ret, "Replica log entry: ", replica_entry->ShortDebugString(), "\n");
     }
     return ret;
@@ -530,7 +531,7 @@ class RaftConsensusQuorumTest : public KuduTest {
     string peer_uuid = Substitute("peer-$0", peer_index);
     gscoped_ptr<ConsensusMetadata> cmeta;
     CHECK_OK(ConsensusMetadata::Load(fs_managers_[peer_index], kTestTablet, peer_uuid, &cmeta));
-    return cmeta.Pass();
+    return std::move(cmeta);
   }
 
   // Assert that the durable term == term and that the peer that got the vote == voted_for.
@@ -638,7 +639,7 @@ TEST_F(RaftConsensusQuorumTest, TestFollowersReplicateAndCommitSequence) {
                                  &commit_sync);
 
   // Commit the operations, but wait for the replicates to finish first
-  BOOST_FOREACH(const scoped_refptr<ConsensusRound>& round, rounds) {
+  for (const scoped_refptr<ConsensusRound>& round : rounds) {
     ASSERT_OK(CommitDummyMessage(kLeaderIdx, round.get(), &commit_sync));
   }
 

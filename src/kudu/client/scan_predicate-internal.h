@@ -1,23 +1,28 @@
-// Copyright 2015 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CLIENT_SCAN_PREDICATE_INTERNAL_H
 #define KUDU_CLIENT_SCAN_PREDICATE_INTERNAL_H
 
+#include "kudu/client/scan_predicate.h"
 #include "kudu/client/value.h"
 #include "kudu/client/value-internal.h"
 #include "kudu/common/scan_spec.h"
 #include "kudu/gutil/macros.h"
+#include "kudu/util/memory/arena.h"
 #include "kudu/util/status.h"
 
 namespace kudu {
@@ -27,7 +32,7 @@ class KuduPredicate::Data {
  public:
   Data();
   virtual ~Data();
-  virtual Status AddToScanSpec(ScanSpec* spec) = 0;
+  virtual Status AddToScanSpec(ScanSpec* spec, Arena* arena) = 0;
   virtual Data* Clone() const = 0;
 };
 
@@ -47,11 +52,11 @@ class ErrorPredicateData : public KuduPredicate::Data {
   virtual ~ErrorPredicateData() {
   }
 
-  virtual Status AddToScanSpec(ScanSpec* spec) OVERRIDE {
+  Status AddToScanSpec(ScanSpec* spec, Arena* arena) override {
     return status_;
   }
 
-  virtual ErrorPredicateData* Clone() const OVERRIDE {
+  ErrorPredicateData* Clone() const override {
     return new ErrorPredicateData(status_);
   }
 
@@ -64,14 +69,14 @@ class ErrorPredicateData : public KuduPredicate::Data {
 // a constant.
 class ComparisonPredicateData : public KuduPredicate::Data {
  public:
-  ComparisonPredicateData(const ColumnSchema& col,
+  ComparisonPredicateData(ColumnSchema col,
                           KuduPredicate::ComparisonOp op,
                           KuduValue* value);
   virtual ~ComparisonPredicateData();
 
-  virtual Status AddToScanSpec(ScanSpec* spec) OVERRIDE;
+  Status AddToScanSpec(ScanSpec* spec, Arena* arena) override;
 
-  virtual ComparisonPredicateData* Clone() const OVERRIDE {
+  ComparisonPredicateData* Clone() const override {
       return new ComparisonPredicateData(col_, op_, val_->Clone());
   }
 
@@ -81,9 +86,6 @@ class ComparisonPredicateData : public KuduPredicate::Data {
   ColumnSchema col_;
   KuduPredicate::ComparisonOp op_;
   gscoped_ptr<KuduValue> val_;
-
-  // Owned.
-  ColumnRangePredicate* pred_;
 };
 
 } // namespace client

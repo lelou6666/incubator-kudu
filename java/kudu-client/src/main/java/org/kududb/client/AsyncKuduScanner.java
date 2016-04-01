@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010-2012  The Async HBase Authors.  All rights reserved.
- * Portions copyright 2014 Cloudera, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -30,7 +29,6 @@ import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.List;
 
-import com.google.common.base.Preconditions;
 import com.google.protobuf.Message;
 import com.google.protobuf.ZeroCopyLiteralByteString;
 import org.kududb.ColumnSchema;
@@ -46,6 +44,7 @@ import org.jboss.netty.buffer.ChannelBuffer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static org.kududb.tserver.Tserver.*;
 
 /**
@@ -82,14 +81,38 @@ public final class AsyncKuduScanner {
 
   /**
    * The possible read modes for scanners.
-   *
-   * See {@code src/kudu/common/common.proto} for a detailed explanations on
-   * the meaning and implications of each mode.
    */
   @InterfaceAudience.Public
   @InterfaceStability.Evolving
   public enum ReadMode {
+    /**
+     * When READ_LATEST is specified the server will always return committed writes at
+     * the time the request was received. This type of read does not return a snapshot
+     * timestamp and is not repeatable.
+     *
+     * In ACID terms this corresponds to Isolation mode: "Read Committed"
+     *
+     * This is the default mode.
+     */
     READ_LATEST(Common.ReadMode.READ_LATEST),
+
+    /**
+     * When READ_AT_SNAPSHOT is specified the server will attempt to perform a read
+     * at the provided timestamp. If no timestamp is provided the server will take the
+     * current time as the snapshot timestamp. In this mode reads are repeatable, i.e.
+     * all future reads at the same timestamp will yield the same data. This is
+     * performed at the expense of waiting for in-flight transactions whose timestamp
+     * is lower than the snapshot's timestamp to complete, so it might incur a latency
+     * penalty.
+     *
+     * In ACID terms this, by itself, corresponds to Isolation mode "Repeatable
+     * Read". If all writes to the scanned tablet are made externally consistent,
+     * then this corresponds to Isolation mode "Strict-Serializable".
+     *
+     * Note: there currently "holes", which happen in rare edge conditions, by which writes
+     * are sometimes not externally consistent even when action was taken to make them so.
+     * In these cases Isolation may degenerate to mode "Read Committed". See KUDU-430.
+     */
     READ_AT_SNAPSHOT(Common.ReadMode.READ_AT_SNAPSHOT);
 
     private Common.ReadMode pbVersion;
@@ -113,9 +136,9 @@ public final class AsyncKuduScanner {
   private final List<Tserver.ColumnRangePredicatePB> columnRangePredicates;
 
   /**
-   * Maximum number of bytes to fetch at a time.
+   * Maximum number of bytes returned by the scanner, on each batch.
    */
-  private final int maxNumBytes;
+  private final int batchSizeBytes;
 
   /**
    * The maximum number of rows to scan.
@@ -195,19 +218,21 @@ public final class AsyncKuduScanner {
 
   private static final AtomicBoolean PARTITION_PRUNE_WARN = new AtomicBoolean(true);
 
-  AsyncKuduScanner(AsyncKuduClient client, KuduTable table, List<String> projectedCols,
-                   ReadMode readMode, long scanRequestTimeout,
+  AsyncKuduScanner(AsyncKuduClient client, KuduTable table, List<String> projectedNames,
+                   List<Integer> projectedIndexes, ReadMode readMode, long scanRequestTimeout,
                    List<Tserver.ColumnRangePredicatePB> columnRangePredicates, long limit,
                    boolean cacheBlocks, boolean prefetching,
                    byte[] startPrimaryKey, byte[] endPrimaryKey,
                    byte[] startPartitionKey, byte[] endPartitionKey,
-                   long htTimestamp, int maxNumBytes) {
-    Preconditions.checkArgument(maxNumBytes > 0, "Need a strictly positive number of bytes, " +
-        "got %s", maxNumBytes);
-    Preconditions.checkArgument(limit > 0, "Need a strictly positive number for the limit, " +
+                   long htTimestamp, int batchSizeBytes) {
+    checkArgument(batchSizeBytes > 0, "Need a strictly positive number of bytes, " +
+        "got %s", batchSizeBytes);
+    checkArgument(limit > 0, "Need a strictly positive number for the limit, " +
         "got %s", limit);
     if (htTimestamp != AsyncKuduClient.NO_TIMESTAMP) {
-      Preconditions.checkArgument(readMode == ReadMode.READ_AT_SNAPSHOT, "When specifying a " +
+      checkArgument(htTimestamp >= 0, "Need non-negative number for the scan, " +
+          " timestamp got %s", htTimestamp);
+      checkArgument(readMode == ReadMode.READ_AT_SNAPSHOT, "When specifying a " +
           "HybridClock timestamp, the read mode needs to be set to READ_AT_SNAPSHOT");
     }
 
@@ -222,7 +247,7 @@ public final class AsyncKuduScanner {
     this.startPrimaryKey = startPrimaryKey;
     this.endPrimaryKey = endPrimaryKey;
     this.htTimestamp = htTimestamp;
-    this.maxNumBytes = maxNumBytes;
+    this.batchSizeBytes = batchSizeBytes;
 
     if (!table.getPartitionSchema().isSimpleRangePartitioning() &&
         (startPrimaryKey != AsyncKuduClient.EMPTY_ARRAY ||
@@ -266,12 +291,22 @@ public final class AsyncKuduScanner {
 
     // Map the column names to actual columns in the table schema.
     // If the user set this to 'null', we scan all columns.
-    if (projectedCols != null) {
+    if (projectedNames != null) {
       List<ColumnSchema> columns = new ArrayList<ColumnSchema>();
-      for (String columnName : projectedCols) {
+      for (String columnName : projectedNames) {
         ColumnSchema columnSchema = table.getSchema().getColumn(columnName);
         if (columnSchema == null) {
           throw new IllegalArgumentException("Unknown column " + columnName);
+        }
+        columns.add(columnSchema);
+      }
+      this.schema = new Schema(columns);
+    } else if (projectedIndexes != null) {
+      List<ColumnSchema> columns = new ArrayList<ColumnSchema>();
+      for (Integer columnIndex : projectedIndexes) {
+        ColumnSchema columnSchema = table.getSchema().getColumnByIndex(columnIndex);
+        if (columnSchema == null) {
+          throw new IllegalArgumentException("Unknown column index " + columnIndex);
         }
         columns.add(columnSchema);
       }
@@ -286,7 +321,7 @@ public final class AsyncKuduScanner {
    * @return a long representing the maximum number of rows that can be returned
    */
   public long getLimit() {
-    return limit;
+    return this.limit;
   }
 
   /**
@@ -306,12 +341,12 @@ public final class AsyncKuduScanner {
   }
 
   /**
-   * Returns the maximum number of bytes returned at once by the scanner.
+   * Returns the maximum number of bytes returned by the scanner, on each batch.
    * @return a long representing the maximum number of bytes that a scanner can receive at once
    * from a tablet server
    */
-  public long getMaxNumBytes() {
-    return maxNumBytes;
+  public long getBatchSizeBytes() {
+    return this.batchSizeBytes;
   }
 
   /**
@@ -320,6 +355,15 @@ public final class AsyncKuduScanner {
    */
   public ReadMode getReadMode() {
     return this.readMode;
+  }
+
+  /**
+   * Returns the projection schema of this scanner. If specific columns were
+   * not specified during scanner creation, the table schema is returned.
+   * @return the projection schema for this scanner
+   */
+  public Schema getProjectionSchema() {
+    return this.schema;
   }
 
   long getSnapshotTimestamp() {
@@ -361,7 +405,7 @@ public final class AsyncKuduScanner {
             }
           });
     } else if (prefetching && prefetcherDeferred != null) {
-      // TODO check if prefetching still works
+      // TODO KUDU-1260 - Check if this works and add a test
       prefetcherDeferred.chain(new Deferred<RowResultIterator>().addCallback(prefetch));
       return prefetcherDeferred;
     }
@@ -441,6 +485,7 @@ public final class AsyncKuduScanner {
     }
     nextPartitionKey = partition.getPartitionKeyEnd();
     scannerId = null;
+    sequenceId = 0;
     invalidate();
   }
 
@@ -657,15 +702,15 @@ public final class AsyncKuduScanner {
           }
 
           if (!columnRangePredicates.isEmpty()) {
-            newBuilder.addAllRangePredicates(columnRangePredicates);
+            newBuilder.addAllDEPRECATEDRangePredicates(columnRangePredicates);
           }
           builder.setNewScanRequest(newBuilder.build())
-                 .setBatchSizeBytes(maxNumBytes);
+                 .setBatchSizeBytes(batchSizeBytes);
           break;
         case NEXT:
           builder.setScannerId(ZeroCopyLiteralByteString.wrap(scannerId))
                  .setCallSeqId(sequenceId)
-                 .setBatchSizeBytes(maxNumBytes);
+                 .setBatchSizeBytes(batchSizeBytes);
           break;
         case CLOSING:
           builder.setScannerId(ZeroCopyLiteralByteString.wrap(scannerId))
@@ -745,11 +790,11 @@ public final class AsyncKuduScanner {
      */
     public AsyncKuduScanner build() {
       return new AsyncKuduScanner(
-          client, table, projectedColumnNames, readMode,
+          client, table, projectedColumnNames, projectedColumnIndexes, readMode,
           scanRequestTimeout, columnRangePredicates, limit, cacheBlocks,
           prefetching, lowerBoundPrimaryKey, upperBoundPrimaryKey,
           lowerBoundPartitionKey, upperBoundPartitionKey,
-          htTimestamp, maxNumBytes);
+          htTimestamp, batchSizeBytes);
     }
   }
 }

@@ -1,22 +1,25 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TSERVER_REMOTE_BOOTSTRAP_SESSION_H_
 #define KUDU_TSERVER_REMOTE_BOOTSTRAP_SESSION_H_
 
+#include <memory>
 #include <string>
-#include <tr1/memory>
-#include <tr1/unordered_map>
+#include <unordered_map>
 #include <vector>
 
 #include "kudu/consensus/log_anchor_registry.h"
@@ -48,14 +51,12 @@ class TabletPeerLookupIf;
 // Caches file size and holds a shared_ptr reference to a RandomAccessFile.
 // Assumes that the file underlying the RandomAccessFile is immutable.
 struct ImmutableRandomAccessFileInfo {
-  std::tr1::shared_ptr<RandomAccessFile> readable;
+  std::shared_ptr<RandomAccessFile> readable;
   int64_t size;
 
-  ImmutableRandomAccessFileInfo(const std::tr1::shared_ptr<RandomAccessFile>& readable,
+  ImmutableRandomAccessFileInfo(std::shared_ptr<RandomAccessFile> readable,
                                 int64_t size)
-  : readable(readable),
-    size(size) {
-  }
+      : readable(std::move(readable)), size(size) {}
 
   Status ReadFully(uint64_t offset, int64_t size, Slice* data, uint8_t* scratch) const {
     return env_util::ReadFully(readable.get(), offset, size, data, scratch);
@@ -86,8 +87,7 @@ struct ImmutableReadableBlockInfo {
 class RemoteBootstrapSession : public RefCountedThreadSafe<RemoteBootstrapSession> {
  public:
   RemoteBootstrapSession(const scoped_refptr<tablet::TabletPeer>& tablet_peer,
-                         const std::string& session_id,
-                         const std::string& requestor_uuid,
+                         std::string session_id, std::string requestor_uuid,
                          FsManager* fs_manager);
 
   // Initialize the session, including anchoring files (TODO) and fetching the
@@ -108,7 +108,8 @@ class RemoteBootstrapSession : public RefCountedThreadSafe<RemoteBootstrapSessio
   // On error, Status is set to a non-OK value and error_code is filled in.
   //
   // This method is thread-safe.
-  Status GetBlockPiece(const BlockId& block_id, size_t offset, int64_t client_maxlen,
+  Status GetBlockPiece(const BlockId& block_id,
+                       uint64_t offset, int64_t client_maxlen,
                        std::string* data, int64_t* block_file_size,
                        RemoteBootstrapErrorPB::Code* error_code);
 
@@ -116,7 +117,7 @@ class RemoteBootstrapSession : public RefCountedThreadSafe<RemoteBootstrapSessio
   // The behavior and params are very similar to GetBlockPiece(), but this one
   // is only for sending WAL segment files.
   Status GetLogSegmentPiece(uint64_t segment_seqno,
-                            size_t offset, int64_t client_maxlen,
+                            uint64_t offset, int64_t client_maxlen,
                             std::string* data, int64_t* log_file_size,
                             RemoteBootstrapErrorPB::Code* error_code);
 
@@ -134,9 +135,8 @@ class RemoteBootstrapSession : public RefCountedThreadSafe<RemoteBootstrapSessio
  private:
   friend class RefCountedThreadSafe<RemoteBootstrapSession>;
 
-  typedef std::tr1::unordered_map<BlockId, ImmutableReadableBlockInfo*,
-                                  BlockIdHash> BlockMap;
-  typedef std::tr1::unordered_map<uint64_t, ImmutableRandomAccessFileInfo*> LogMap;
+  typedef std::unordered_map<BlockId, ImmutableReadableBlockInfo*, BlockIdHash> BlockMap;
+  typedef std::unordered_map<uint64_t, ImmutableRandomAccessFileInfo*> LogMap;
 
   ~RemoteBootstrapSession();
 

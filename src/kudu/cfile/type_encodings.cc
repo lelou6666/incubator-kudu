@@ -1,20 +1,23 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #include "kudu/cfile/type_encodings.h"
 
-#include <tr1/unordered_map>
-#include <tr1/memory>
+#include <unordered_map>
+#include <memory>
 #include <utility>
 
 #include <glog/logging.h>
@@ -33,8 +36,8 @@
 namespace kudu {
 namespace cfile {
 
-using std::tr1::unordered_map;
-using std::tr1::shared_ptr;
+using std::unordered_map;
+using std::shared_ptr;
 
 
 template<DataType Type, EncodingType Encoding>
@@ -233,7 +236,7 @@ class TypeEncodingResolver {
       e = GetDefaultEncoding(t);
     }
     const TypeEncodingInfo *type_info = mapping_[make_pair(t, e)].get();
-    if (PREDICT_FALSE(type_info == NULL)) {
+    if (PREDICT_FALSE(type_info == nullptr)) {
       return Status::NotSupported(
           strings::Substitute("Unsupported type/encoding pair: $0, $1",
                               DataType_Name(t),
@@ -305,7 +308,7 @@ class TypeEncodingResolver {
       shared_ptr<const TypeEncodingInfo>,
       EncodingMapHash > mapping_;
 
-  unordered_map<DataType, EncodingType, std::tr1::hash<size_t> > default_mapping_;
+  unordered_map<DataType, EncodingType, std::hash<size_t> > default_mapping_;
 
   friend class Singleton<TypeEncodingResolver>;
   DISALLOW_COPY_AND_ASSIGN(TypeEncodingResolver);

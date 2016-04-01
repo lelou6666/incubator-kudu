@@ -1,26 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <gmock/gmock.h>
 #include <map>
+#include <memory>
 #include <string>
-#include <tr1/unordered_map>
-#include <tr1/memory>
-#include <vector>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "kudu/common/timestamp.h"
 #include "kudu/common/wire_protocol.h"
@@ -65,7 +67,7 @@ static gscoped_ptr<ReplicateMsg> CreateDummyReplicate(int term,
     msg->set_op_type(NO_OP);
     msg->mutable_noop_request()->mutable_payload_for_tests()->resize(payload_size);
     msg->set_timestamp(timestamp.ToUint64());
-    return msg.Pass();
+    return std::move(msg);
 }
 
 // Returns RaftPeerPB with given UUID and obviously-fake hostname / port combo.
@@ -357,7 +359,7 @@ class NoOpTestPeerProxyFactory : public PeerProxyFactory {
   gscoped_ptr<ThreadPool> pool_;
 };
 
-typedef std::tr1::unordered_map<std::string, scoped_refptr<RaftConsensus> > TestPeerMap;
+typedef std::unordered_map<std::string, scoped_refptr<RaftConsensus> > TestPeerMap;
 
 // Thread-safe manager for list of peers being used in tests.
 class TestPeerMapManager {
@@ -418,14 +420,12 @@ class TestPeerMapManager {
 // asynchronously in a ThreadPool.
 class LocalTestPeerProxy : public TestPeerProxy {
  public:
-  LocalTestPeerProxy(const std::string& peer_uuid,
-                     ThreadPool* pool,
+  LocalTestPeerProxy(std::string peer_uuid, ThreadPool* pool,
                      TestPeerMapManager* peers)
-    : TestPeerProxy(pool),
-      peer_uuid_(peer_uuid),
-      peers_(peers),
-      miss_comm_(false) {
-  }
+      : TestPeerProxy(pool),
+        peer_uuid_(std::move(peer_uuid)),
+        peers_(peers),
+        miss_comm_(false) {}
 
   virtual void UpdateAsync(const ConsensusRequestPB* request,
                            ConsensusResponsePB* response,
@@ -618,7 +618,7 @@ class TestDriver {
     gscoped_ptr<CommitMsg> msg(new CommitMsg);
     msg->set_op_type(round_->replicate_msg()->op_type());
     msg->mutable_commited_op_id()->CopyFrom(round_->id());
-    CHECK_OK(log_->AsyncAppendCommit(msg.Pass(),
+    CHECK_OK(log_->AsyncAppendCommit(std::move(msg),
                                      Bind(&TestDriver::CommitCallback, Unretained(this))));
   }
 
@@ -655,7 +655,7 @@ class TestTransactionFactory : public ReplicaTransactionFactory {
   }
 
   Status StartReplicaTransaction(const scoped_refptr<ConsensusRound>& round) OVERRIDE {
-    TestDriver* txn = new TestDriver(pool_.get(), log_, round);
+    auto txn = new TestDriver(pool_.get(), log_, round);
     txn->round_->SetConsensusReplicatedCallback(Bind(&TestDriver::ReplicationFinished,
                                                      Unretained(txn)));
     return Status::OK();
@@ -690,8 +690,9 @@ class TestTransactionFactory : public ReplicaTransactionFactory {
 // If non-null, the passed hook instance will be called first for all methods.
 class CounterHooks : public Consensus::ConsensusFaultHooks {
  public:
-  explicit CounterHooks(const std::tr1::shared_ptr<Consensus::ConsensusFaultHooks>& current_hook)
-      : current_hook_(current_hook),
+  explicit CounterHooks(
+      std::shared_ptr<Consensus::ConsensusFaultHooks> current_hook)
+      : current_hook_(std::move(current_hook)),
         pre_start_calls_(0),
         post_start_calls_(0),
         pre_config_change_calls_(0),
@@ -701,8 +702,7 @@ class CounterHooks : public Consensus::ConsensusFaultHooks {
         pre_update_calls_(0),
         post_update_calls_(0),
         pre_shutdown_calls_(0),
-        post_shutdown_calls_(0) {
-  }
+        post_shutdown_calls_(0) {}
 
   virtual Status PreStart() OVERRIDE {
     if (current_hook_.get()) RETURN_NOT_OK(current_hook_->PreStart());
@@ -825,7 +825,7 @@ class CounterHooks : public Consensus::ConsensusFaultHooks {
   }
 
  private:
-  std::tr1::shared_ptr<Consensus::ConsensusFaultHooks> current_hook_;
+  std::shared_ptr<Consensus::ConsensusFaultHooks> current_hook_;
   int pre_start_calls_;
   int post_start_calls_;
   int pre_config_change_calls_;

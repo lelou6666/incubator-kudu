@@ -1,21 +1,23 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/consensus/log_anchor_registry.h"
 #include "kudu/consensus/opid_util.h"
 
-#include <boost/foreach.hpp>
 #include <boost/thread/locks.hpp>
 #include <string>
 
@@ -38,8 +40,8 @@ LogAnchorRegistry::~LogAnchorRegistry() {
 }
 
 void LogAnchorRegistry::Register(int64_t log_index,
-                                  const string& owner,
-                                  LogAnchor* anchor) {
+                                 const string& owner,
+                                 LogAnchor* anchor) {
   boost::lock_guard<simple_spinlock> l(lock_);
   RegisterUnlocked(log_index, owner, anchor);
 }
@@ -67,7 +69,7 @@ Status LogAnchorRegistry::UnregisterIfAnchored(LogAnchor* anchor) {
 
 Status LogAnchorRegistry::GetEarliestRegisteredLogIndex(int64_t* log_index) {
   boost::lock_guard<simple_spinlock> l(lock_);
-  AnchorMultiMap::iterator iter = anchors_.begin();
+  auto iter = anchors_.begin();
   if (iter == anchors_.end()) {
     return Status::NotFound("No anchors in registry");
   }
@@ -86,7 +88,7 @@ std::string LogAnchorRegistry::DumpAnchorInfo() const {
   string buf;
   boost::lock_guard<simple_spinlock> l(lock_);
   MonoTime now = MonoTime::Now(MonoTime::FINE);
-  BOOST_FOREACH(const AnchorMultiMap::value_type& entry, anchors_) {
+  for (const AnchorMultiMap::value_type& entry : anchors_) {
     const LogAnchor* anchor = entry.second;
     DCHECK(anchor->is_registered);
     if (!buf.empty()) buf += ", ";
@@ -101,7 +103,7 @@ std::string LogAnchorRegistry::DumpAnchorInfo() const {
 void LogAnchorRegistry::RegisterUnlocked(int64_t log_index,
                                          const std::string& owner,
                                          LogAnchor* anchor) {
-  DCHECK(anchor != NULL);
+  DCHECK(anchor != nullptr);
   DCHECK(!anchor->is_registered);
 
   anchor->log_index = log_index;
@@ -113,10 +115,10 @@ void LogAnchorRegistry::RegisterUnlocked(int64_t log_index,
 }
 
 Status LogAnchorRegistry::UnregisterUnlocked(LogAnchor* anchor) {
-  DCHECK(anchor != NULL);
+  DCHECK(anchor != nullptr);
   DCHECK(anchor->is_registered);
 
-  AnchorMultiMap::iterator iter = anchors_.find(anchor->log_index);
+  auto iter = anchors_.find(anchor->log_index);
   while (iter != anchors_.end()) {
     if (iter->second == anchor) {
       anchor->is_registered = false;
@@ -140,11 +142,11 @@ LogAnchor::~LogAnchor() {
   CHECK(!is_registered) << "Attempted to destruct a registered LogAnchor";
 }
 
-MinLogIndexAnchorer::MinLogIndexAnchorer(LogAnchorRegistry* registry, const string& owner)
-  : registry_(DCHECK_NOTNULL(registry)),
-    owner_(owner),
-    minimum_log_index_(kInvalidOpIdIndex) {
-}
+MinLogIndexAnchorer::MinLogIndexAnchorer(LogAnchorRegistry* registry,
+                                         string owner)
+    : registry_(DCHECK_NOTNULL(registry)),
+      owner_(std::move(owner)),
+      minimum_log_index_(kInvalidOpIdIndex) {}
 
 MinLogIndexAnchorer::~MinLogIndexAnchorer() {
   CHECK_OK(ReleaseAnchor());

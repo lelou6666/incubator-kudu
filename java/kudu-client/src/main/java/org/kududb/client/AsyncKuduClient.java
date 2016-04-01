@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2010-2012  The Async HBase Authors.  All rights reserved.
- * Portions copyright 2014 Cloudera, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -29,6 +28,7 @@ package org.kududb.client;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Objects;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Lists;
 import com.google.common.net.HostAndPort;
@@ -36,13 +36,16 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.protobuf.Message;
 import com.stumbleupon.async.Callback;
 import com.stumbleupon.async.Deferred;
+
 import org.jboss.netty.buffer.ChannelBuffer;
+import org.jboss.netty.channel.socket.nio.NioWorkerPool;
 import org.kududb.Common;
 import org.kududb.Schema;
 import org.kududb.annotations.InterfaceAudience;
 import org.kududb.annotations.InterfaceStability;
 import org.kududb.consensus.Metadata;
 import org.kududb.master.Master;
+import org.kududb.master.Master.GetTableLocationsResponsePB;
 import org.kududb.util.AsyncUtil;
 import org.kududb.util.NetUtil;
 import org.kududb.util.Pair;
@@ -62,6 +65,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.concurrent.GuardedBy;
+
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -121,7 +125,7 @@ public class AsyncKuduClient implements AutoCloseable {
   public static final Logger LOG = LoggerFactory.getLogger(AsyncKuduClient.class);
   public static final int SLEEP_TIME = 500;
   public static final byte[] EMPTY_ARRAY = new byte[0];
-  public static final int NO_TIMESTAMP = -1;
+  public static final long NO_TIMESTAMP = -1;
   public static final long DEFAULT_OPERATION_TIMEOUT_MS = 10000;
   public static final long DEFAULT_SOCKET_READ_TIMEOUT_MS = 5000;
 
@@ -194,7 +198,7 @@ public class AsyncKuduClient implements AutoCloseable {
   final KuduTable masterTable;
   private final List<HostAndPort> masterAddresses;
 
-  private final HashedWheelTimer timer = new HashedWheelTimer(20, MILLISECONDS);
+  private final HashedWheelTimer timer;
 
   /**
    * Timestamp required for HybridTime external consistency through timestamp
@@ -235,6 +239,7 @@ public class AsyncKuduClient implements AutoCloseable {
     this.defaultOperationTimeoutMs = b.defaultOperationTimeoutMs;
     this.defaultAdminOperationTimeoutMs = b.defaultAdminOperationTimeoutMs;
     this.defaultSocketReadTimeoutMs = b.defaultSocketReadTimeoutMs;
+    this.timer = b.timer;
   }
 
   /**
@@ -266,7 +271,7 @@ public class AsyncKuduClient implements AutoCloseable {
    * an object to communicate with the created table
    */
   public Deferred<KuduTable> createTable(String name, Schema schema) {
-    return this.createTable(name, schema, new CreateTableBuilder());
+    return this.createTable(name, schema, new CreateTableOptions());
   }
 
   /**
@@ -278,10 +283,10 @@ public class AsyncKuduClient implements AutoCloseable {
    * an object to communicate with the created table
    */
   public Deferred<KuduTable> createTable(final String name, Schema schema,
-                                         CreateTableBuilder builder) {
+                                         CreateTableOptions builder) {
     checkIsClosed();
     if (builder == null) {
-      builder = new CreateTableBuilder();
+      builder = new CreateTableOptions();
     }
     CreateTableRequest create = new CreateTableRequest(this.masterTable, name, schema,
         builder);
@@ -313,12 +318,12 @@ public class AsyncKuduClient implements AutoCloseable {
    * When the returned deferred completes it only indicates that the master accepted the alter
    * command, use {@link AsyncKuduClient#isAlterTableDone(String)} to know when the alter finishes.
    * @param name the table's name, if this is a table rename then the old table name must be passed
-   * @param atb the alter table builder
+   * @param ato the alter table builder
    * @return a deferred object to track the progress of the alter command
    */
-  public Deferred<AlterTableResponse> alterTable(String name, AlterTableBuilder atb) {
+  public Deferred<AlterTableResponse> alterTable(String name, AlterTableOptions ato) {
     checkIsClosed();
-    AlterTableRequest alter = new AlterTableRequest(this.masterTable, name, atb);
+    AlterTableRequest alter = new AlterTableRequest(this.masterTable, name, ato);
     alter.setTimeoutMillis(defaultAdminOperationTimeoutMs);
     return sendRpcToTablet(alter);
   }
@@ -584,6 +589,7 @@ public class AsyncKuduClient implements AutoCloseable {
       // try to re-connect and check if the scanner is still good.
       return sendRpcToTablet(next_request);
     }
+    next_request.attempt++;
     client.sendRpc(next_request);
     return d;
   }
@@ -612,6 +618,7 @@ public class AsyncKuduClient implements AutoCloseable {
     }
     final KuduRpc<AsyncKuduScanner.Response>  close_request = scanner.getCloseRequest();
     final Deferred<AsyncKuduScanner.Response> d = close_request.getDeferred();
+    close_request.attempt++;
     client.sendRpc(close_request);
     return d;
   }
@@ -1017,50 +1024,73 @@ public class AsyncKuduClient implements AutoCloseable {
                                       byte[] startPartitionKey,
                                       byte[] endPartitionKey,
                                       long deadline) throws Exception {
-    List<LocatedTablet> ret = Lists.newArrayList();
-    byte[] lastEndPartitionKey = null;
+    return locateTable(tableId, startPartitionKey, endPartitionKey, deadline).join();
+  }
 
-    DeadlineTracker deadlineTracker = new DeadlineTracker();
-    deadlineTracker.setDeadline(deadline);
-    while (true) {
-      if (deadlineTracker.timedOut()) {
-        throw new NonRecoverableException("Took too long getting the list of tablets, " +
-            "deadline=" + deadline);
-      }
-      GetTableLocationsRequest rpc =
-          new GetTableLocationsRequest(masterTable, startPartitionKey, endPartitionKey, tableId);
-      rpc.setTimeoutMillis(defaultAdminOperationTimeoutMs);
-      final Deferred<Master.GetTableLocationsResponsePB> d = sendRpcToTablet(rpc);
-      Master.GetTableLocationsResponsePB response =
-          d.join(deadlineTracker.getMillisBeforeDeadline());
-      // Table doesn't exist or is being created.
-      if (response.getTabletLocationsCount() == 0) {
-        break;
-      }
-      for (Master.TabletLocationsPB tabletPb : response.getTabletLocationsList()) {
-        LocatedTablet locs = new LocatedTablet(tabletPb);
-        ret.add(locs);
-
-        Partition partition = locs.getPartition();
-        if (lastEndPartitionKey != null &&
-            !partition.isEndPartition() &&
-            Bytes.memcmp(partition.getPartitionKeyEnd(), lastEndPartitionKey) < 0) {
-          throw new IllegalStateException(
-            "Server returned tablets out of order: " +
-            "end partition key '" + Bytes.pretty(partition.getPartitionKeyEnd()) + "' followed " +
-            "end partition key '" + Bytes.pretty(lastEndPartitionKey) + "'");
-        }
-        lastEndPartitionKey = partition.getPartitionKeyEnd();
-      }
-      // If true, we're done, else we have to go back to the master with the last end key
-      if (lastEndPartitionKey.length == 0 ||
-          (endPartitionKey != null && Bytes.memcmp(lastEndPartitionKey, endPartitionKey) > 0)) {
-        break;
-      } else {
-        startPartitionKey = lastEndPartitionKey;
-      }
+  private Deferred<List<LocatedTablet>> loopLocateTable(final String tableId,
+      final byte[] startPartitionKey, final byte[] endPartitionKey, final List<LocatedTablet> ret,
+      final DeadlineTracker deadlineTracker) {
+    if (deadlineTracker.timedOut()) {
+      return Deferred.fromError(new NonRecoverableException(
+          "Took too long getting the list of tablets, " + deadlineTracker));
     }
-    return ret;
+    GetTableLocationsRequest rpc = new GetTableLocationsRequest(masterTable, startPartitionKey,
+        endPartitionKey, tableId);
+    rpc.setTimeoutMillis(defaultAdminOperationTimeoutMs);
+    final Deferred<Master.GetTableLocationsResponsePB> d = sendRpcToTablet(rpc);
+    return d.addCallbackDeferring(
+        new Callback<Deferred<List<LocatedTablet>>, Master.GetTableLocationsResponsePB>() {
+          @Override
+          public Deferred<List<LocatedTablet>> call(GetTableLocationsResponsePB response) {
+            // Table doesn't exist or is being created.
+            if (response.getTabletLocationsCount() == 0) {
+              Deferred.fromResult(ret);
+            }
+            byte[] lastEndPartition = startPartitionKey;
+            for (Master.TabletLocationsPB tabletPb : response.getTabletLocationsList()) {
+              LocatedTablet locs = new LocatedTablet(tabletPb);
+              ret.add(locs);
+              Partition partition = locs.getPartition();
+              if (lastEndPartition != null && !partition.isEndPartition()
+                  && Bytes.memcmp(partition.getPartitionKeyEnd(), lastEndPartition) < 0) {
+                return Deferred.fromError(new IllegalStateException(
+                    "Server returned tablets out of order: " + "end partition key '"
+                        + Bytes.pretty(partition.getPartitionKeyEnd()) + "' followed "
+                        + "end partition key '" + Bytes.pretty(lastEndPartition) + "'"));
+              }
+              lastEndPartition = partition.getPartitionKeyEnd();
+            }
+            // If true, we're done, else we have to go back to the master with the last end key
+            if (lastEndPartition.length == 0
+                || (endPartitionKey != null && Bytes.memcmp(lastEndPartition, endPartitionKey) > 0)) {
+              return Deferred.fromResult(ret);
+            } else {
+              return loopLocateTable(tableId, lastEndPartition, endPartitionKey, ret,
+                  deadlineTracker);
+            }
+          }
+        });
+  }
+
+  /**
+   * Get all or some tablets for a given table. This may query the master multiple times if there
+   * are a lot of tablets.
+   * @param tableId the table to locate tablets from
+   * @param startPartitionKey where to start in the table, pass null to start at the beginning
+   * @param endPartitionKey where to stop in the table, pass null to get all the tablets until the
+   *                        end of the table
+   * @param deadline max time spent in milliseconds for the deferred result of this method to
+   *         get called back, if deadline is reached, the deferred result will get erred back
+   * @return a deferred object that yields a list of the tablets in the table, which can be queried
+   *         for metadata about each tablet
+   * @throws Exception MasterErrorException if the table doesn't exist
+   */
+  Deferred<List<LocatedTablet>> locateTable(final String tableId,
+      final byte[] startPartitionKey, final byte[] endPartitionKey, long deadline) {
+    final List<LocatedTablet> ret = Lists.newArrayList();
+    final DeadlineTracker deadlineTracker = new DeadlineTracker();
+    deadlineTracker.setDeadline(deadline);
+    return loopLocateTable(tableId, startPartitionKey, endPartitionKey, ret, deadlineTracker);
   }
 
   /**
@@ -1264,6 +1294,7 @@ public class AsyncKuduClient implements AutoCloseable {
     GetMasterRegistrationRequest rpc = new GetMasterRegistrationRequest(masterTable);
     rpc.setTimeoutMillis(defaultAdminOperationTimeoutMs);
     Deferred<GetMasterRegistrationResponse> d = rpc.getDeferred();
+    rpc.attempt++;
     masterClient.sendRpc(rpc);
     return d;
   }
@@ -1949,14 +1980,20 @@ public class AsyncKuduClient implements AutoCloseable {
    */
   public final static class AsyncKuduClientBuilder {
     private static final int DEFAULT_MASTER_PORT = 7051;
+    private static final int DEFAULT_BOSS_COUNT = 1;
+    private static final int DEFAULT_WORKER_COUNT = 2 * Runtime.getRuntime().availableProcessors();
 
     private final List<HostAndPort> masterAddresses;
     private long defaultAdminOperationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS;
     private long defaultOperationTimeoutMs = DEFAULT_OPERATION_TIMEOUT_MS;
     private long defaultSocketReadTimeoutMs = DEFAULT_SOCKET_READ_TIMEOUT_MS;
 
+    private final HashedWheelTimer timer =
+        new HashedWheelTimer(new ThreadFactoryBuilder().setDaemon(true).build(), 20, MILLISECONDS);
     private Executor bossExecutor;
     private Executor workerExecutor;
+    private int bossCount = DEFAULT_BOSS_COUNT;
+    private int workerCount = DEFAULT_WORKER_COUNT;
 
     /**
      * Creates a new builder for a client that will connect to the specified masters.
@@ -2037,10 +2074,35 @@ public class AsyncKuduClient implements AutoCloseable {
      * Optional.
      * If not provided, uses a simple cached threadpool. If either argument is null,
      * then such a thread pool will be used in place of that argument.
+     * Note: executor's max thread number must be greater or equal to corresponding
+     * worker count, or netty cannot start enough threads, and client will get stuck.
+     * If not sure, please just use CachedThreadPool.
      */
     public AsyncKuduClientBuilder nioExecutors(Executor bossExecutor, Executor workerExecutor) {
       this.bossExecutor = bossExecutor;
       this.workerExecutor = workerExecutor;
+      return this;
+    }
+
+    /**
+     * Set the maximum number of boss threads.
+     * Optional.
+     * If not provided, 1 is used.
+     */
+    public AsyncKuduClientBuilder bossCount(int bossCount) {
+      Preconditions.checkArgument(bossCount > 0, "bossCount should be greater than 0");
+      this.bossCount = bossCount;
+      return this;
+    }
+
+    /**
+     * Set the maximum number of worker threads.
+     * Optional.
+     * If not provided, (2 * the number of available processors) is used.
+     */
+    public AsyncKuduClientBuilder workerCount(int workerCount) {
+      Preconditions.checkArgument(workerCount > 0, "workerCount should be greater than 0");
+      this.workerCount = workerCount;
       return this;
     }
 
@@ -2060,7 +2122,12 @@ public class AsyncKuduClient implements AutoCloseable {
         if (boss == null) boss = defaultExec;
         if (worker == null) worker = defaultExec;
       }
-      return new NioClientSocketChannelFactory(boss, worker);
+      // Share the timer with the socket channel factory so that it does not
+      // create an internal timer with a non-daemon thread.
+      return new NioClientSocketChannelFactory(boss,
+                                               bossCount,
+                                               new NioWorkerPool(worker, workerCount),
+                                               timer);
     }
 
     /**

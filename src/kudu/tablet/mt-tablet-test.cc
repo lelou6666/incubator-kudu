@@ -1,22 +1,24 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/foreach.hpp>
 #include <boost/ptr_container/ptr_vector.hpp>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
-#include <tr1/unordered_set>
+#include <memory>
 
 #include "kudu/codegen/compilation_manager.h"
 #include "kudu/gutil/macros.h"
@@ -48,10 +50,10 @@ DEFINE_int32(tablet_test_flush_threshold_mb, 0, "Minimum memrowset size to flush
 DEFINE_double(flusher_backoff, 2.0f, "Ratio to backoff the flusher thread");
 DEFINE_int32(flusher_initial_frequency_ms, 30, "Number of ms to wait between flushes");
 
+using std::shared_ptr;
+
 namespace kudu {
 namespace tablet {
-
-using std::tr1::unordered_set;
 
 template<class SETUP>
 class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
@@ -73,7 +75,7 @@ class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
     CHECK_OK(tablet()->CountRows(&count));
     const Schema* schema = tablet()->schema();
     ColumnSchema valcol = schema->column(schema->find_column("val"));
-    valcol_projection_ = Schema(boost::assign::list_of(valcol), 0);
+    valcol_projection_ = Schema({ valcol }, 0);
     CHECK_OK(tablet()->NewRowIterator(valcol_projection_, &iter));
     codegen::CompilationManager::GetSingleton()->Wait();
 
@@ -145,7 +147,7 @@ class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
           // Issue an update. In the NullableValue setup, many of the rows start with
           // NULL here, so we have to check for it.
           int32_t new_val;
-          if (old_val != NULL) {
+          if (old_val != nullptr) {
             new_val = *old_val + 1;
           } else {
             new_val = 0;
@@ -378,7 +380,7 @@ class MultiThreadedTabletTest : public TabletTestBase<SETUP> {
   }
 
   void JoinThreads() {
-    BOOST_FOREACH(scoped_refptr<kudu::Thread> thr, threads_) {
+    for (scoped_refptr<kudu::Thread> thr : threads_) {
      CHECK_OK(ThreadJoiner(thr.get()).Join());
     }
   }

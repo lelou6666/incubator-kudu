@@ -1,16 +1,19 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include "kudu/rpc/messenger.h"
 
@@ -19,7 +22,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <boost/foreach.hpp>
+#include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <list>
 #include <set>
@@ -38,6 +41,7 @@
 #include "kudu/rpc/sasl_common.h"
 #include "kudu/rpc/transfer.h"
 #include "kudu/util/errno.h"
+#include "kudu/util/flag_tags.h"
 #include "kudu/util/metrics.h"
 #include "kudu/util/monotime.h"
 #include "kudu/util/net/socket.h"
@@ -46,8 +50,13 @@
 #include "kudu/util/trace.h"
 
 using std::string;
-using std::tr1::shared_ptr;
+using std::shared_ptr;
 using strings::Substitute;
+
+DEFINE_int32(rpc_default_keepalive_time_ms, 65000,
+             "If an RPC connection from a client is idle for this amount of time, the server "
+             "will disconnect the client.");
+TAG_FLAG(rpc_default_keepalive_time_ms, advanced);
 
 namespace kudu {
 namespace rpc {
@@ -55,13 +64,13 @@ namespace rpc {
 class Messenger;
 class ServerBuilder;
 
-MessengerBuilder::MessengerBuilder(const std::string &name)
-  : name_(name),
-    connection_keepalive_time_(MonoDelta::FromSeconds(10)),
-    num_reactors_(4),
-    num_negotiation_threads_(4),
-    coarse_timer_granularity_(MonoDelta::FromMilliseconds(100)) {
-}
+MessengerBuilder::MessengerBuilder(std::string name)
+    : name_(std::move(name)),
+      connection_keepalive_time_(
+          MonoDelta::FromMilliseconds(FLAGS_rpc_default_keepalive_time_ms)),
+      num_reactors_(4),
+      num_negotiation_threads_(4),
+      coarse_timer_granularity_(MonoDelta::FromMilliseconds(100)) {}
 
 MessengerBuilder& MessengerBuilder::set_connection_keepalive_time(const MonoDelta &keepalive) {
   connection_keepalive_time_ = keepalive;
@@ -132,7 +141,7 @@ void Messenger::Shutdown() {
   DCHECK(rpc_services_.empty()) << "Unregister RPC services before shutting down Messenger";
   rpc_services_.clear();
 
-  BOOST_FOREACH(const shared_ptr<AcceptorPool>& acceptor_pool, acceptor_pools_) {
+  for (const shared_ptr<AcceptorPool>& acceptor_pool : acceptor_pools_) {
     acceptor_pool->Shutdown();
   }
   acceptor_pools_.clear();
@@ -142,7 +151,7 @@ void Messenger::Shutdown() {
   // threads' blocking reads & writes.
   negotiation_pool_->Shutdown();
 
-  BOOST_FOREACH(Reactor* reactor, reactors_) {
+  for (Reactor* reactor : reactors_) {
     reactor->Shutdown();
   }
 }
@@ -210,7 +219,7 @@ void Messenger::QueueInboundCall(gscoped_ptr<InboundCall> call) {
   }
 
   // The RpcService will respond to the client on success or failure.
-  WARN_NOT_OK((*service)->QueueInboundCall(call.Pass()), "Unable to handle RPC call");
+  WARN_NOT_OK((*service)->QueueInboundCall(std::move(call)), "Unable to handle RPC call");
 }
 
 void Messenger::RegisterInboundSocket(Socket *new_socket, const Sockaddr &remote) {
@@ -248,7 +257,7 @@ Reactor* Messenger::RemoteToReactor(const Sockaddr &remote) {
 
 Status Messenger::Init() {
   Status status;
-  BOOST_FOREACH(Reactor* r, reactors_) {
+  for (Reactor* r : reactors_) {
     RETURN_NOT_OK(r->Init());
   }
 
@@ -258,7 +267,7 @@ Status Messenger::Init() {
 Status Messenger::DumpRunningRpcs(const DumpRunningRpcsRequestPB& req,
                                   DumpRunningRpcsResponsePB* resp) {
   shared_lock<rw_spinlock> guard(&lock_.get_lock());
-  BOOST_FOREACH(Reactor* reactor, reactors_) {
+  for (Reactor* reactor : reactors_) {
     RETURN_NOT_OK(reactor->DumpRunningRpcs(req, resp));
   }
   return Status::OK();
@@ -269,13 +278,13 @@ void Messenger::ScheduleOnReactor(const boost::function<void(const Status&)>& fu
   DCHECK(!reactors_.empty());
 
   // If we're already running on a reactor thread, reuse it.
-  Reactor* chosen = NULL;
-  BOOST_FOREACH(Reactor* r, reactors_) {
+  Reactor* chosen = nullptr;
+  for (Reactor* r : reactors_) {
     if (r->IsCurrentThread()) {
       chosen = r;
     }
   }
-  if (chosen == NULL) {
+  if (chosen == nullptr) {
     // Not running on a reactor thread, pick one at random.
     chosen = reactors_[rand() % reactors_.size()];
   }
@@ -290,7 +299,7 @@ const scoped_refptr<RpcService> Messenger::rpc_service(const string& service_nam
   if (FindCopy(rpc_services_, service_name, &service)) {
     return service;
   } else {
-    return scoped_refptr<RpcService>(NULL);
+    return scoped_refptr<RpcService>(nullptr);
   }
 }
 

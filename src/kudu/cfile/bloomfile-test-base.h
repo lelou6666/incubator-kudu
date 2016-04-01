@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CFILE_BLOOMFILE_TEST_BASE_H
 #define KUDU_CFILE_BLOOMFILE_TEST_BASE_H
 
@@ -20,10 +23,12 @@
 #include "kudu/cfile/bloomfile.h"
 #include "kudu/fs/fs_manager.h"
 #include "kudu/gutil/endian.h"
+#include "kudu/gutil/strings/substitute.h"
+#include "kudu/util/random.h"
+#include "kudu/util/random_util.h"
 #include "kudu/util/stopwatch.h"
 #include "kudu/util/test_util.h"
 #include "kudu/util/thread.h"
-
 
 DEFINE_int32(bloom_size_bytes, 4*1024, "Size of each bloom filter");
 DEFINE_int32(n_keys, 10*1000, "Number of keys to insert into the file");
@@ -77,7 +82,7 @@ class BloomFileTestBase : public KuduTest {
       << "Invalid parameters: --n_keys isn't set large enough to fill even "
       << "one bloom filter of the requested --bloom_size_bytes";
 
-    BloomFileWriter bfw(sink.Pass(), sizing);
+    BloomFileWriter bfw(std::move(sink), sizing);
 
     ASSERT_OK(bfw.Start());
     AppendBlooms(&bfw);
@@ -88,15 +93,16 @@ class BloomFileTestBase : public KuduTest {
     gscoped_ptr<ReadableBlock> source;
     RETURN_NOT_OK(fs_manager_->OpenBlock(block_id_, &source));
 
-    return BloomFileReader::Open(source.Pass(), ReaderOptions(), &bfr_);
+    return BloomFileReader::Open(std::move(source), ReaderOptions(), &bfr_);
   }
 
   uint64_t ReadBenchmark() {
+    Random rng(GetRandomSeed32());
     uint64_t count_present = 0;
-    LOG_TIMING(INFO, StringPrintf("Running %ld queries", FLAGS_benchmark_queries)) {
+    LOG_TIMING(INFO, strings::Substitute("Running $0 queries", FLAGS_benchmark_queries)) {
 
       for (uint64_t i = 0; i < FLAGS_benchmark_queries; i++) {
-        uint64_t key = random() % FLAGS_n_keys;
+        uint64_t key = rng.Uniform(FLAGS_n_keys);
         key <<= kKeyShift;
         if (!FLAGS_benchmark_should_hit) {
           // Since the keys are bitshifted, setting the last bit

@@ -1,24 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_TABLET_ROWSET_MANAGER_H
 #define KUDU_TABLET_ROWSET_MANAGER_H
 
-#include <tr1/memory>
+#include <unordered_map>
 #include <vector>
 #include <utility>
 
 #include "kudu/gutil/gscoped_ptr.h"
+#include "kudu/gutil/map-util.h"
 #include "kudu/util/status.h"
 #include "kudu/tablet/rowset.h"
 
@@ -50,10 +54,8 @@ class RowSetTree {
     STOP
   };
   struct RSEndpoint {
-    RSEndpoint(RowSet* rowset, EndpointType endpoint, const Slice& slice)
-    : rowset_(rowset),
-      endpoint_(endpoint),
-      slice_(slice) {}
+    RSEndpoint(RowSet *rowset, EndpointType endpoint, Slice slice)
+        : rowset_(rowset), endpoint_(endpoint), slice_(std::move(slice)) {}
 
     RowSet* rowset_;
     enum EndpointType endpoint_;
@@ -77,6 +79,10 @@ class RowSetTree {
 
   const RowSetVector &all_rowsets() const { return all_rowsets_; }
 
+  RowSet* drs_by_id(int64_t drs_id) const {
+    return FindPtrOrNull(drs_by_id_, drs_id);
+  }
+
   // Iterates over RowSetTree::RSEndpoint, guaranteed to be ordered and for
   // any rowset to appear exactly twice, once at its start slice and once at
   // its stop slice, equivalent to its GetBounds() values.
@@ -99,6 +105,9 @@ class RowSetTree {
 
   // All of the rowsets which were put in this RowSetTree.
   RowSetVector all_rowsets_;
+
+  // The DiskRowSets in this RowSetTree, keyed by their id.
+  std::unordered_map<int64_t, RowSet*> drs_by_id_;
 
   // Rowsets for which the bounds are unknown -- e.g because they
   // are mutable (MemRowSets).

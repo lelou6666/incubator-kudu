@@ -1,16 +1,19 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 #ifndef KUDU_CLIENT_SCANNER_INTERNAL_H
 #define KUDU_CLIENT_SCANNER_INTERNAL_H
 
@@ -18,11 +21,13 @@
 #include <string>
 #include <vector>
 
-#include "kudu/gutil/macros.h"
 #include "kudu/client/client.h"
+#include "kudu/client/row_result.h"
+#include "kudu/common/partition_pruner.h"
 #include "kudu/common/scan_spec.h"
-#include "kudu/common/predicate_encoder.h"
+#include "kudu/gutil/macros.h"
 #include "kudu/tserver/tserver_service.proxy.h"
+#include "kudu/util/auto_release_pool.h"
 
 namespace kudu {
 
@@ -54,23 +59,20 @@ class KuduScanner::Data {
                       const std::vector<internal::RemoteTabletServer*>& candidates,
                       std::set<std::string>* blacklist);
 
-  // Open a tablet.
+  // Open the next tablet in the scan.
   // The deadline is the time budget for this operation.
   // The blacklist is used to temporarily filter out nodes that are experiencing transient errors.
   // This blacklist may be modified by the callee.
+  Status OpenNextTablet(const MonoTime& deadline, std::set<std::string>* blacklist);
+
+  // Open the current tablet in the scan again.
+  // See OpenNextTablet for options.
+  Status ReopenCurrentTablet(const MonoTime& deadline, std::set<std::string>* blacklist);
+
+  // Open the tablet to scan.
   Status OpenTablet(const std::string& partition_key,
                     const MonoTime& deadline,
                     std::set<std::string>* blacklist);
-
-  // Extracts data from the last scan response and adds them to 'rows'.
-  Status ExtractRows(std::vector<KuduRowResult>* rows);
-
-  // Static implementation of ExtractRows. This is used by some external
-  // tools.
-  static Status ExtractRows(const rpc::RpcController& controller,
-                            const Schema* projection,
-                            tserver::ScanResponsePB* resp,
-                            std::vector<KuduRowResult>* rows);
 
   Status KeepAlive();
 
@@ -96,8 +98,12 @@ class KuduScanner::Data {
   // Modifies fields in 'next_req_' in preparation for a new request.
   void PrepareRequest(RequestType state);
 
-  // Returns the size of a row for the given projection 'proj'.
-  static size_t CalculateProjectedRowSize(const Schema& proj);
+  // Update 'last_error_' if need be. Should be invoked whenever a
+  // non-fatal (i.e. retriable) scan error is encountered.
+  void UpdateLastError(const Status& error);
+
+  // Sets the projection schema.
+  void SetProjectionSchema(const Schema* schema);
 
   bool open_;
   bool data_in_open_;
@@ -109,13 +115,17 @@ class KuduScanner::Data {
   bool is_fault_tolerant_;
   int64_t snapshot_timestamp_;
 
+  // Set to true if the scan is known to be empty based on predicates and
+  // primary key bounds.
+  bool short_circuit_;
+
   // The encoded last primary key from the most recent tablet scan response.
   std::string last_primary_key_;
 
   internal::RemoteTabletServer* ts_;
   // The proxy can be derived from the RemoteTabletServer, but this involves retaking the
   // meta cache lock. Keeping our own shared_ptr avoids this overhead.
-  std::tr1::shared_ptr<tserver::TabletServerServiceProxy> proxy_;
+  std::shared_ptr<tserver::TabletServerServiceProxy> proxy_;
 
   // The next scan request to be sent. This is cached as a field
   // since most scan requests will share the scanner ID with the previous
@@ -134,13 +144,18 @@ class KuduScanner::Data {
   // The projection schema used in the scan.
   const Schema* projection_;
 
+  // 'projection_' after it is converted to KuduSchema, so that users can obtain
+  // the projection without having to include common/schema.h.
+  KuduSchema client_projection_;
+
   Arena arena_;
   AutoReleasePool pool_;
 
   // Machinery to store and encode raw column range predicates into
   // encoded keys.
   ScanSpec spec_;
-  RangePredicateEncoder spec_encoder_;
+
+  PartitionPruner partition_pruner_;
 
   // The tablet we're scanning.
   scoped_refptr<internal::RemoteTablet> remote_;
@@ -151,7 +166,68 @@ class KuduScanner::Data {
   // Number of attempts since the last successful scan.
   int scan_attempts_;
 
+  // The deprecated "NextBatch(vector<KuduRowResult>*) API requires some local
+  // storage for the actual row data. If that API is used, this member keeps the
+  // actual storage for the batch that is returned.
+  KuduScanBatch batch_for_old_api_;
+
+  // The latest error experienced by this scan that provoked a retry. If the
+  // scan times out, this error will be incorporated into the status that is
+  // passed back to the client.
+  //
+  // TODO: This and the overall scan retry logic duplicates much of RpcRetrier.
+  Status last_error_;
+
   DISALLOW_COPY_AND_ASSIGN(Data);
+};
+
+class KuduScanBatch::Data {
+ public:
+  Data();
+  ~Data();
+
+  Status Reset(rpc::RpcController* controller,
+               const Schema* projection,
+               const KuduSchema* client_projection,
+               gscoped_ptr<RowwiseRowBlockPB> resp_data);
+
+  int num_rows() const {
+    return resp_data_.num_rows();
+  }
+
+  KuduRowResult row(int idx) {
+    DCHECK_GE(idx, 0);
+    DCHECK_LT(idx, num_rows());
+    int offset = idx * projected_row_size_;
+    return KuduRowResult(projection_, &direct_data_[offset]);
+  }
+
+  void ExtractRows(vector<KuduScanBatch::RowPtr>* rows);
+
+  void Clear();
+
+  // Returns the size of a row for the given projection 'proj'.
+  static size_t CalculateProjectedRowSize(const Schema& proj);
+
+  // The RPC controller for the RPC which returned this batch.
+  // Holding on to the controller ensures we hold on to the indirect data
+  // which contains the rows.
+  rpc::RpcController controller_;
+
+  // The PB which contains the "direct data" slice.
+  RowwiseRowBlockPB resp_data_;
+
+  // Slices into the direct and indirect row data, whose lifetime is ensured
+  // by the members above.
+  Slice direct_data_, indirect_data_;
+
+  // The projection being scanned.
+  const Schema* projection_;
+  // The KuduSchema version of 'projection_'
+  const KuduSchema* client_projection_;
+
+  // The number of bytes of direct data for each row.
+  size_t projected_row_size_;
 };
 
 } // namespace client

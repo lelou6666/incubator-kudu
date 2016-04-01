@@ -1,26 +1,28 @@
-// Copyright 2013 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
-#include <tr1/memory>
 #include <vector>
 
 #include <boost/assign.hpp>
-#include <boost/foreach.hpp>
 #include <google/protobuf/descriptor.pb.h>
 #include <gtest/gtest.h>
 
@@ -39,11 +41,11 @@ namespace kudu {
 namespace pb_util {
 
 using google::protobuf::FileDescriptorSet;
-using std::ostringstream;
-using std::string;
-using std::tr1::shared_ptr;
-using std::vector;
 using internal::WritableFileOutputStream;
+using std::ostringstream;
+using std::shared_ptr;
+using std::string;
+using std::vector;
 
 static const char* kTestFileName = "pb_container.meta";
 static const char* kTestKeyvalName = "my-key";
@@ -88,7 +90,8 @@ Status TestPBUtil::BitFlipFileByteRange(const string& path, uint64_t offset, uin
     uint64_t size;
     RETURN_NOT_OK(file->Size(&size));
     Slice slice;
-    faststring scratch(size);
+    faststring scratch;
+    scratch.resize(size);
     RETURN_NOT_OK(env_util::ReadFully(file.get(), 0, size, &slice, scratch.data()));
     buf.append(slice.data(), slice.size());
   }
@@ -157,8 +160,8 @@ TEST_F(TestPBUtil, TestWritableFileOutputStream) {
 TEST_F(TestPBUtil, TestPBContainerSimple) {
   // Exercise both the SYNC and NO_SYNC codepaths, despite the fact that we
   // aren't able to observe a difference in the test.
-  vector<SyncMode> modes = boost::assign::list_of(SYNC)(NO_SYNC);
-  BOOST_FOREACH(SyncMode mode, modes) {
+  vector<SyncMode> modes = { SYNC, NO_SYNC };
+  for (SyncMode mode : modes) {
 
     // Write the file.
     ASSERT_OK(CreateKnownGoodContainerFile(NO_OVERWRITE, mode));
@@ -251,7 +254,7 @@ TEST_F(TestPBUtil, TestMultipleMessages) {
 
   gscoped_ptr<WritableFile> writer;
   ASSERT_OK(env_->NewWritableFile(path_, &writer));
-  WritablePBContainerFile pb_writer(writer.Pass());
+  WritablePBContainerFile pb_writer(std::move(writer));
   ASSERT_OK(pb_writer.Init(pb));
 
   for (int i = 0; i < 10; i++) {
@@ -263,7 +266,7 @@ TEST_F(TestPBUtil, TestMultipleMessages) {
   int pbs_read = 0;
   gscoped_ptr<RandomAccessFile> reader;
   ASSERT_OK(env_->NewRandomAccessFile(path_, &reader));
-  ReadablePBContainerFile pb_reader(reader.Pass());
+  ReadablePBContainerFile pb_reader(std::move(reader));
   ASSERT_OK(pb_reader.Init());
   for (int i = 0;; i++) {
     ProtoContainerTestPB read_pb;
@@ -289,10 +292,10 @@ TEST_F(TestPBUtil, TestInterleavedReadWrite) {
   // Open the file for writing and reading.
   gscoped_ptr<WritableFile> writer;
   ASSERT_OK(env_->NewWritableFile(path_, &writer));
-  WritablePBContainerFile pb_writer(writer.Pass());
+  WritablePBContainerFile pb_writer(std::move(writer));
   gscoped_ptr<RandomAccessFile> reader;
   ASSERT_OK(env_->NewRandomAccessFile(path_, &reader));
-  ReadablePBContainerFile pb_reader(reader.Pass());
+  ReadablePBContainerFile pb_reader(std::move(reader));
 
   // Write the header (writer) and validate it (reader).
   ASSERT_OK(pb_writer.Init(pb));
@@ -311,7 +314,7 @@ TEST_F(TestPBUtil, TestInterleavedReadWrite) {
 
   // After closing the writer, the reader should be out of data.
   ASSERT_OK(pb_writer.Close());
-  ASSERT_TRUE(pb_reader.ReadNextPB(NULL).IsEndOfFile());
+  ASSERT_TRUE(pb_reader.ReadNextPB(nullptr).IsEndOfFile());
   ASSERT_OK(pb_reader.Close());
 }
 
@@ -346,7 +349,7 @@ void TestPBUtil::DumpPBCToString(const string& path, bool oneline_output,
                                  string* ret) {
   gscoped_ptr<RandomAccessFile> reader;
   ASSERT_OK(env_->NewRandomAccessFile(path, &reader));
-  ReadablePBContainerFile pb_reader(reader.Pass());
+  ReadablePBContainerFile pb_reader(std::move(reader));
   ASSERT_OK(pb_reader.Init());
   ostringstream oss;
   ASSERT_OK(pb_reader.Dump(&oss, oneline_output));
@@ -355,7 +358,7 @@ void TestPBUtil::DumpPBCToString(const string& path, bool oneline_output,
 }
 
 TEST_F(TestPBUtil, TestDumpPBContainer) {
-  const char* kExpectedOutput=
+  const char* kExpectedOutput =
       "Message 0\n"
       "-------\n"
       "record_one {\n"
@@ -392,7 +395,7 @@ TEST_F(TestPBUtil, TestDumpPBContainer) {
 
   gscoped_ptr<WritableFile> writer;
   ASSERT_OK(env_->NewWritableFile(path_, &writer));
-  WritablePBContainerFile pb_writer(writer.Pass());
+  WritablePBContainerFile pb_writer(std::move(writer));
   ASSERT_OK(pb_writer.Init(pb));
 
   for (int i = 0; i < 2; i++) {

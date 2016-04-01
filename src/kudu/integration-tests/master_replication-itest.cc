@@ -1,18 +1,20 @@
-// Copyright 2014 Cloudera, Inc.
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
-#include <boost/assign/list_of.hpp>
 #include <gflags/gflags.h>
 #include <gtest/gtest.h>
 
@@ -27,6 +29,8 @@
 #include "kudu/master/mini_master.h"
 #include "kudu/util/test_util.h"
 
+using std::vector;
+
 namespace kudu {
 namespace master {
 
@@ -38,7 +42,7 @@ using client::KuduSchema;
 using client::KuduSchemaBuilder;
 using client::KuduTable;
 using client::KuduTableCreator;
-using std::vector;
+using client::sp::shared_ptr;
 
 const char * const kTableId1 = "testMasterReplication-1";
 const char * const kTableId2 = "testMasterReplication-2";
@@ -51,7 +55,7 @@ class MasterReplicationTest : public KuduTest {
     // Hard-coded ports for the masters. This is safe, as this unit test
     // runs under a resource lock (see CMakeLists.txt in this directory).
     // TODO we should have a generic method to obtain n free ports.
-    opts_.master_rpc_ports = boost::assign::list_of(11010)(11011)(11012);
+    opts_.master_rpc_ports = { 11010, 11011, 11012 };
 
     opts_.num_masters = num_masters_ = opts_.master_rpc_ports.size();
     opts_.num_tablet_servers = kNumTabletServerReplicas;
@@ -80,9 +84,9 @@ class MasterReplicationTest : public KuduTest {
   }
 
   // This method is meant to be run in a separate thread.
-  void StartClusterDelayed(int64_t micros) {
-    LOG(INFO) << "Sleeping for "  << micros << " micro seconds...";
-    SleepFor(MonoDelta::FromMicroseconds(micros));
+  void StartClusterDelayed(int64_t millis) {
+    LOG(INFO) << "Sleeping for "  << millis << " ms...";
+    SleepFor(MonoDelta::FromMilliseconds(millis));
     LOG(INFO) << "Attempting to start the cluster...";
     CHECK_OK(cluster_->Start());
     CHECK_OK(cluster_->WaitForTabletServerCount(kNumTabletServerReplicas));
@@ -147,9 +151,6 @@ TEST_F(MasterReplicationTest, TestSysTablesReplication) {
   ASSERT_OK(CreateClient(&client));
   ASSERT_OK(CreateTable(client, kTableId1));
 
-  // TODO: once fault tolerant DDL is in, remove the line below.
-  ASSERT_OK(CreateClient(&client));
-
   ASSERT_OK(cluster_->WaitForTabletServerCount(kNumTabletServerReplicas));
 
   // Repeat the same for the second table.
@@ -191,15 +192,19 @@ TEST_F(MasterReplicationTest, TestCycleThroughAllMasters) {
   ASSERT_OK(Thread::Create("TestCycleThroughAllMasters", "start_thread",
                                   &MasterReplicationTest::StartClusterDelayed,
                                   this,
-                                  100 * 1000, // start after 100 millis.
+                                  1000, // start after 1000 millis.
                                   &start_thread));
 
   // Verify that the client doesn't give up even though the entire
-  // cluster is down for 100 milliseconds.
+  // cluster is down for a little while.
+  //
+  // The timeouts for both RPCs and operations are increased to cope with slow
+  // clusters (i.e. TSAN builds).
   shared_ptr<KuduClient> client;
   KuduClientBuilder builder;
   builder.master_server_addrs(master_addrs);
-  builder.default_admin_operation_timeout(MonoDelta::FromSeconds(15));
+  builder.default_admin_operation_timeout(MonoDelta::FromSeconds(90));
+  builder.default_rpc_timeout(MonoDelta::FromSeconds(15));
   EXPECT_OK(builder.Build(&client));
 
   ASSERT_OK(ThreadJoiner(start_thread.get()).Join());
